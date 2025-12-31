@@ -1,5 +1,7 @@
 package interview.guide.modules.interview.service;
 
+import interview.guide.common.exception.BusinessException;
+import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewReportDTO;
 import interview.guide.modules.interview.model.InterviewReportDTO.CategoryScore;
@@ -92,20 +94,30 @@ public class AnswerEvaluationService {
             String systemPromptWithFormat = systemPrompt + "\n\n" + outputConverter.getFormat();
             
             // 调用AI
-            EvaluationReportDTO dto = chatClient.prompt()
-                .system(systemPromptWithFormat)
-                .user(userPrompt)
-                .call()
-                .entity(outputConverter);
-            
-            log.debug("评估响应解析成功: overallScore={}", dto.overallScore());
+            EvaluationReportDTO dto;
+            try {
+                dto = chatClient.prompt()
+                    .system(systemPromptWithFormat)
+                    .user(userPrompt)
+                    .call()
+                    .entity(outputConverter);
+                log.debug("评估响应解析成功: overallScore={}", dto.overallScore());
+            } catch (Exception e) {
+                log.error("面试评估AI调用失败: {}", e.getMessage(), e);
+                throw new BusinessException(ErrorCode.INTERVIEW_EVALUATION_FAILED, 
+                    "面试评估失败：" + e.getMessage());
+            }
             
             // 转换为业务对象
             return convertToReport(sessionId, dto, questions);
             
+        } catch (BusinessException e) {
+            // 重新抛出业务异常
+            throw e;
         } catch (Exception e) {
             log.error("面试评估失败: {}", e.getMessage(), e);
-            return createErrorReport(sessionId, questions);
+            throw new BusinessException(ErrorCode.INTERVIEW_EVALUATION_FAILED, 
+                "面试评估失败：" + e.getMessage());
         }
     }
     

@@ -1,6 +1,7 @@
 import {ChangeEvent, DragEvent, useCallback, useState} from 'react';
 import {AnimatePresence, motion} from 'framer-motion';
 import {resumeApi} from '../api/resume';
+import {getErrorMessage} from '../api/request';
 import type {ResumeAnalysisResponse, StorageInfo} from '../types/resume';
 
 interface UploadPageProps {
@@ -50,10 +51,20 @@ export default function UploadPage({ onAnalysisComplete }: UploadPageProps) {
 
     try {
       const data = await resumeApi.uploadAndAnalyze(selectedFile);
+      
+      // 检查分析结果是否有效
+      if (!data.analysis || !data.storage) {
+        throw new Error('分析结果不完整，请重试');
+      }
+      
+      // 检查是否有分析错误（总分异常低或缺少必要字段）
+      if (data.analysis.overallScore < 0 || !data.analysis.summary) {
+        throw new Error('简历分析失败，请重试');
+      }
+      
       onAnalysisComplete(data.analysis, data.storage);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : '分析失败，请重试';
-      setError(errorMessage);
+    } catch (err) {
+      setError(getErrorMessage(err));
       setState('error');
     }
   };
@@ -232,6 +243,56 @@ export default function UploadPage({ onAnalysisComplete }: UploadPageProps) {
             />
             <p className="text-slate-600 font-medium">AI 正在分析您的简历，请稍候...</p>
             <p className="text-sm text-slate-400 mt-2">首次分析可能需要 30 秒左右</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 错误提示 */}
+      <AnimatePresence>
+        {error && state === 'error' && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="mt-8"
+          >
+            <div className="bg-red-50 border-2 border-red-200 rounded-xl p-6">
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0">
+                  <svg className="w-6 h-6 text-red-500" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M12 8V12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M12 16H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <h4 className="text-red-800 font-semibold mb-1">分析失败</h4>
+                  <p className="text-red-600 text-sm">{error}</p>
+                </div>
+              </div>
+              <div className="mt-4 flex gap-3">
+                <button
+                  onClick={() => {
+                    setError('');
+                    setState('idle');
+                    handleUpload();
+                  }}
+                  className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors font-medium text-sm"
+                >
+                  重新尝试
+                </button>
+                <button
+                  onClick={() => {
+                    setError('');
+                    setState('idle');
+                    setSelectedFile(null);
+                  }}
+                  className="px-4 py-2 bg-white text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors font-medium text-sm"
+                >
+                  重新上传
+                </button>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

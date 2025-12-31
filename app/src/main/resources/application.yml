@@ -27,8 +27,8 @@ spring:
   servlet:
     multipart:
       enabled: true
-      max-file-size: 10MB
-      max-request-size: 10MB
+      max-file-size: 50MB  # 支持知识库上传（简历限制在业务层检查）
+      max-request-size: 50MB
   
   # Spring AI - 阿里云DashScope (OpenAI兼容模式)
   ai:
@@ -43,6 +43,10 @@ spring:
       embedding:
         options:
           model: text-embedding-v3
+    # 禁用自动重试机制，让异常立即返回
+    retry:
+      max-attempts: 1  # 不重试，失败立即返回
+      on-client-errors: false
     # PostgreSQL Vector Store配置
     vectorstore:
       pgvector:
@@ -65,8 +69,8 @@ app:
   # RustFS (S3兼容) 存储配置
   storage:
     endpoint: http://localhost:9000
-    access-key: YlRUvwxer9TKuWg6DyhB
-    secret-key: D5ULeVM72EzTQpK1OdtxYNnoSwl46gIyribvZuqJ
+    access-key: Bdxbc3IoYFj7GEq4HAWi
+    secret-key: 1vcANwb2FZh356Y8pGRUgunskJjfoLzqSxOMCHdi
     bucket: interview-guide
     region: us-east-1
   

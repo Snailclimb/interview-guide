@@ -109,17 +109,37 @@ export default function AnalysisPanel({ analysis, onExport, exporting }: Analysi
     return colors[category] || 'bg-slate-100 text-slate-700';
   };
 
-  if (!analysis) {
+  // 检测分析结果是否有效
+  // 如果总分异常低（< 10）或 summary 包含明显的错误信息，视为无效
+  const hasErrorKeywords = analysis?.summary && (
+    analysis.summary.includes('I/O error') ||
+    analysis.summary.includes('分析过程中出现错误') ||
+    analysis.summary.includes('简历分析失败') ||
+    analysis.summary.includes('Remote host terminated') ||
+    analysis.summary.includes('handshake')
+  );
+  const isAnalysisValid = analysis && 
+    analysis.overallScore >= 10 && 
+    analysis.summary && 
+    !hasErrorKeywords;
+
+  if (!analysis || !isAnalysisValid) {
     return (
       <div className="bg-white rounded-2xl p-12 text-center">
-        <div className="w-16 h-16 mx-auto mb-6 bg-slate-100 rounded-full flex items-center justify-center">
-          <svg className="w-8 h-8 text-slate-400" viewBox="0 0 24 24" fill="none">
-            <path d="M3 3V21H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            <path d="M18 9L12 15L9 12L3 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+        <div className="w-16 h-16 mx-auto mb-6 bg-red-100 rounded-full flex items-center justify-center">
+          <svg className="w-8 h-8 text-red-500" viewBox="0 0 24 24" fill="none">
+            <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M12 8V12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M12 16H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </div>
-        <h3 className="text-xl font-semibold text-slate-700 mb-2">暂无分析数据</h3>
-        <p className="text-slate-500">请等待 AI 完成简历分析</p>
+        <h3 className="text-xl font-semibold text-slate-700 mb-2">分析失败</h3>
+        <p className="text-slate-500 mb-4">AI 服务暂时不可用，请稍后重试</p>
+        {analysis?.summary && (
+          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-left">
+            <p className="text-sm text-red-600">{analysis.summary}</p>
+          </div>
+        )}
       </div>
     );
   }

@@ -96,7 +96,7 @@ public class KnowledgeBaseQueryService {
             
         } catch (Exception e) {
             log.error("知识库问答失败: {}", e.getMessage(), e);
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "回答问题失败: " + e.getMessage());
+            throw new BusinessException(ErrorCode.KNOWLEDGE_BASE_QUERY_FAILED, "知识库查询失败：" + e.getMessage());
         }
     }
     
@@ -114,6 +114,15 @@ public class KnowledgeBaseQueryService {
             4. 如果问题涉及多个方面，请分点说明
             5. 如果涉及多个知识库，需要综合多个知识库的信息
             6. 使用中文回答
+            
+            **格式要求（非常重要）**：
+            - 使用标准 Markdown 格式
+            - 每个段落之间必须空一行
+            - 使用数字列表（1. 2. 3.）或无序列表（- ）来组织要点
+            - 每个列表项独立成行
+            - 重要内容使用 **加粗** 标记
+            - 代码或技术名词使用 `反引号` 包裹
+            - 段落不要过长，适当分段，提高可读性
             """;
     }
     
@@ -195,11 +204,14 @@ public class KnowledgeBaseQueryService {
             
             return responseFlux
                 .doOnComplete(() -> log.info("流式输出完成: kbIds={}", knowledgeBaseIds))
-                .doOnError(e -> log.error("流式输出失败: kbIds={}, error={}", knowledgeBaseIds, e.getMessage()));
+                .onErrorResume(e -> {
+                    log.error("流式输出失败: kbIds={}, error={}", knowledgeBaseIds, e.getMessage(), e);
+                    return Flux.just("【错误】知识库查询失败：AI服务暂时不可用，请稍后重试。");
+                });
                 
         } catch (Exception e) {
             log.error("知识库流式问答失败: {}", e.getMessage(), e);
-            return Flux.just("回答问题失败: " + e.getMessage());
+            return Flux.just("【错误】知识库查询失败：" + e.getMessage());
         }
     }
     

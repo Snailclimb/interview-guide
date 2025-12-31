@@ -106,6 +106,34 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
         },
         // onComplete: 流式传输完成
         () => {
+          // 处理完成后，规范化内容的换行
+          setMessages(prev => {
+            const newMessages = [...prev];
+            const lastMessage = newMessages[newMessages.length - 1];
+            
+            // 激进的换行处理：在中文句号、问号、感叹号后强制换行
+            let normalizedContent = lastMessage.content
+              // 在句号后（如果后面不是换行）添加两个换行符
+              .replace(/([。！？])(?!\n)/g, '$1\n\n')
+              // 在英文句号后（如果后面是空格或数字）添加两个换行符
+              .replace(/(\.)(\s+)(?=[0-9A-Z一二三四五])/g, '$1\n\n')
+              // 数字序号前确保有空行
+              .replace(/([^-\n])(\s*)([0-9]+[\.、])/g, '$1\n\n$3')
+              // 确保列表项（- 开头）前有空行
+              .replace(/([^\n])\n(-\s)/g, '$1\n\n$2')
+              // 确保 Markdown 标题前有空行
+              .replace(/([^\n])\n(#{1,6}\s)/g, '$1\n\n$2')
+              // 冒号后如果换行，确保是两个换行
+              .replace(/([：:])\n(?!\n)/g, '$1\n\n')
+              // 清理多余的连续空行（超过2个）
+              .replace(/\n{3,}/g, '\n\n');
+            
+            newMessages[newMessages.length - 1] = {
+              ...lastMessage,
+              content: normalizedContent,
+            };
+            return newMessages;
+          });
           setLoading(false);
         },
         // onError: 错误处理
@@ -335,22 +363,63 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
                             {msg.type === 'user' ? (
                               <p className="whitespace-pre-wrap">{msg.content}</p>
                             ) : (
-                              <ReactMarkdown
-                                remarkPlugins={[remarkGfm]}
-                                className="prose prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-headings:my-3 prose-strong:text-slate-900 prose-strong:font-semibold"
-                                components={{
-                                  // 自定义样式
-                                  p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
-                                  strong: ({children}) => <strong className="font-semibold text-slate-900">{children}</strong>,
-                                  ul: ({children}) => <ul className="list-disc list-inside mb-2">{children}</ul>,
-                                  ol: ({children}) => <ol className="list-decimal list-inside mb-2">{children}</ol>,
-                                  li: ({children}) => <li className="mb-1">{children}</li>,
-                                  code: ({children}) => <code className="bg-slate-200 px-1.5 py-0.5 rounded text-sm">{children}</code>,
-                                  pre: ({children}) => <pre className="bg-slate-200 p-3 rounded-lg overflow-x-auto my-2">{children}</pre>,
-                                }}
-                              >
-                                {msg.content}
-                              </ReactMarkdown>
+                              <div className="markdown-content text-slate-800">
+                                <ReactMarkdown
+                                  remarkPlugins={[remarkGfm]}
+                                  components={{
+                                    // 段落 - 添加更多间距
+                                    p: ({children}) => <p className="mb-4 leading-relaxed last:mb-0">{children}</p>,
+                                    // 标题
+                                    h1: ({children}) => <h1 className="text-xl font-bold mb-3 mt-4">{children}</h1>,
+                                    h2: ({children}) => <h2 className="text-lg font-bold mb-2 mt-3">{children}</h2>,
+                                    h3: ({children}) => <h3 className="text-base font-bold mb-2 mt-3">{children}</h3>,
+                                    // 加粗和斜体
+                                    strong: ({children}) => <strong className="font-bold text-slate-900">{children}</strong>,
+                                    em: ({children}) => <em className="italic">{children}</em>,
+                                    // 列表 - 增加间距
+                                    ul: ({children}) => <ul className="list-disc list-outside ml-5 mb-4 space-y-2">{children}</ul>,
+                                    ol: ({children}) => <ol className="list-decimal list-outside ml-5 mb-4 space-y-2">{children}</ol>,
+                                    li: ({children}) => <li className="leading-relaxed pl-1">{children}</li>,
+                                    // 代码 - 优化样式
+                                    code: ({inline, children}) => 
+                                      inline ? (
+                                        <code className="bg-slate-200 text-slate-800 px-2 py-1 rounded text-sm font-mono whitespace-nowrap">{children}</code>
+                                      ) : (
+                                        <code className="block bg-slate-200 text-slate-800 p-3 rounded-lg overflow-x-auto my-3 font-mono text-sm leading-relaxed">{children}</code>
+                                      ),
+                                    pre: ({children}) => <pre className="my-2">{children}</pre>,
+                                    // 引用
+                                    blockquote: ({children}) => (
+                                      <blockquote className="border-l-4 border-slate-300 pl-4 italic my-3 text-slate-600">
+                                        {children}
+                                      </blockquote>
+                                    ),
+                                    // 链接
+                                    a: ({href, children}) => (
+                                      <a href={href} className="text-primary-500 hover:text-primary-600 underline" target="_blank" rel="noopener noreferrer">
+                                        {children}
+                                      </a>
+                                    ),
+                                    // 水平线
+                                    hr: () => <hr className="my-4 border-slate-300" />,
+                                    // 表格
+                                    table: ({children}) => (
+                                      <div className="overflow-x-auto my-3">
+                                        <table className="min-w-full border-collapse border border-slate-300">
+                                          {children}
+                                        </table>
+                                      </div>
+                                    ),
+                                    thead: ({children}) => <thead className="bg-slate-100">{children}</thead>,
+                                    tbody: ({children}) => <tbody>{children}</tbody>,
+                                    tr: ({children}) => <tr className="border-b border-slate-300">{children}</tr>,
+                                    th: ({children}) => <th className="border border-slate-300 px-3 py-2 text-left font-semibold">{children}</th>,
+                                    td: ({children}) => <td className="border border-slate-300 px-3 py-2">{children}</td>,
+                                  }}
+                                >
+                                  {msg.content}
+                                </ReactMarkdown>
+                              </div>
                             )}
                           </div>
                         </motion.div>

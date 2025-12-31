@@ -1,5 +1,7 @@
 package interview.guide.modules.resume.service;
 
+import interview.guide.common.exception.BusinessException;
+import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.interview.model.ResumeAnalysisResponse;
 import interview.guide.modules.interview.model.ResumeAnalysisResponse.ScoreDetail;
 import interview.guide.modules.interview.model.ResumeAnalysisResponse.Suggestion;
@@ -89,13 +91,18 @@ public class ResumeGradingService {
             String systemPromptWithFormat = systemPrompt + "\n\n" + outputConverter.getFormat();
             
             // 调用AI
-            ResumeAnalysisResponseDTO dto = chatClient.prompt()
-                .system(systemPromptWithFormat)
-                .user(userPrompt)
-                .call()
-                .entity(outputConverter);
-            
-            log.debug("AI响应解析成功: overallScore={}", dto.overallScore());
+            ResumeAnalysisResponseDTO dto;
+            try {
+                dto = chatClient.prompt()
+                    .system(systemPromptWithFormat)
+                    .user(userPrompt)
+                    .call()
+                    .entity(outputConverter);
+                log.debug("AI响应解析成功: overallScore={}", dto.overallScore());
+            } catch (Exception e) {
+                log.error("简历分析AI调用失败: {}", e.getMessage(), e);
+                throw new BusinessException(ErrorCode.RESUME_ANALYSIS_FAILED, "简历分析失败：" + e.getMessage());
+            }
             
             // 转换为业务对象
             ResumeAnalysisResponse result = convertToResponse(dto, resumeText);

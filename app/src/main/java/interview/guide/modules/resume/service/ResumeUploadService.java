@@ -93,6 +93,12 @@ public class ResumeUploadService {
         if (file.isEmpty()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "请选择要上传的简历文件");
         }
+        
+        // 检查文件大小（简历限制为10MB）
+        long maxSize = 10 * 1024 * 1024; // 10MB
+        if (file.getSize() > maxSize) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "文件大小超过限制");
+        }
     }
     
     /**

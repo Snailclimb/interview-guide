@@ -266,20 +266,20 @@ function InterviewItemCard({
 
       {/* 操作按钮 */}
       <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100">
-        {/* 导出按钮 */}
-        <motion.button
-          onClick={(e) => { e.stopPropagation(); onExport(); }}
-          disabled={exporting}
+      {/* 导出按钮 */}
+      <motion.button
+        onClick={(e) => { e.stopPropagation(); onExport(); }}
+        disabled={exporting}
           className="px-3 py-2 text-slate-400 hover:text-primary-500 hover:bg-white rounded-lg transition-all"
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-        >
-          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
-            <path d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            <polyline points="7,10 12,15 17,10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </motion.button>
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+      >
+        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none">
+          <path d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          <polyline points="7,10 12,15 17,10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </motion.button>
         
         {/* 删除按钮 */}
         <button

@@ -1,34 +1,6 @@
-import axios from 'axios';
+import { request, getErrorMessage } from './request';
 
 const API_BASE_URL = import.meta.env.PROD ? '' : 'http://localhost:8080';
-
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 180000, // 3分钟超时
-});
-
-// 统一响应结果类型
-interface Result<T> {
-  code: number;
-  message: string;
-  data: T;
-}
-
-// 响应拦截器：提取data字段
-api.interceptors.response.use(
-  (response) => {
-    const result = response.data as Result<unknown>;
-    if (result.code === 200) {
-      response.data = result.data;
-    } else {
-      return Promise.reject(new Error(result.message || '请求失败'));
-    }
-    return response;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
 
 export interface KnowledgeBaseItem {
   id: number;
@@ -77,93 +49,95 @@ export const knowledgeBaseApi = {
     if (name) {
       formData.append('name', name);
     }
-    
-    const response = await api.post<UploadKnowledgeBaseResponse>('/api/knowledgebase/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-    
-    return response.data;
+    return request.upload<UploadKnowledgeBaseResponse>('/api/knowledgebase/upload', formData);
   },
-  
+
   /**
    * 获取所有知识库列表
    */
   async getAllKnowledgeBases(): Promise<KnowledgeBaseItem[]> {
-    const response = await api.get<KnowledgeBaseItem[]>('/api/knowledgebase/list');
-    return response.data;
+    return request.get<KnowledgeBaseItem[]>('/api/knowledgebase/list');
   },
-  
+
   /**
    * 获取知识库详情
    */
   async getKnowledgeBase(id: number): Promise<KnowledgeBaseItem> {
-    const response = await api.get<KnowledgeBaseItem>(`/api/knowledgebase/${id}`);
-    return response.data;
+    return request.get<KnowledgeBaseItem>(`/api/knowledgebase/${id}`);
   },
-  
+
   /**
    * 删除知识库
    */
   async deleteKnowledgeBase(id: number): Promise<void> {
-    await api.delete(`/api/knowledgebase/${id}`);
+    return request.delete(`/api/knowledgebase/${id}`);
   },
-  
+
   /**
    * 基于知识库回答问题
    */
-  async queryKnowledgeBase(request: QueryRequest): Promise<QueryResponse> {
-    const response = await api.post<QueryResponse>('/api/knowledgebase/query', request);
-    return response.data;
+  async queryKnowledgeBase(req: QueryRequest): Promise<QueryResponse> {
+    return request.post<QueryResponse>('/api/knowledgebase/query', req, {
+      timeout: 180000, // 3分钟超时
+    });
   },
-  
+
   /**
    * 基于知识库回答问题（流式SSE）
+   * 注意：SSE 使用 fetch API，不走统一的 axios 封装
    */
   async queryKnowledgeBaseStream(
-    request: QueryRequest,
+    req: QueryRequest,
     onMessage: (chunk: string) => void,
     onComplete: () => void,
     onError: (error: Error) => void
   ): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/api/knowledgebase/query/stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(request),
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error('无法获取响应流');
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-    
     try {
+      const response = await fetch(`${API_BASE_URL}/api/knowledgebase/query/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(req),
+      });
+
+      if (!response.ok) {
+        // 尝试解析错误响应
+        try {
+          const errorData = await response.json();
+          if (errorData && errorData.message) {
+            throw new Error(errorData.message);
+          }
+        } catch {
+          // 忽略解析错误
+        }
+        throw new Error(`请求失败 (${response.status})`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('无法获取响应流');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
       while (true) {
         const { done, value } = await reader.read();
-        
+
         if (done) {
           onComplete();
           break;
         }
-        
+
         // 解码数据块
         buffer += decoder.decode(value, { stream: true });
-        
+
         // 按行分割处理 SSE 格式
         const lines = buffer.split('\n');
         // 保留最后一行（可能不完整）
         buffer = lines.pop() || '';
-        
+
         // 处理每一行
         for (const line of lines) {
           // SSE 格式：data: content
@@ -175,7 +149,7 @@ export const knowledgeBaseApi = {
           }
         }
       }
-      
+
       // 处理剩余的 buffer
       if (buffer.trim()) {
         if (buffer.startsWith('data:')) {
@@ -186,10 +160,7 @@ export const knowledgeBaseApi = {
         }
       }
     } catch (error) {
-      onError(error as Error);
-    } finally {
-      reader.releaseLock();
+      onError(new Error(getErrorMessage(error)));
     }
   },
 };
-

@@ -1,5 +1,7 @@
 package interview.guide.modules.interview.service;
 
+import interview.guide.common.exception.BusinessException;
+import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewQuestionDTO.QuestionType;
 import org.slf4j.Logger;
@@ -96,13 +98,19 @@ public class InterviewQuestionService {
             String systemPromptWithFormat = systemPrompt + "\n\n" + outputConverter.getFormat();
             
             // 调用AI
-            QuestionListDTO dto = chatClient.prompt()
-                .system(systemPromptWithFormat)
-                .user(userPrompt)
-                .call()
-                .entity(outputConverter);
-            
-            log.debug("AI响应解析成功: questions count={}", dto.questions().size());
+            QuestionListDTO dto;
+            try {
+                dto = chatClient.prompt()
+                    .system(systemPromptWithFormat)
+                    .user(userPrompt)
+                    .call()
+                    .entity(outputConverter);
+                log.debug("AI响应解析成功: questions count={}", dto.questions().size());
+            } catch (Exception e) {
+                log.error("面试问题生成AI调用失败: {}", e.getMessage(), e);
+                throw new BusinessException(ErrorCode.INTERVIEW_QUESTION_GENERATION_FAILED, 
+                    "面试问题生成失败：" + e.getMessage());
+            }
             
             // 转换为业务对象
             List<InterviewQuestionDTO> questions = convertToQuestions(dto);

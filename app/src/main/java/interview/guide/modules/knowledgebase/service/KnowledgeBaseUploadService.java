@@ -123,7 +123,7 @@ public class KnowledgeBaseUploadService {
         // 检查文件大小（限制为50MB）
         long maxSize = 50 * 1024 * 1024; // 50MB
         if (file.getSize() > maxSize) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "文件大小不能超过50MB");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "文件大小超过限制");
         }
     }
     

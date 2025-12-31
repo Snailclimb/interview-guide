@@ -1,24 +1,4 @@
-const API_BASE = import.meta.env.PROD ? '' : 'http://localhost:8080';
-
-// 统一响应结果类型
-interface Result<T> {
-  code: number;
-  message: string;
-  data: T;
-}
-
-// 封装fetch请求，解析Result结构
-async function fetchWithResult<T>(url: string): Promise<T> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error('网络请求失败');
-  }
-  const result: Result<T> = await response.json();
-  if (result.code === 200) {
-    return result.data;
-  }
-  throw new Error(result.message || '请求失败');
-}
+import { request } from './request';
 
 export interface ResumeListItem {
   id: number;
@@ -42,7 +22,7 @@ export interface AnalysisItem {
   summary: string;
   analyzedAt: string;
   strengths: string[];
-  suggestions: any[];
+  suggestions: unknown[];
 }
 
 export interface InterviewItem {
@@ -54,10 +34,10 @@ export interface InterviewItem {
   overallFeedback: string | null;
   createdAt: string;
   completedAt: string | null;
-  questions?: any[];
+  questions?: unknown[];
   strengths?: string[];
   improvements?: string[];
-  referenceAnswers?: any[];
+  referenceAnswers?: unknown[];
 }
 
 export interface AnswerItem {
@@ -94,76 +74,56 @@ export const historyApi = {
    * 获取所有简历列表
    */
   async getResumes(): Promise<ResumeListItem[]> {
-    return fetchWithResult<ResumeListItem[]>(`${API_BASE}/api/resume/list`);
+    return request.get<ResumeListItem[]>('/api/resume/list');
   },
 
   /**
    * 获取简历详情
    */
   async getResumeDetail(id: number): Promise<ResumeDetail> {
-    return fetchWithResult<ResumeDetail>(`${API_BASE}/api/resume/${id}/detail`);
+    return request.get<ResumeDetail>(`/api/resume/${id}/detail`);
   },
 
   /**
    * 获取面试详情
    */
   async getInterviewDetail(sessionId: string): Promise<InterviewDetail> {
-    return fetchWithResult<InterviewDetail>(`${API_BASE}/api/interview/${sessionId}/detail`);
+    return request.get<InterviewDetail>(`/api/interview/${sessionId}/detail`);
   },
 
   /**
    * 导出简历分析报告PDF
    */
   async exportAnalysisPdf(resumeId: number): Promise<Blob> {
-    const response = await fetch(`${API_BASE}/api/resume/${resumeId}/export`);
-    if (!response.ok) {
-      throw new Error('导出PDF失败');
-    }
-    return response.blob();
+    const response = await request.getInstance().get(`/api/resume/${resumeId}/export`, {
+      responseType: 'blob',
+      skipResultTransform: true,
+    } as never);
+    return response.data;
   },
 
   /**
    * 导出面试报告PDF
    */
   async exportInterviewPdf(sessionId: string): Promise<Blob> {
-    const response = await fetch(`${API_BASE}/api/interview/${sessionId}/export`);
-    if (!response.ok) {
-      throw new Error('导出PDF失败');
-    }
-    return response.blob();
+    const response = await request.getInstance().get(`/api/interview/${sessionId}/export`, {
+      responseType: 'blob',
+      skipResultTransform: true,
+    } as never);
+    return response.data;
   },
 
   /**
    * 删除简历
    */
   async deleteResume(id: number): Promise<void> {
-    const response = await fetch(`${API_BASE}/api/resume/${id}`, {
-      method: 'DELETE',
-    });
-    if (!response.ok) {
-      const result: Result<void> = await response.json();
-      throw new Error(result.message || '删除简历失败');
-    }
-    const result: Result<void> = await response.json();
-    if (result.code !== 200) {
-      throw new Error(result.message || '删除简历失败');
-    }
+    return request.delete(`/api/resume/${id}`);
   },
 
   /**
    * 删除面试记录
    */
   async deleteInterview(sessionId: string): Promise<void> {
-    const response = await fetch(`${API_BASE}/api/interview/${sessionId}`, {
-      method: 'DELETE',
-    });
-    if (!response.ok) {
-      const result: Result<void> = await response.json();
-      throw new Error(result.message || '删除面试记录失败');
-    }
-    const result: Result<void> = await response.json();
-    if (result.code !== 200) {
-      throw new Error(result.message || '删除面试记录失败');
-    }
+    return request.delete(`/api/interview/${sessionId}`);
   },
 };
