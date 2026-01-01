@@ -1,5 +1,6 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.modules.knowledgebase.repository.VectorRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TextSplitter;
@@ -9,7 +10,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -22,9 +22,11 @@ public class KnowledgeBaseVectorService {
     
     private final VectorStore vectorStore;
     private final TextSplitter textSplitter;
+    private final VectorRepository vectorRepository;
     
-    public KnowledgeBaseVectorService(VectorStore vectorStore) {
+    public KnowledgeBaseVectorService(VectorStore vectorStore, VectorRepository vectorRepository) {
         this.vectorStore = vectorStore;
+        this.vectorRepository = vectorRepository;
         // 使用TokenTextSplitter，每个chunk约500 tokens，重叠50 tokens
         this.textSplitter = new TokenTextSplitter();
     }
@@ -51,9 +53,9 @@ public class KnowledgeBaseVectorService {
             log.info("文本分块完成: {} 个chunks", chunks.size());
             
             // 3. 为每个chunk添加metadata（知识库ID）
+            // 统一使用 String 类型存储，确保查询一致性
             chunks.forEach(chunk -> {
                 chunk.getMetadata().put("kb_id", knowledgeBaseId.toString());
-                chunk.getMetadata().put("kb_id_long", knowledgeBaseId);
             });
             
             // 4. 向量化并存储
@@ -86,8 +88,17 @@ public class KnowledgeBaseVectorService {
             if (knowledgeBaseIds != null && !knowledgeBaseIds.isEmpty()) {
                 allResults = allResults.stream()
                     .filter(doc -> {
-                        Object kbId = doc.getMetadata().get("kb_id_long");
-                        return kbId != null && knowledgeBaseIds.contains(Long.valueOf(kbId.toString()));
+                        Object kbId = doc.getMetadata().get("kb_id");
+                        if (kbId == null) return false;
+                        // 支持 String 和 Long 两种格式（向后兼容）
+                        try {
+                            Long kbIdLong = kbId instanceof Long 
+                                ? (Long) kbId 
+                                : Long.parseLong(kbId.toString());
+                            return knowledgeBaseIds.contains(kbIdLong);
+                        } catch (NumberFormatException e) {
+                            return false;
+                        }
                     })
                     .collect(Collectors.toList());
                 log.debug("使用metadata过滤，找到 {} 个相关文档", allResults.size());
@@ -109,25 +120,19 @@ public class KnowledgeBaseVectorService {
     
     /**
      * 删除指定知识库的所有向量数据
-     * 使用反射调用delete方法（兼容不同版本的API）
+     * 委托给 VectorRepository 处理
+     * 
+     * @param knowledgeBaseId 知识库ID
      */
     @Transactional(rollbackFor = Exception.class)
     public void deleteByKnowledgeBaseId(Long knowledgeBaseId) {
-        log.info("删除知识库向量数据: kbId={}", knowledgeBaseId);
-        
         try {
-            // 尝试通过反射调用delete方法
-            try {
-                java.lang.reflect.Method deleteMethod = vectorStore.getClass()
-                    .getMethod("delete", Map.class);
-                deleteMethod.invoke(vectorStore, Map.of("kb_id_long", knowledgeBaseId));
-                log.info("已删除知识库向量数据: kbId={}", knowledgeBaseId);
-            } catch (NoSuchMethodException e) {
-                log.warn("VectorStore不支持delete方法，跳过删除: {}", e.getMessage());
-            }
-            
+            vectorRepository.deleteByKnowledgeBaseId(knowledgeBaseId);
         } catch (Exception e) {
             log.error("删除向量数据失败: kbId={}, error={}", knowledgeBaseId, e.getMessage(), e);
+            // 不抛出异常，允许继续执行其他删除操作
+            // 如果确实需要严格保证，可以取消下面的注释
+            // throw new RuntimeException("删除向量数据失败: " + e.getMessage(), e);
         }
     }
 }
