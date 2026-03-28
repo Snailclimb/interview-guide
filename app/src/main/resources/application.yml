@@ -56,7 +56,7 @@ spring:
       api-key: ${AI_BAILIAN_API_KEY}
       chat:
         options:
-          model: ${AI_MODEL:qwen-plus}
+          model: ${AI_MODEL:qwen3.5-plus}
           temperature: 0.2
       # Embedding模型配置 - 使用text-embedding-v3
       embedding:
