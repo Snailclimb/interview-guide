@@ -283,8 +283,8 @@ app:
 
 ⚠️**注意**：
 
-1.  JPA 的 `ddl-auto` 首次启动用 `create`，表创建成功后，改回 `update`。
-2. 如果本地已经 Minio 的话，可以用其替换 RusfFS。
+1. JPA 的 `ddl-auto` 首次启动用 `create`，表创建成功后，改回 `update`。
+2. 如果本地有 Minio 的话，可以用其替换 RusfFS。
 
 ### 5. 启动服务
 
