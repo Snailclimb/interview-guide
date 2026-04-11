@@ -44,6 +44,9 @@ dependencies {
     // Pinyin4j - 汉字转拼音
     implementation libs.pinyin4j
 
+    // SpringDoc OpenAPI - Swagger接口文档
+    implementation libs.springdoc
+
     // Redisson 4.0 - Redis客户端 (Boot 4.0 compatible)
     implementation "org.redisson:redisson-spring-boot-starter:${libs.versions.redisson.get()}"
 

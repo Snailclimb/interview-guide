@@ -13,8 +13,9 @@ import org.redisson.config.Config;
 import org.springframework.core.io.ClassPathResource;
 
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -40,10 +41,11 @@ class RateLimitIntegrationTest {
 
     private RedissonClient redissonClient;
     private String luaScript;
+    private String luaScriptSha;
 
     @BeforeEach
     void setUp() throws Exception {
-        ClassPathResource resource = new ClassPathResource("scripts/rate_limit.lua");
+        ClassPathResource resource = new ClassPathResource("scripts/rate_limit_single.lua");
         luaScript = new String(resource.getContentAsByteArray(), StandardCharsets.UTF_8);
 
         Config config = new Config();
@@ -55,48 +57,69 @@ class RateLimitIntegrationTest {
 
         redissonClient = Redisson.create(config);
         redissonClient.getKeys().deleteByPattern("ratelimit:test*");
+
+        // 预加载脚本
+        luaScriptSha = redissonClient.getScript(StringCodec.INSTANCE).scriptLoad(luaScript);
     }
 
     @Test
     @DisplayName("验证限流：令牌充足时允许，耗尽时拒绝")
     void testRateLimit() {
-        String keyPrefix = "ratelimit:test:basic";
-        String valueKey = keyPrefix + ":value";
+        String key = "ratelimit:test:basic";
         long maxCount = 2;
 
-        // 初始化2个令牌，使用 StringCodec 确保与 Lua 脚本兼容
-        redissonClient.getBucket(valueKey, StringCodec.INSTANCE).set(String.valueOf(maxCount));
+        // 初始化2个令牌
+        redissonClient.getBucket(key + ":value", StringCodec.INSTANCE).set(String.valueOf(maxCount));
 
         // 前两次请求应成功
-        assertEquals(1L, executeLuaScript(keyPrefix, maxCount));
-        assertEquals(1L, executeLuaScript(keyPrefix, maxCount));
+        assertEquals(1L, executeLuaScript(key, maxCount));
+        assertEquals(1L, executeLuaScript(key, maxCount));
 
         // 第三次请求应被拒绝
-        assertEquals(0L, executeLuaScript(keyPrefix, maxCount));
+        assertEquals(0L, executeLuaScript(key, maxCount));
     }
 
     @Test
-    @DisplayName("验证多维度限流：任一维度不足即拒绝")
-    void testMultiDimension() {
-        String key1 = "ratelimit:test:multi1";
-        String key2 = "ratelimit:test:multi2";
-        long maxCount = 10;
+    @DisplayName("验证多规则限流：逐条检查，任一规则不足即拒绝")
+    void testMultiRule() {
+        String globalKey = "ratelimit:test:multi:global";
+        String ipKey = "ratelimit:test:multi:ip";
+        long globalMax = 10;
+        long ipMax = 1;
 
-        // 维度1：充足（10个令牌）
-        redissonClient.getBucket(key1 + ":value", StringCodec.INSTANCE).set("10");
-        // 维度2：不足（1个令牌）
-        redissonClient.getBucket(key2 + ":value", StringCodec.INSTANCE).set("1");
+        // 初始化：全局10个令牌，IP维度1个令牌
+        redissonClient.getBucket(globalKey + ":value", StringCodec.INSTANCE).set("10");
+        redissonClient.getBucket(ipKey + ":value", StringCodec.INSTANCE).set("1");
 
-        // 第一次成功，第二次被维度2限制
-        assertEquals(1L, executeLuaScript(List.of(key1, key2), maxCount));
-        assertEquals(0L, executeLuaScript(List.of(key1, key2), maxCount));
+        // 第一次请求：两条规则都通过
+        assertEquals(1L, executeLuaScript(globalKey, globalMax));
+        assertEquals(1L, executeLuaScript(ipKey, ipMax));
+
+        // 第二次请求：全局规则通过，IP规则拒绝（模拟短路）
+        assertEquals(1L, executeLuaScript(globalKey, globalMax));
+        assertEquals(0L, executeLuaScript(ipKey, ipMax));
     }
 
-    private Object executeLuaScript(String key, long maxCount) {
-        return executeLuaScript(List.of(key), maxCount);
+    @Test
+    @DisplayName("验证独立计数：不同维度拥有独立的令牌池")
+    void testIndependentCountPerDimension() {
+        String globalKey = "ratelimit:test:independent:global";
+        String ipKey = "ratelimit:test:independent:ip";
+
+        // 全局只允许2次，IP允许5次
+        redissonClient.getBucket(globalKey + ":value", StringCodec.INSTANCE).set("2");
+        redissonClient.getBucket(ipKey + ":value", StringCodec.INSTANCE).set("5");
+
+        // 全局维度耗尽
+        assertEquals(1L, executeLuaScript(globalKey, 2));
+        assertEquals(1L, executeLuaScript(globalKey, 2));
+        assertEquals(0L, executeLuaScript(globalKey, 2));
+
+        // IP维度仍有令牌（证明独立计数）
+        assertEquals(1L, executeLuaScript(ipKey, 5));
     }
 
-    private Object executeLuaScript(List<String> keys, long maxCount) {
+    private long executeLuaScript(String key, long maxCount) {
         RScript script = redissonClient.getScript(StringCodec.INSTANCE);
 
         Object[] args = {
@@ -104,14 +127,14 @@ class RateLimitIntegrationTest {
                 String.valueOf(1),
                 String.valueOf(1000),
                 String.valueOf(maxCount),
-                java.util.UUID.randomUUID().toString()
+                UUID.randomUUID().toString()
         };
 
-        List<Object> keysList = new ArrayList<>(keys);
+        List<Object> keysList = Collections.singletonList(key);
 
-        Object result = script.eval(
+        Object result = script.evalSha(
                 RScript.Mode.READ_WRITE,
-                luaScript,
+                luaScriptSha,
                 RScript.ReturnType.VALUE,
                 keysList,
                 args
@@ -122,7 +145,7 @@ class RateLimitIntegrationTest {
         } else if (result instanceof String) {
             return Long.parseLong((String) result);
         }
-        return result;
+        throw new AssertionError("Unexpected result type: " + result);
     }
 
     @AfterEach

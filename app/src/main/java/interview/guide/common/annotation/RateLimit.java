@@ -3,18 +3,30 @@ package interview.guide.common.annotation;
 import interview.guide.common.aspect.RateLimitAspect;
 
 import java.lang.annotation.ElementType;
+import java.lang.annotation.Repeatable;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
  * 限流注解
- * 用于方法级别的限流控制，支持多维度组合限流
+ * 用于方法级别的限流控制，支持可重复注解实现多维度独立限流
+ * <p>
+ * 每个注解实例代表一条独立的限流规则，拥有独立的 count/interval/timeUnit 配置。
+ * 同一方法上可标注多个 @RateLimit，所有规则必须全部通过才允许请求。
+ * <p>
+ * 示例：
+ * <pre>
+ * &#64;RateLimit(dimension = Dimension.GLOBAL, count = 100)
+ * &#64;RateLimit(dimension = Dimension.IP, count = 5)
+ * public Result query() { ... }
+ * </pre>
  *
  * @see RateLimitAspect
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
+@Repeatable(RateLimit.Container.class)
 public @interface RateLimit {
 
     /**
@@ -36,13 +48,12 @@ public @interface RateLimit {
     }
 
     /**
-     * 限流维度配置
-     * 支持多维度组合，只有所有维度都满足条件时才允许请求通过
-     * 例如：{Dimension.GLOBAL, Dimension.USER} 表示同时进行全局限流和用户级限流
+     * 限流维度
+     * 每个注解实例对应一个维度，多条规则通过可重复注解实现
      *
-     * @return 限流维度数组
+     * @return 限流维度
      */
-    Dimension[] dimensions() default {Dimension.GLOBAL};
+    Dimension dimension() default Dimension.GLOBAL;
 
     /**
      * 在指定时间窗口内允许的最大请求数
@@ -62,7 +73,7 @@ public @interface RateLimit {
 
     /**
      * 时间单位
-     * 默认为秒，即默认“每秒 count 次”
+     * 默认为秒，即默认"每秒 count 次"
      *
      * @return 时间单位
      */
@@ -95,5 +106,14 @@ public @interface RateLimit {
      */
     enum TimeUnit {
         MILLISECONDS, SECONDS, MINUTES, HOURS, DAYS
+    }
+
+    /**
+     * 可重复注解容器
+     */
+    @Target(ElementType.METHOD)
+    @Retention(RetentionPolicy.RUNTIME)
+    @interface Container {
+        RateLimit[] value();
     }
 }

@@ -230,13 +230,20 @@ public class RedisService {
         RStream<String, String> stream = redissonClient.getStream(streamKey, StringCodec.INSTANCE);
 
         // 使用阻塞读取，让 Redis 服务端等待消息
-        Map<StreamMessageId, Map<String, String>> messages = stream.readGroup(
-            groupName,
-            consumerName,
-            StreamReadGroupArgs.neverDelivered()
-                .count(count)
-                .timeout(Duration.ofMillis(blockTimeoutMs))
-        );
+        Map<StreamMessageId, Map<String, String>> messages;
+        try {
+            messages = stream.readGroup(
+                groupName,
+                consumerName,
+                StreamReadGroupArgs.neverDelivered()
+                    .count(count)
+                    .timeout(Duration.ofMillis(blockTimeoutMs))
+            );
+        } catch (ClassCastException e) {
+            // Redisson 4.0.0 bug: 无消息时返回 EmptyList 而非空 Map，内部强转失败。
+            // 等价于"本次无消息"，静默返回即可。
+            return false;
+        }
 
         if (messages == null || messages.isEmpty()) {
             return false;

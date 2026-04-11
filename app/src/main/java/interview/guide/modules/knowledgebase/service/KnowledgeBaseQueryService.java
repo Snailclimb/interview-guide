@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -35,6 +36,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class KnowledgeBaseQueryService {
     private static final String NO_RESULT_RESPONSE = "抱歉，在选定的知识库中未检索到相关信息。请换一个更具体的关键词或补充上下文后再试。";
     private static final Pattern SHORT_TOKEN_PATTERN = Pattern.compile("^[\\p{L}\\p{N}_-]{2,20}$");
+    // 中文疑问前缀："什么是X" / "如何X" → 提取 X
+    private static final Pattern ZH_QUESTION_PREFIX = Pattern.compile(
+            "^(?:什么是|如何|怎么|怎样|为什么|什么叫|什么叫做|讲一下|解释一下|介绍一下|说一下|谈谈|描述)(.+)$");
+    // 中文疑问后缀："X是什么" / "X有哪些" → 提取 X
+    private static final Pattern ZH_QUESTION_SUFFIX = Pattern.compile(
+            "^(.+?)(?:是什么|怎么样|如何|有哪些|有什么|是啥|是干什么的).*$");
     private static final int STREAM_PROBE_CHARS = 120;
 
     private final ChatClient chatClient;
@@ -248,10 +255,12 @@ public class KnowledgeBaseQueryService {
         return new QueryContext(normalizedQuestion, new ArrayList<>(candidates), searchParams);
     }
 
+//       清洗
     private String normalizeQuestion(String question) {
         return question == null ? "" : question.trim();
     }
 
+//    向量检索
     private List<Document> retrieveRelevantDocs(QueryContext queryContext, List<Long> knowledgeBaseIds) {
         for (String candidateQuery : queryContext.candidateQueries()) {
             if (candidateQuery.isBlank()) {
@@ -282,6 +291,7 @@ public class KnowledgeBaseQueryService {
         return new SearchParams(topkLong, minScoreDefault);
     }
 
+//    改写
     private String rewriteQuestion(String question) {
         if (!rewriteEnabled || question.isBlank()) {
             return question;
@@ -320,10 +330,11 @@ public class KnowledgeBaseQueryService {
             return true;
         }
 
-        String loweredToken = normalized.toLowerCase();
+        // 对中文问句提取核心词再做字面匹配，如 "什么是进程" → "进程"
+        String coreTerm = extractCoreTerm(normalized).toLowerCase();
         for (Document doc : docs) {
             String text = doc.getText();
-            if (text != null && text.toLowerCase().contains(loweredToken)) {
+            if (text != null && text.toLowerCase().contains(coreTerm)) {
                 return true;
             }
         }
@@ -337,7 +348,29 @@ public class KnowledgeBaseQueryService {
             return false;
         }
         String compact = question.trim();
-        return SHORT_TOKEN_PATTERN.matcher(compact).matches();
+        if (!SHORT_TOKEN_PATTERN.matcher(compact).matches()) {
+            return false;
+        }
+        // 中文无空格分词，"操作系统中进程的定义与基本概念"(15字)也会匹配模式。
+        // 对含 CJK 字符的文本额外限制长度：超过6字的视为短语而非短 token，跳过字面确认。
+        boolean hasCjk = compact.chars().anyMatch(c -> c >= 0x4E00 && c <= 0x9FFF);
+        return !hasCjk || compact.length() <= 6;
+    }
+
+    /**
+     * 从中文问句中提取核心检索词。
+     * "什么是进程" → "进程"，"进程是什么" → "进程"，无法识别则原样返回。
+     */
+    private String extractCoreTerm(String question) {
+        Matcher m = ZH_QUESTION_PREFIX.matcher(question);
+        if (m.matches()) {
+            return m.group(1).trim();
+        }
+        m = ZH_QUESTION_SUFFIX.matcher(question);
+        if (m.matches()) {
+            return m.group(1).trim();
+        }
+        return question;
     }
 
     private String normalizeAnswer(String answer) {

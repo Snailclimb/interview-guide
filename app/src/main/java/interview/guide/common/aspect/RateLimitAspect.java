@@ -20,13 +20,13 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
 /**
  * 限流 AOP 切面
- * 基于滑动时间窗口实现的多维度原子限流
+ * 支持可重复注解，逐条执行独立的限流规则，任一规则不通过即拒绝
  */
 @Slf4j
 @Aspect
@@ -36,83 +36,95 @@ public class RateLimitAspect {
 
     private final RedissonClient redissonClient;
 
-    /**
-     * Lua 脚本缓存
-     */
-    private static String LUA_SCRIPT;
+    private static final String LUA_SCRIPT;
     private String luaScriptSha;
+    private RScript rScript;
 
     static {
         try {
-            ClassPathResource resource = new ClassPathResource("scripts/rate_limit.lua");
+            ClassPathResource resource = new ClassPathResource("scripts/rate_limit_single.lua");
             LUA_SCRIPT = new String(resource.getContentAsByteArray(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new RuntimeException("加载限流 Lua 脚本失败", e);
         }
     }
 
-    /**
-     * 初始化：预加载脚本到 Redis 提高性能
-     */
     @jakarta.annotation.PostConstruct
     public void init() {
-        this.luaScriptSha = redissonClient.getScript(StringCodec.INSTANCE).scriptLoad(LUA_SCRIPT);
+        rScript = redissonClient.getScript(StringCodec.INSTANCE);
+        loadScript();
+    }
+
+    private void loadScript() {
+        this.luaScriptSha = rScript.scriptLoad(LUA_SCRIPT);
         log.info("限流 Lua 脚本加载完成, SHA1: {}", luaScriptSha);
     }
 
     /**
-     * 环绕通知：拦截带 @RateLimit 注解的方法
+     * 环绕通知：拦截带 @RateLimit 或 @RateLimit.Container 注解的方法
      */
-    @Around("@annotation(rateLimit)")
-    public Object around(ProceedingJoinPoint joinPoint, RateLimit rateLimit) throws Throwable {
+    @Around("@annotation(interview.guide.common.annotation.RateLimit) || " +
+            "@annotation(interview.guide.common.annotation.RateLimit.Container)")
+    public Object around(ProceedingJoinPoint joinPoint) throws Throwable {
         MethodSignature signature = (MethodSignature) joinPoint.getSignature();
         Method method = signature.getMethod();
         String className = method.getDeclaringClass().getSimpleName();
         String methodName = method.getName();
 
-        // 1. 计算时间窗口（毫秒）
-        long intervalMs = calculateIntervalMs(rateLimit.interval(), rateLimit.timeUnit());
+        RateLimit[] rules = method.getAnnotationsByType(RateLimit.class);
+        long nowMs = System.currentTimeMillis();
+        String requestId = UUID.randomUUID().toString();
 
-        // 2. 根据配置维度动态生成 Redis Keys
-        List<String> keys = generateKeys(className, methodName, rateLimit.dimensions());
+        for (RateLimit rule : rules) {
+            long intervalMs = calculateIntervalMs(rule.interval(), rule.timeUnit());
+            String key = generateKey(className, methodName, rule.dimension());
 
-        // 3. 调用 Lua 脚本执行原子限流
-        // 使用 StringCodec 确保参数正确传递为字符串
-        RScript script = redissonClient.getScript(StringCodec.INSTANCE);
+            Long result = executeRateLimitScript(key, nowMs, requestId, intervalMs, rule.count());
 
-        // 准备参数
-        List<Object> keysList = new ArrayList<>(keys);
-        Object[] args = {
-                String.valueOf(System.currentTimeMillis()), // ARGV[1]: 当前时间戳
-                String.valueOf(1),                          // ARGV[2]: 申请令牌数（默认1个）
-                String.valueOf(intervalMs),                 // ARGV[3]: 时间窗口
-                String.valueOf(rateLimit.count()),          // ARGV[4]: 最大令牌数
-                UUID.randomUUID().toString()               // ARGV[5]: 请求唯一标识
-        };
-
-        Object resultObj = script.evalSha(
-                RScript.Mode.READ_WRITE,
-                luaScriptSha,
-                RScript.ReturnType.VALUE,
-                keysList,
-                args
-        );
-
-        // 将结果转换为 Long
-        Long result = convertToLong(resultObj);
-
-        // 4. 处理限流结果
-        if (result == null || result == 0) {
-            return handleRateLimitExceeded(joinPoint, rateLimit, keys);
+            if (result == null || result == 0) {
+                return handleRateLimitExceeded(joinPoint, rule, key);
+            }
         }
 
-        // 5. 执行原方法
         return joinPoint.proceed();
     }
 
-    /**
-     * 计算时间窗口毫秒数
-     */
+    private Long executeRateLimitScript(String key, long nowMs, String requestId, long intervalMs, double count) {
+        List<Object> keysList = Collections.singletonList(key);
+        Object[] args = {
+                String.valueOf(nowMs),
+                String.valueOf(1),
+                String.valueOf(intervalMs),
+                String.valueOf(count),
+                requestId
+        };
+
+        try {
+            Object resultObj = rScript.evalSha(
+                    RScript.Mode.READ_WRITE,
+                    luaScriptSha,
+                    RScript.ReturnType.VALUE,
+                    keysList,
+                    args
+            );
+            return convertToLong(resultObj);
+        } catch (org.redisson.client.RedisException e) {
+            // Redis 重启后脚本缓存丢失，重新加载并重试
+            if (e.getMessage() != null && e.getMessage().contains("NOSCRIPT")) {
+                loadScript();
+                Object resultObj = rScript.evalSha(
+                        RScript.Mode.READ_WRITE,
+                        luaScriptSha,
+                        RScript.ReturnType.VALUE,
+                        keysList,
+                        args
+                );
+                return convertToLong(resultObj);
+            }
+            throw e;
+        }
+    }
+
     private long calculateIntervalMs(long interval, RateLimit.TimeUnit unit) {
         return switch (unit) {
             case MILLISECONDS -> interval;
@@ -123,62 +135,37 @@ public class RateLimitAspect {
         };
     }
 
-    /**
-     * 将结果对象安全转换为 Long
-     */
     private Long convertToLong(Object obj) {
-        if (obj == null) {
-            return null;
+        if (obj instanceof Number n) {
+            return n.longValue();
         }
-        if (obj instanceof Long) {
-            return (Long) obj;
-        } else if (obj instanceof Integer) {
-            return ((Integer) obj).longValue();
-        } else if (obj instanceof Short) {
-            return ((Short) obj).longValue();
-        } else if (obj instanceof Byte) {
-            return ((Byte) obj).longValue();
-        } else if (obj instanceof String) {
+        if (obj instanceof String s) {
             try {
-                return Long.parseLong((String) obj);
+                return Long.parseLong(s);
             } catch (NumberFormatException e) {
                 log.warn("无法将字符串转换为Long: {}", obj);
                 return null;
             }
         }
-        log.warn("不支持的对象类型转换为Long: {}", obj.getClass().getName());
+        log.warn("不支持的对象类型转换为Long: {}", obj != null ? obj.getClass().getName() : "null");
         return null;
     }
 
-    /**
-     * 生成限流键列表
-     */
-    private List<String> generateKeys(String className, String methodName, RateLimit.Dimension[] dimensions) {
-        List<String> keys = new ArrayList<>();
-        // 使用 {} 包含类名和方法名作为 Hash Tag，确保该方法的所有限流 Key 落在同一个 Redis Slot
-        // 从而适配 Redis Cluster 模式
+    private String generateKey(String className, String methodName, RateLimit.Dimension dimension) {
         String hashTag = "{" + className + ":" + methodName + "}";
         String keyPrefix = "ratelimit:" + hashTag;
 
-        for (RateLimit.Dimension dimension : dimensions) {
-            switch (dimension) {
-                case GLOBAL -> keys.add(keyPrefix + ":global");
-                case IP -> keys.add(keyPrefix + ":ip:" + getClientIp());
-                case USER -> keys.add(keyPrefix + ":user:" + getCurrentUserId());
-            }
-        }
-
-        return keys;
+        return switch (dimension) {
+            case GLOBAL -> keyPrefix + ":global";
+            case IP -> keyPrefix + ":ip:" + getClientIp();
+            case USER -> keyPrefix + ":user:" + getCurrentUserId();
+        };
     }
 
-    /**
-     * 处理限流超出情况
-     */
-    private Object handleRateLimitExceeded(ProceedingJoinPoint joinPoint, RateLimit rateLimit, List<String> keys)
+    private Object handleRateLimitExceeded(ProceedingJoinPoint joinPoint, RateLimit rateLimit, String key)
             throws Throwable {
         String methodName = joinPoint.getSignature().getName();
 
-        // 如果配置了降级方法，则调用降级方法
         if (rateLimit.fallback() != null && !rateLimit.fallback().isEmpty()) {
             try {
                 Method fallbackMethod = findFallbackMethod(joinPoint, rateLimit.fallback());
@@ -187,7 +174,6 @@ public class RateLimitAspect {
                             joinPoint.getTarget().getClass().getSimpleName(),
                             methodName,
                             rateLimit.fallback());
-                    // 如果降级方法有参数，传入原方法的参数
                     if (fallbackMethod.getParameterCount() > 0) {
                         return fallbackMethod.invoke(joinPoint.getTarget(), joinPoint.getArgs());
                     } else {
@@ -199,28 +185,21 @@ public class RateLimitAspect {
             }
         }
 
-        // 没有降级方法或降级失败，抛出限流异常
-        log.debug("限流触发，拒绝请求: keys={}, count={} per {} {}",
-                keys, rateLimit.count(), rateLimit.interval(), rateLimit.timeUnit());
+        log.debug("限流触发，拒绝请求: key={}, count={} per {} {}",
+                key, rateLimit.count(), rateLimit.interval(), rateLimit.timeUnit());
         throw new RateLimitExceededException("请求过于频繁，请稍后再试");
     }
 
-    /**
-     * 查找降级方法
-     * 优先查找与原方法参数列表完全一致的方法，找不到则查找无参方法
-     */
     private Method findFallbackMethod(ProceedingJoinPoint joinPoint, String fallbackName) {
         Class<?> targetClass = joinPoint.getTarget().getClass();
         MethodSignature signature = (MethodSignature) joinPoint.getSignature();
         Class<?>[] parameterTypes = signature.getParameterTypes();
 
         try {
-            // 1. 尝试查找同参数列表的方法
             Method method = targetClass.getDeclaredMethod(fallbackName, parameterTypes);
             method.setAccessible(true);
             return method;
         } catch (NoSuchMethodException e) {
-            // 2. 尝试查找无参方法
             try {
                 Method method = targetClass.getDeclaredMethod(fallbackName);
                 method.setAccessible(true);
@@ -233,10 +212,6 @@ public class RateLimitAspect {
         }
     }
 
-    /**
-     * 获取客户端真实 IP
-     * 处理 X-Forwarded-For 头，支持代理服务器场景
-     */
     private String getClientIp() {
         ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
         if (attributes == null) {
@@ -259,7 +234,6 @@ public class RateLimitAspect {
             ip = request.getRemoteAddr();
         }
 
-        // 处理多个 IP 的情况（X-Forwarded-For 可能包含多个 IP）
         if (ip != null && ip.contains(",")) {
             ip = ip.split(",")[0].trim();
         }
@@ -267,11 +241,6 @@ public class RateLimitAspect {
         return ip != null ? ip : "unknown";
     }
 
-    /**
-     * 获取当前用户 ID
-     * 从请求属性或 Session 中获取
-     * TODO: 需要根据实际项目的认证框架进行实现，本项目未显示用户管理
-     */
     private String getCurrentUserId() {
         ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
         if (attributes == null) {
@@ -280,23 +249,15 @@ public class RateLimitAspect {
 
         HttpServletRequest request = attributes.getRequest();
 
-        // 方式1: 从请求属性中获取（推荐）
         Object userId = request.getAttribute("userId");
         if (userId != null) {
             return userId.toString();
         }
 
-        // 方式2: 从请求头中获取
         userId = request.getHeader("X-User-Id");
         if (userId != null) {
             return userId.toString();
         }
-
-        // 方式3: 从 Session 中获取（如果使用 Session）
-        // userId = request.getSession().getAttribute("userId");
-
-        // 方式4: 从 JWT Token 中解析（如果使用 JWT）
-        // 需要集成具体的 JWT 工具类
 
         return "anonymous";
     }

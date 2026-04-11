@@ -4,6 +4,7 @@ import interview.guide.common.result.Result;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.*;
 import interview.guide.modules.knowledgebase.service.RagChatSessionService;
 import jakarta.validation.Valid;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -19,6 +20,7 @@ import java.util.List;
 @Slf4j
 @RestController
 @RequiredArgsConstructor
+@Tag(name = "RAG 问答", description = "基于知识库的智能问答会话")
 public class RagChatController {
 
     private final RagChatSessionService sessionService;

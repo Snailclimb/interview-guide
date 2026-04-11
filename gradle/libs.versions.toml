@@ -11,6 +11,7 @@ mapstruct = "1.6.3"
 aws-sdk = "2.29.51"
 itext = "8.0.5"
 pinyin4j = "2.5.0"
+springdoc = "3.0.2"
 
 [libraries]
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter" }
@@ -18,6 +19,7 @@ lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }
 tika-core = { module = "org.apache.tika:tika-core", version.ref = "tika" }
 tika-parsers = { module = "org.apache.tika:tika-parsers-standard-package", version.ref = "tika" }
 pinyin4j = { module = "com.belerweb:pinyin4j", version.ref = "pinyin4j" }
+springdoc = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
