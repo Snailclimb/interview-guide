@@ -1,0 +1,45 @@
+displayName: 腾讯后端
+display:
+  icon: 腾
+  gradient: from-green-500 to-emerald-500
+  iconBg: bg-green-100 dark:bg-green-900/30
+  iconColor: text-green-600 dark:text-green-400
+categories:
+  - key: NET_OS
+    label: 计网与操作系统
+    priority: CORE
+    ref: network-os.md
+    shared: true
+  - key: JAVA
+    label: Java
+    priority: CORE
+    ref: java.md
+    shared: true
+  - key: MYSQL
+    label: MySQL
+    priority: NORMAL
+    ref: mysql.md
+    shared: true
+  - key: REDIS
+    label: Redis
+    priority: NORMAL
+    ref: redis.md
+    shared: true
+  - key: MQ
+    label: 消息队列
+    priority: NORMAL
+    ref: mq.md
+    shared: true
+  - key: SYSTEM_DESIGN_SCENARIO
+    label: 系统设计/场景题
+    priority: NORMAL
+    ref: system-design-scenarios.md
+    shared: true
+  - key: SPRING
+    label: Spring
+    priority: NORMAL
+    ref: spring.md
+    shared: true
+  - key: PROJECT
+    label: 项目经历
+    priority: ALWAYS_ONE

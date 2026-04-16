@@ -1,0 +1,38 @@
+displayName: Python 后端开发
+display:
+  icon: 🐍
+  gradient: from-green-500 to-teal-500
+  iconBg: bg-green-100 dark:bg-green-900/30
+  iconColor: text-green-600 dark:text-green-400
+categories:
+  - key: PYTHON_BASIC
+    label: Python 基础
+    priority: CORE
+    ref: python-basic.md
+    shared: true
+  - key: DATABASE
+    label: 数据库
+    priority: CORE
+    ref: database.md
+    shared: true
+  - key: DJANGO_FLASK
+    label: Django/Flask
+    priority: NORMAL
+    ref: django-flask.md
+    shared: true
+  - key: CACHE
+    label: 缓存
+    priority: NORMAL
+    ref: redis.md
+    shared: true
+  - key: SYSTEM_DESIGN_SCENARIO
+    label: 系统设计/场景题
+    priority: NORMAL
+    ref: system-design-scenarios.md
+    shared: true
+  - key: DEPLOY
+    label: 部署
+    priority: NORMAL
+  - key: PROJECT
+    label: 项目经历
+    priority: ALWAYS_ONE

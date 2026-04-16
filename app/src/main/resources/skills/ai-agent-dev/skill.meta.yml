@@ -1,0 +1,34 @@
+displayName: AI Agent 开发
+display:
+  icon: A
+  gradient: from-violet-500 to-purple-600
+  iconBg: bg-violet-100 dark:bg-violet-900/30
+  iconColor: text-violet-600 dark:bg-violet-400
+categories:
+  - key: AGENT_BASIS
+    label: Agent 基础
+    priority: CORE
+    ref: ai-agent-dev.md
+  - key: LLM_CALLING
+    label: LLM 调用
+    priority: CORE
+    ref: ai-agent-dev.md
+  - key: MCP_PROTOCOL
+    label: MCP 协议
+    priority: CORE
+    ref: ai-agent-dev.md
+  - key: RAG
+    label: RAG 检索增强
+    priority: CORE
+    ref: ai-agent-dev.md
+  - key: CONTEXT_ENGINEERING
+    label: 上下文工程
+    priority: NORMAL
+    ref: ai-agent-dev.md
+  - key: MULTI_AGENT
+    label: 多 Agent 协作
+    priority: NORMAL
+    ref: ai-agent-dev.md
+  - key: PROJECT
+    label: 项目经历
+    priority: ALWAYS_ONE

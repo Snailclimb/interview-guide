@@ -1,0 +1,85 @@
+# ==============================================================================
+# Docker Build Context Optimization
+# 作用：减小构建上下文，加快镜像构建速度，避免敏感信息泄露
+# ==============================================================================
+
+# Version Control
+.git
+.gitignore
+.gitattributes
+
+# Gradle
+.gradle
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Node.js (Frontend)
+**/node_modules
+**/dist
+**/build
+**/.pnpm-store
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# IDE & Editors
+.idea
+.vscode
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings
+*.swp
+*.swo
+*~
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Logs & Temporary Files
+*.log
+logs/
+tmp/
+temp/
+test-output.txt
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Test & Coverage
+**/coverage
+**/.nyc_output
+**/test-results
+
+# Documentation (not needed in production image)
+docs/
+*.md
+!README.md
+
+# Docker (avoid recursive context)
+docker-compose*.yml
+.dockerignore
+Dockerfile*
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# Misc
+.editorconfig
+.eslintrc*
+.prettierrc*
+*.bak
+*.tmp

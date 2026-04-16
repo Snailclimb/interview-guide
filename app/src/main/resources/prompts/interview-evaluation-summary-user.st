@@ -4,6 +4,9 @@
 ## 候选人简历摘要
 {resumeText}
 
+## 参考答案基线（用于辅助汇总）
+{referenceContext}
+
 ## 类别得分概览
 {categorySummary}
 

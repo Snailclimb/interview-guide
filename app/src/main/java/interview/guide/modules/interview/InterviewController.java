@@ -2,7 +2,13 @@ package interview.guide.modules.interview;
 
 import interview.guide.common.annotation.RateLimit;
 import interview.guide.common.result.Result;
-import interview.guide.modules.interview.model.*;
+import interview.guide.modules.interview.model.CreateInterviewRequest;
+import interview.guide.modules.interview.model.InterviewDetailDTO;
+import interview.guide.modules.interview.model.InterviewReportDTO;
+import interview.guide.modules.interview.model.InterviewSessionDTO;
+import interview.guide.modules.interview.model.SessionListItemDTO;
+import interview.guide.modules.interview.model.SubmitAnswerRequest;
+import interview.guide.modules.interview.model.SubmitAnswerResponse;
 import interview.guide.modules.interview.service.InterviewHistoryService;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
 import interview.guide.modules.interview.service.InterviewSessionService;
@@ -12,10 +18,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -32,6 +45,17 @@ public class InterviewController {
     private final InterviewHistoryService historyService;
     private final InterviewPersistenceService persistenceService;
     
+    /**
+     * 列出所有面试会话（用于面试记录页）
+     */
+    @GetMapping("/api/interview/sessions")
+    public Result<List<SessionListItemDTO>> listSessions() {
+        List<SessionListItemDTO> items = persistenceService.findAll().stream()
+            .map(SessionListItemDTO::from)
+            .toList();
+        return Result.success(items);
+    }
+
     /**
      * 创建面试会话
      */

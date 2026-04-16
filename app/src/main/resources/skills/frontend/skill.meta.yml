@@ -1,0 +1,34 @@
+displayName: 前端工程
+display:
+  icon: 🌐
+  gradient: from-cyan-500 to-blue-500
+  iconBg: bg-cyan-100 dark:bg-cyan-900/30
+  iconColor: text-cyan-600 dark:text-cyan-400
+categories:
+  - key: JAVASCRIPT
+    label: JavaScript
+    priority: CORE
+    ref: javascript.md
+    shared: true
+  - key: REACT_VUE
+    label: React/Vue
+    priority: CORE
+    ref: react-vue.md
+    shared: true
+  - key: BROWSER
+    label: 浏览器原理
+    priority: CORE
+    ref: browser.md
+    shared: true
+  - key: CSS
+    label: CSS
+    priority: NORMAL
+  - key: ENGINEERING
+    label: 工程化
+    priority: NORMAL
+  - key: PERFORMANCE
+    label: 性能优化
+    priority: NORMAL
+  - key: PROJECT
+    label: 项目经历
+    priority: ALWAYS_ONE

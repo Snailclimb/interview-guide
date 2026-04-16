@@ -11,7 +11,7 @@ import {CheckSquare, ChevronLeft, Clock, Download, MessageSquare, Mic} from 'luc
 interface ResumeDetailPageProps {
   resumeId: number;
   onBack: () => void;
-  onStartInterview: (resumeText: string, resumeId: number) => void;
+  onStartInterview: (resumeId: number) => void;
 }
 
 type TabType = 'analysis' | 'interview';
@@ -271,7 +271,7 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
           )}
           {detailView !== 'interviewDetail' && (
             <motion.button
-              onClick={() => onStartInterview(resume.resumeText, resumeId)}
+              onClick={() => onStartInterview(resumeId)}
               className="px-5 py-2.5 bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-xl font-medium shadow-lg shadow-primary-500/30 hover:shadow-xl transition-all flex items-center gap-2"
               whileHover={{ scale: 1.02, y: -1 }}
               whileTap={{ scale: 0.98 }}
@@ -343,7 +343,7 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
               ) : (
                   <InterviewPanel
                       interviews={resume.interviews || []}
-                  onStartInterview={() => onStartInterview(resume.resumeText, resumeId)}
+                  onStartInterview={() => onStartInterview(resumeId)}
                   onViewInterview={handleViewInterview}
                   onExportInterview={handleExportInterviewPdf}
                   onDeleteInterview={handleDeleteInterview}

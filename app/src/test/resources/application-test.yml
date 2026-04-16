@@ -1,0 +1,164 @@
+# Test Profile Configuration
+# 测试环境配置文件
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+        format_sql: true
+
+  redis:
+    redisson:
+      config: |
+        singleServerConfig:
+          address: "redis://localhost:6379"
+          database: 0
+
+  ai:
+    openai:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode
+      api-key: test-api-key
+      chat:
+        options:
+          model: qwen-plus
+          temperature: 0.2
+      embedding:
+        options:
+          model: text-embedding-v3
+    retry:
+      max-attempts: 1
+      on-client-errors: false
+    vectorstore:
+      pgvector:
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+        dimensions: 1024
+        initialize-schema: false
+        remove-existing-vector-store-table: false
+
+app:
+  ai:
+    default-provider: dashscope
+    providers:
+      dashscope:
+        base-url: https://dashscope.aliyuncs.com/compatible-mode
+        api-key: test-api-key
+        model: qwen-plus
+      lmstudio:
+        base-url: http://localhost:1234
+        api-key: lm-studio
+        model: qwen2.5-7b-instruct
+    structured-max-attempts: 2
+    structured-include-last-error: true
+    rag:
+      rewrite:
+        enabled: true
+      search:
+        short-query-length: 4
+        topk-short: 20
+        topk-medium: 12
+        topk-long: 8
+        min-score-short: 0.18
+        min-score-default: 0.28
+  interview:
+    follow-up-count: 1
+    evaluation:
+      batch-size: 8
+  resume:
+    upload-dir: ${java.io.tmpdir}/ai-interview/resumes
+    allowed-types:
+      - application/pdf
+      - application/msword
+      - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+      - text/plain
+
+  storage:
+    endpoint: http://localhost:9000
+    access-key: minioadmin
+    secret-key: minioadmin
+    bucket: interview-guide
+    region: us-east-1
+
+  cors:
+    allowed-origins: http://localhost:5173,http://localhost:5174,http://localhost:80
+
+  voice-interview:
+    llm-provider: dashscope
+
+    phase:
+      intro:
+        min-duration: 3
+        suggested-duration: 5
+        max-duration: 8
+        min-questions: 2
+        max-questions: 5
+      tech:
+        min-duration: 8
+        suggested-duration: 10
+        max-duration: 15
+        min-questions: 3
+        max-questions: 8
+      project:
+        min-duration: 8
+        suggested-duration: 10
+        max-duration: 15
+        min-questions: 2
+        max-questions: 5
+      hr:
+        min-duration: 3
+        suggested-duration: 5
+        max-duration: 8
+        min-questions: 2
+        max-questions: 5
+
+    tts:
+      default-voice: siyue
+
+    qwen:
+      asr:
+        url: wss://dashscope.aliyuncs.com/api-ws/v1/realtime
+        model: qwen3-asr-flash-realtime
+        api-key: test-api-key
+        language: zh
+        format: pcm
+        sample-rate: 16000
+        enable-turn-detection: true
+        turn-detection-type: server_vad
+        turn-detection-threshold: 0.0
+        turn-detection-silence-duration-ms: 1000
+
+      tts:
+        url: wss://dashscope.aliyuncs.com/api-ws/v1/realtime
+        model: qwen3-tts-flash-realtime
+        api-key: test-api-key
+        voice: Cherry
+        format: pcm
+        sample-rate: 16000
+        mode: server_commit
+        language-type: Chinese
+        speech-rate: 1.0
+        volume: 60
+
+    user-utterance-debounce-ms: 1600
+
+    rate-limit:
+      max-per-session: 10
+      max-per-ip: 3
+      max-concurrent: 50
+
+    audio:
+      codec: opus
+      sample-rate: 16000
+      bit-rate: 24000
+      channels: 1
+      chunk-duration: 2000

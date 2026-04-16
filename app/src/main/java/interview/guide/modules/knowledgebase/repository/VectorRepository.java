@@ -1,5 +1,7 @@
 package interview.guide.modules.knowledgebase.repository;
 
+import interview.guide.common.exception.BusinessException;
+import interview.guide.common.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -57,8 +59,7 @@ public class VectorRepository {
         } catch (Exception e) {
             log.error("执行删除向量 SQL 失败: kbId={}, error={}", knowledgeBaseId, e.getMessage());
             // 抛出异常以触发事务回滚
-            throw new RuntimeException("删除向量数据失败", e);
+            throw new BusinessException(ErrorCode.KNOWLEDGE_BASE_DELETE_FAILED, "删除向量数据失败");
         }
     }    
 }
-

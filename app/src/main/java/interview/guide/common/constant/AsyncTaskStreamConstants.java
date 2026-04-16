@@ -109,4 +109,26 @@ public final class AsyncTaskStreamConstants {
      * 面试会话ID字段
      */
     public static final String FIELD_SESSION_ID = "sessionId";
+
+    // ========== 语音面试评估 Stream 配置 ==========
+
+    /**
+     * 语音面试评估 Stream Key
+     */
+    public static final String VOICE_EVALUATE_STREAM_KEY = "voice:evaluate:stream";
+
+    /**
+     * 语音面试评估 Consumer Group 名称
+     */
+    public static final String VOICE_EVALUATE_GROUP_NAME = "voice-evaluate-group";
+
+    /**
+     * 语音面试评估 Consumer 名称前缀
+     */
+    public static final String VOICE_EVALUATE_CONSUMER_PREFIX = "voice-evaluate-consumer-";
+
+    /**
+     * 语音面试会话ID字段
+     */
+    public static final String FIELD_VOICE_SESSION_ID = "voiceSessionId";
 }

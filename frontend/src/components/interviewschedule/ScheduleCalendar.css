@@ -1,0 +1,75 @@
+/* ScheduleCalendar.css - Custom styles for the interview calendar */
+
+/* Increase time slot height in week and day views */
+.rbc-time-view .rbc-time-content .rbc-timeslot-group {
+  min-height: 60px !important;
+}
+
+/* Ensure events have minimum height */
+.rbc-event {
+  min-height: 50px !important;
+}
+
+/* Month view events don't need minimum height */
+.rbc-month-view .rbc-event {
+  min-height: auto !important;
+}
+
+/* Allow event content to overflow for better text display */
+.rbc-time-view .rbc-event-content {
+  overflow: visible !important;
+}
+
+/* Set time slot height */
+.rbc-time-view .rbc-time-slot {
+  height: 30px !important;
+}
+
+/* Style time slot borders for light mode */
+.rbc-day-slot .rbc-time-slot {
+  border-top: 1px solid #f1f5f9 !important;
+}
+
+/* Style time slot borders for dark mode */
+.dark .rbc-day-slot .rbc-time-slot {
+  border-top: 1px solid rgba(71, 85, 105, 0.3) !important;
+}
+
+/* Improve event label readability */
+.rbc-event-label {
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+
+/* Ensure events can expand to show content */
+.rbc-time-content {
+  overflow-y: auto !important;
+}
+
+/* Better spacing for month view */
+.rbc-month-row {
+  min-height: 100px !important;
+}
+
+/* Improve calendar header styling */
+.rbc-header {
+  padding: 12px 8px !important;
+  font-weight: 600 !important;
+  font-size: 13px !important;
+}
+
+/* Dark mode calendar header */
+.dark .rbc-header {
+  color: #cbd5e1 !important;
+  background: transparent !important;
+  border-color: rgba(71, 85, 105, 0.3) !important;
+}
+
+/* Dark mode calendar cells */
+.dark .rbc-off-range-bg {
+  background: rgba(30, 41, 59, 0.3) !important;
+}
+
+.dark .rbc-today {
+  background: rgba(59, 130, 246, 0.1) !important;
+}

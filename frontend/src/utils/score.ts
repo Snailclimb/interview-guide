@@ -62,28 +62,6 @@ export function getScoreColor(
 }
 
 /**
- * 根据分数获取背景颜色类名（用于徽章等）
- */
-export function getScoreBadgeColor(
-  score: number,
-  thresholds: [number, number] = [80, 60]
-): string {
-  const dark = isDarkMode();
-
-  if (dark) {
-    // 深色模式
-    if (score >= thresholds[0]) return 'bg-emerald-500/20 text-emerald-400';
-    if (score >= thresholds[1]) return 'bg-yellow-500/20 text-yellow-400';
-    return 'bg-red-500/20 text-red-400';
-  }
-
-  // 浅色模式
-  if (score >= thresholds[0]) return 'bg-emerald-500 text-white';
-  if (score >= thresholds[1]) return 'bg-amber-500 text-white';
-  return 'bg-red-500 text-white';
-}
-
-/**
  * 根据分数获取进度条颜色类名（用于进度条）
  */
 export function getScoreProgressColor(
@@ -93,4 +71,16 @@ export function getScoreProgressColor(
   if (score >= thresholds[0]) return 'bg-emerald-500';
   if (score >= thresholds[1]) return 'bg-amber-500';
   return 'bg-red-500';
+}
+
+/**
+ * 根据分数获取文本颜色类名
+ */
+export function getScoreTextColor(
+  score: number,
+  thresholds: [number, number] = [80, 70]
+): string {
+  if (score >= thresholds[0]) return 'text-emerald-500';
+  if (score >= thresholds[1]) return 'text-amber-500';
+  return 'text-red-500';
 }

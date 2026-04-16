@@ -87,6 +87,10 @@ export const request = {
     return instance.put(url, data, config).then(res => res.data);
   },
 
+  patch<T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
+    return instance.patch(url, data, config).then(res => res.data);
+  },
+
   delete<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
     return instance.delete(url, config).then(res => res.data);
   },
@@ -96,7 +100,7 @@ export const request = {
    */
   upload<T>(url: string, formData: FormData, config?: AxiosRequestConfig): Promise<T> {
     return instance.post(url, formData, {
-      timeout: 120000,
+      timeout: 300000, // 5分钟，与Nginx proxy_read_timeout对齐
       headers: { 'Content-Type': 'multipart/form-data' },
       ...config,
     }).then(res => res.data);

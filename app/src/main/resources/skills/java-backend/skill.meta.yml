@@ -1,0 +1,35 @@
+displayName: Java 后端开发
+display:
+  icon: ☕
+  gradient: from-blue-500 to-indigo-500
+  iconBg: bg-blue-100 dark:bg-blue-900/30
+  iconColor: text-blue-600 dark:text-blue-400
+categories:
+  - key: JAVA
+    label: Java
+    priority: CORE
+    ref: java.md
+    shared: true
+  - key: MYSQL
+    label: MySQL
+    priority: CORE
+    ref: mysql.md
+    shared: true
+  - key: REDIS
+    label: Redis
+    priority: CORE
+    ref: redis.md
+    shared: true
+  - key: SPRING
+    label: Spring
+    priority: NORMAL
+    ref: spring.md
+    shared: true
+  - key: SYSTEM_DESIGN_SCENARIO
+    label: 系统设计/场景题
+    priority: NORMAL
+    ref: system-design-scenarios.md
+    shared: true
+  - key: PROJECT
+    label: 项目经历
+    priority: ALWAYS_ONE

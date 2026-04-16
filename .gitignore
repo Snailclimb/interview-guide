@@ -8,8 +8,17 @@ build
 /app/bin
 # Environment variables
 .env
+test-output.txt
 # IDEA code analysis
 qodana.yaml
 
 app/src/main/resources/application-dev.yml
 /docs
+SETUP_API_KEYS.md
+
+# AI Assistant documentation
+CLAUDE.md
+GEMINI.md
+
+# Playwright MCP
+.playwright-mcp/

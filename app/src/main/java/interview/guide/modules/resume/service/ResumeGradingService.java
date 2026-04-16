@@ -11,8 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.converter.BeanOutputConverter;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.Resource;
+import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -63,12 +62,18 @@ public class ResumeGradingService {
     public ResumeGradingService(
             ChatClient.Builder chatClientBuilder,
             StructuredOutputInvoker structuredOutputInvoker,
-            @Value("classpath:prompts/resume-analysis-system.st") Resource systemPromptResource,
-            @Value("classpath:prompts/resume-analysis-user.st") Resource userPromptResource) throws IOException {
+            ResumeAnalysisProperties properties,
+            ResourceLoader resourceLoader) throws IOException {
         this.chatClient = chatClientBuilder.build();
         this.structuredOutputInvoker = structuredOutputInvoker;
-        this.systemPromptTemplate = new PromptTemplate(systemPromptResource.getContentAsString(StandardCharsets.UTF_8));
-        this.userPromptTemplate = new PromptTemplate(userPromptResource.getContentAsString(StandardCharsets.UTF_8));
+        this.systemPromptTemplate = new PromptTemplate(
+            resourceLoader.getResource(properties.getSystemPromptPath())
+                .getContentAsString(StandardCharsets.UTF_8)
+        );
+        this.userPromptTemplate = new PromptTemplate(
+            resourceLoader.getResource(properties.getUserPromptPath())
+                .getContentAsString(StandardCharsets.UTF_8)
+        );
         this.outputConverter = new BeanOutputConverter<>(ResumeAnalysisResponseDTO.class);
     }
     

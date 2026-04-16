@@ -1,8 +1,19 @@
 # AI Interview Platform Configuration
 # 智能AI面试官平台配置
 
+logging:
+  charset:
+    console: UTF-8
+    file: UTF-8
+
 server:
   port: 8080
+  # 明确指定HTTP响应编码
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
 
 # SpringDoc OpenAPI / Swagger配置
 springdoc:
@@ -15,6 +26,8 @@ springdoc:
   packages-to-scan: interview.guide.modules
 
 spring:
+  config:
+    import: optional:classpath:voice-interview-opening.yml
   application:
     name: ai-interview-platform
 
@@ -28,12 +41,13 @@ spring:
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:interview_guide}
     username: ${POSTGRES_USER:postgres}
-    password: ${POSTGRES_PASSWORD:123456}
+    # 与根目录 docker-compose.yml 中 postgres 服务默认一致（本地只起依赖容器 + bootRun 时无需改）
+    password: ${POSTGRES_PASSWORD:password}
     driver-class-name: org.postgresql.Driver
 
   jpa:
     hibernate:
-      ddl-auto: create #首次启动用 create，表创建成功后，改回 update
+      ddl-auto: update #首次启动用 create，表创建成功后，改回 update
     show-sql: false
     properties:
       hibernate:
@@ -88,10 +102,38 @@ spring:
 # Application custom configuration
 app:
   ai:
+    default-provider: dashscope
+    agent-utils:
+      skills-root: ${APP_AI_AGENT_UTILS_SKILLS_ROOT:classpath:skills}
+    providers:
+      dashscope:
+        base-url: https://dashscope.aliyuncs.com/compatible-mode
+        api-key: ${AI_BAILIAN_API_KEY}
+        model: qwen-plus
+      lmstudio:
+        base-url: http://localhost:1234
+        api-key: lm-studio
+        model: qwen2.5-7b-instruct
+    advisors:
+      enabled: ${APP_AI_ADVISORS_ENABLED:true}
+      tool-call-enabled: ${APP_AI_ADVISORS_TOOL_CALL_ENABLED:true}
+      tool-call-conversation-history-enabled: ${APP_AI_ADVISORS_TOOL_CALL_CONVERSATION_HISTORY_ENABLED:false}
+      stream-tool-call-responses: ${APP_AI_ADVISORS_STREAM_TOOL_CALL_RESPONSES:false}
+      message-chat-memory-enabled: ${APP_AI_ADVISORS_MESSAGE_CHAT_MEMORY_ENABLED:false}
+      message-chat-memory-max-messages: ${APP_AI_ADVISORS_MESSAGE_CHAT_MEMORY_MAX_MESSAGES:120}
+      simple-logger-enabled: ${APP_AI_ADVISORS_SIMPLE_LOGGER_ENABLED:false}
     # 结构化输出重试次数（用于 BeanOutputConverter 解析失败时的业务层重试）
     structured-max-attempts: ${APP_AI_STRUCTURED_MAX_ATTEMPTS:2}
     # 重试时是否将上次错误原因注入提示词，帮助模型定向修复输出
     structured-include-last-error: ${APP_AI_STRUCTURED_INCLUDE_LAST_ERROR:true}
+    # 是否启用“修复型重试提示词”（关闭后每次重试沿用原始 system prompt）
+    structured-retry-use-repair-prompt: ${APP_AI_STRUCTURED_RETRY_USE_REPAIR_PROMPT:true}
+    # 修复型重试提示词中是否追加严格 JSON 指令
+    structured-retry-append-strict-json-instruction: ${APP_AI_STRUCTURED_RETRY_APPEND_STRICT_JSON_INSTRUCTION:true}
+    # 注入到重试提示词中的错误信息最大长度
+    structured-error-message-max-length: ${APP_AI_STRUCTURED_ERROR_MESSAGE_MAX_LENGTH:200}
+    # 是否开启结构化输出调用指标（invocations/attempts/latency）
+    structured-metrics-enabled: ${APP_AI_STRUCTURED_METRICS_ENABLED:true}
     rag:
       rewrite:
         enabled: ${APP_AI_RAG_REWRITE_ENABLED:true}
@@ -117,11 +159,100 @@ app:
   # RustFS (S3兼容) 存储配置
   storage:
     endpoint: ${APP_STORAGE_ENDPOINT:http://localhost:9000}
-    access-key: ${APP_STORAGE_ACCESS_KEY:wr45VXJZhCxc6FAWz0YR}
-    secret-key: ${APP_STORAGE_SECRET_KEY:GtKxV57WJkpw4CvASPBzTy2DYElLnRqh8dIXQa0m}
+    access-key: ${APP_STORAGE_ACCESS_KEY:minioadmin}
+    secret-key: ${APP_STORAGE_SECRET_KEY:minioadmin}
     bucket: ${APP_STORAGE_BUCKET:interview-guide}
     region: ${APP_STORAGE_REGION:us-east-1}
   
   # CORS配置 - React前端
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:5174,http://localhost:80}
+
+  # Voice interview configuration
+  voice-interview:
+    # LLM provider selection
+    llm-provider: ${APP_VOICE_INTERVIEW_LLM_PROVIDER:dashscope}  # dashscope | minimax | openai | deepseek
+
+    # Phase duration settings (minutes)
+    phase:
+      intro:
+        min-duration: ${APP_VOICE_INTERVIEW_PHASE_INTRO_MIN_DURATION:3}
+        suggested-duration: ${APP_VOICE_INTERVIEW_PHASE_INTRO_SUGGESTED_DURATION:5}
+        max-duration: ${APP_VOICE_INTERVIEW_PHASE_INTRO_MAX_DURATION:8}
+        min-questions: ${APP_VOICE_INTERVIEW_PHASE_INTRO_MIN_QUESTIONS:2}
+        max-questions: ${APP_VOICE_INTERVIEW_PHASE_INTRO_MAX_QUESTIONS:5}
+      tech:
+        min-duration: ${APP_VOICE_INTERVIEW_PHASE_TECH_MIN_DURATION:8}
+        suggested-duration: ${APP_VOICE_INTERVIEW_PHASE_TECH_SUGGESTED_DURATION:10}
+        max-duration: ${APP_VOICE_INTERVIEW_PHASE_TECH_MAX_DURATION:15}
+        min-questions: ${APP_VOICE_INTERVIEW_PHASE_TECH_MIN_QUESTIONS:3}
+        max-questions: ${APP_VOICE_INTERVIEW_PHASE_TECH_MAX_QUESTIONS:8}
+      project:
+        min-duration: ${APP_VOICE_INTERVIEW_PHASE_PROJECT_MIN_DURATION:8}
+        suggested-duration: ${APP_VOICE_INTERVIEW_PHASE_PROJECT_SUGGESTED_DURATION:10}
+        max-duration: ${APP_VOICE_INTERVIEW_PHASE_PROJECT_MAX_DURATION:15}
+        min-questions: ${APP_VOICE_INTERVIEW_PHASE_PROJECT_MIN_QUESTIONS:2}
+        max-questions: ${APP_VOICE_INTERVIEW_PHASE_PROJECT_MAX_QUESTIONS:5}
+      hr:
+        min-duration: ${APP_VOICE_INTERVIEW_PHASE_HR_MIN_DURATION:3}
+        suggested-duration: ${APP_VOICE_INTERVIEW_PHASE_HR_SUGGESTED_DURATION:5}
+        max-duration: ${APP_VOICE_INTERVIEW_PHASE_HR_MAX_DURATION:8}
+        min-questions: ${APP_VOICE_INTERVIEW_PHASE_HR_MIN_QUESTIONS:2}
+        max-questions: ${APP_VOICE_INTERVIEW_PHASE_HR_MAX_QUESTIONS:5}
+
+    # TTS configuration
+    tts:
+      default-voice: ${APP_VOICE_INTERVIEW_TTS_DEFAULT_VOICE:siyue}  # 思悦 - 温柔自然的女声
+
+    # Qwen3 Realtime ASR Configuration
+    qwen:
+      asr:
+        url: wss://dashscope.aliyuncs.com/api-ws/v1/realtime
+        model: qwen3-asr-flash-realtime
+        api-key: ${AI_BAILIAN_API_KEY}
+        language: zh
+        format: pcm
+        sample-rate: 16000
+        enable-turn-detection: true
+        turn-detection-type: server_vad
+        turn-detection-threshold: 0.0
+        # 静音多久判为一句结束；中文面试思考停顿常见 2-3s，设 2000 避免句中切段
+        turn-detection-silence-duration-ms: ${APP_VOICE_ASR_SILENCE_MS:2000}
+
+      # Qwen TTS Realtime Configuration (WebSocket-based)
+      # 音色列表文档：https://help.aliyun.com/zh/model-studio/qwen-tts-realtime
+      tts:
+        model: qwen3-tts-flash-realtime
+        api-key: ${AI_BAILIAN_API_KEY}
+        voice: Cherry
+        format: pcm
+        sample-rate: 24000
+        mode: commit
+        language-type: Chinese
+        speech-rate: 1.0
+        volume: 60
+
+    # 用户说完一小段 STT 定稿后，再等多久（毫秒）才触发面试官回复；需大于 VAD 静音阈值以确保用户继续说话时 partials 能取消
+    user-utterance-debounce-ms: ${APP_VOICE_USER_UTTERANCE_DEBOUNCE_MS:2500}
+    # 触发提交前要求的最小静音时长（毫秒），从最后一次 STT 活动（含 partial）算起
+    min-silence-before-commit-ms: ${APP_VOICE_MIN_SILENCE_BEFORE_COMMIT_MS:2500}
+    # 当内容较短时先不提交，等待继续说（字符数）
+    min-commit-chars: ${APP_VOICE_MIN_COMMIT_CHARS:20}
+    # 最长等待用户继续补充的时间（毫秒），超时后强制提交
+    max-wait-for-continuation-ms: ${APP_VOICE_MAX_WAIT_FOR_CONTINUATION_MS:7000}
+    # 语音面试单轮面试官回复最大长度（字符）
+    ai-question-max-chars: ${APP_VOICE_AI_QUESTION_MAX_CHARS:120}
+
+    # Rate limiting
+    rate-limit:
+      max-per-session: ${APP_VOICE_INTERVIEW_RATE_LIMIT_MAX_PER_SESSION:10}  # messages per second
+      max-per-ip: ${APP_VOICE_INTERVIEW_RATE_LIMIT_MAX_PER_IP:3}  # interviews per hour
+      max-concurrent: ${APP_VOICE_INTERVIEW_RATE_LIMIT_MAX_CONCURRENT:50}  # global concurrent interviews
+
+    # Audio specifications
+    audio:
+      codec: ${APP_VOICE_INTERVIEW_AUDIO_CODEC:opus}
+      sample-rate: ${APP_VOICE_INTERVIEW_AUDIO_SAMPLE_RATE:16000}
+      bit-rate: ${APP_VOICE_INTERVIEW_AUDIO_BIT_RATE:24000}
+      channels: ${APP_VOICE_INTERVIEW_AUDIO_CHANNELS:1}
+      chunk-duration: ${APP_VOICE_INTERVIEW_AUDIO_CHUNK_DURATION:2000}  # 2 seconds

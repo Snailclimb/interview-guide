@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!--
+      中文 Windows 下 file.encoding 常为 GBK，Spring Boot 默认 CONSOLE_LOG_CHARSET 会跟 file.encoding，
+      导致 UTF-8 终端里日志乱码。在引入 base.xml 之前固定为 UTF-8。
+    -->
+    <property name="CONSOLE_LOG_CHARSET" value="UTF-8"/>
+    <property name="FILE_LOG_CHARSET" value="UTF-8"/>
+    <include resource="org/springframework/boot/logging/logback/base.xml"/>
+</configuration>

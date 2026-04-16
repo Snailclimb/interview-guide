@@ -128,6 +128,26 @@ public class GlobalExceptionHandler {
     }
     
     /**
+     * 处理 404 - 资源未找到异常
+     */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    @ResponseStatus(HttpStatus.OK)
+    public Result<Void> handleNoResourceFoundException(org.springframework.web.servlet.resource.NoResourceFoundException e) {
+        log.warn("资源未找到: {}", e.getResourcePath());
+        return Result.error(ErrorCode.NOT_FOUND, "API 接口不存在");
+    }
+
+    /**
+     * 处理请求方法不支持异常
+     */
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    @ResponseStatus(HttpStatus.OK)
+    public Result<Void> handleHttpRequestMethodNotSupportedException(org.springframework.web.HttpRequestMethodNotSupportedException e) {
+        log.warn("请求方法不支持: {} {}", e.getMethod(), e.getSupportedHttpMethods());
+        return Result.error(ErrorCode.METHOD_NOT_ALLOWED, "请求方法不支持: " + e.getMethod());
+    }
+
+    /**
      * 处理其他未知异常
      * 统一返回 HTTP 200，通过业务错误码区分异常类型
      */

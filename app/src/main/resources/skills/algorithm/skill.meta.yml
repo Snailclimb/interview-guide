@@ -1,0 +1,37 @@
+displayName: 算法与数据结构
+display:
+  icon: 🧮
+  gradient: from-purple-500 to-pink-500
+  iconBg: bg-purple-100 dark:bg-purple-900/30
+  iconColor: text-purple-600 dark:text-purple-400
+categories:
+  - key: ARRAY_LINKEDLIST
+    label: 数组/链表
+    priority: CORE
+    ref: algorithm-data-structures.md
+    shared: true
+  - key: HASH_HEAP_QUEUE
+    label: 哈希/堆/栈/队列
+    priority: CORE
+    ref: algorithm-data-structures.md
+    shared: true
+  - key: TREE_GRAPH
+    label: 树/图
+    priority: CORE
+    ref: algorithm-data-structures.md
+    shared: true
+  - key: DP
+    label: 动态规划
+    priority: CORE
+    ref: algorithm-data-structures.md
+    shared: true
+  - key: GREEDY_BACKTRACK
+    label: 贪心/回溯
+    priority: NORMAL
+    ref: algorithm-data-structures.md
+    shared: true
+  - key: DESIGN
+    label: 设计题
+    priority: NORMAL
+    ref: algorithm-data-structures.md
+    shared: true

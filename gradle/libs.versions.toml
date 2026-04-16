@@ -2,7 +2,8 @@
 
 [versions]
 spring-boot = "4.0.1"
-spring-ai = "2.0.0-M1"
+springAi = "2.0.0-M4"
+springAiAgentUtils = "0.7.0"
 tika = "2.9.2"
 lombok = "1.18.36"
 junit-jupiter = "5.12.0"
@@ -20,6 +21,8 @@ tika-core = { module = "org.apache.tika:tika-core", version.ref = "tika" }
 tika-parsers = { module = "org.apache.tika:tika-parsers-standard-package", version.ref = "tika" }
 pinyin4j = { module = "com.belerweb:pinyin4j", version.ref = "pinyin4j" }
 springdoc = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }
+spring-ai-agent-utils-bom = { module = "org.springaicommunity:spring-ai-agent-utils-bom", version.ref = "springAiAgentUtils" }
+spring-ai-agent-utils = { module = "org.springaicommunity:spring-ai-agent-utils" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }

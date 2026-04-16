@@ -1,0 +1,38 @@
+displayName: 系统设计
+display:
+  icon: 🏗️
+  gradient: from-amber-500 to-orange-500
+  iconBg: bg-amber-100 dark:bg-amber-900/30
+  iconColor: text-amber-600 dark:text-amber-400
+categories:
+  - key: HIGH_AVAILABILITY
+    label: 高可用
+    priority: CORE
+    ref: high-availability.md
+    shared: true
+  - key: DISTRIBUTED
+    label: 分布式
+    priority: CORE
+    ref: distributed.md
+    shared: true
+  - key: SYSTEM_DESIGN_SCENARIO
+    label: 系统设计/场景题
+    priority: CORE
+    ref: system-design-scenarios.md
+    shared: true
+  - key: CACHE
+    label: 缓存
+    priority: NORMAL
+    ref: redis.md
+    shared: true
+  - key: DESIGN_PATTERN
+    label: 设计模式
+    priority: NORMAL
+    ref: design-pattern.md
+    shared: true
+  - key: MQ
+    label: 消息队列
+    priority: NORMAL
+  - key: DB_DESIGN
+    label: 数据库设计
+    priority: NORMAL

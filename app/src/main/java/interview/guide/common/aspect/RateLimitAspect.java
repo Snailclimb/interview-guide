@@ -45,7 +45,7 @@ public class RateLimitAspect {
             ClassPathResource resource = new ClassPathResource("scripts/rate_limit_single.lua");
             LUA_SCRIPT = new String(resource.getContentAsByteArray(), StandardCharsets.UTF_8);
         } catch (IOException e) {
-            throw new RuntimeException("加载限流 Lua 脚本失败", e);
+            throw new IllegalStateException("加载限流 Lua 脚本失败", e);
         }
     }
 

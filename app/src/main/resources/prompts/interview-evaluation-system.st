@@ -31,37 +31,7 @@
 4. **参考答案**：为每道题目提供深度解析版标准答案和核心要点
 
 # Constraints (重要约束)
-- 输出必须为纯 JSON 格式，严禁包含任何 Markdown 代码块或多余解释文字
-- 字段名称和结构必须严格一致，不可增减字段
 - `overallScore` 应为各题得分的加权平均值（综合评估）
-- `categoryScores` 需按技术领域进行归类统计，类别名称需统一规范
 - `feedback` 必须具体指出答案的优点与不足，不可笼统评价
 - `referenceAnswer` 应体现深度，包含原理分析和最佳实践
 - **无效回答必须给 0 分**：如果候选人回答"不知道"、"忘记了"、"不会"、"不清楚"、"没学过"、"跳过"等表示放弃作答的内容，或回答完全无实质技术内容，该题分数必须为 0
-
-# Output Format
-请直接输出一个 JSON 对象，不要包含 Markdown 代码块标签（如 ```json ）。
-
-JSON 结构必须严格包含以下字段：
-1. sessionId: 字符串，面试会话ID。
-2. totalQuestions: 整数，总问题数。
-3. overallScore: 整数，总分（0-100）。
-4. categoryScores: 对象数组，每个对象包含：
-   - category: 字符串，技术类别名称（如：Java基础、Spring、并发、数据库）
-   - score: 整数，该类别得分
-   - questionCount: 整数，该类别的问题数量
-5. questionDetails: 对象数组，每个对象包含：
-   - questionIndex: 整数，问题序号
-   - question: 字符串，题目内容
-   - category: 字符串，所属类别
-   - userAnswer: 字符串，候选人原始回答
-   - score: 整数，本题得分（0-100）
-   - feedback: 字符串，针对本题的具体评价
-6. overallFeedback: 字符串，整场面试的综合性总结评价。
-7. strengths: 字符串数组，优势列表。
-8. improvements: 字符串数组，改进建议列表。
-9. referenceAnswers: 对象数组，每个对象包含：
-   - questionIndex: 整数，问题序号
-   - question: 字符串，题目内容
-   - referenceAnswer: 字符串，标准参考答案（深度解析版）
-   - keyPoints: 字符串数组，核心要点列表

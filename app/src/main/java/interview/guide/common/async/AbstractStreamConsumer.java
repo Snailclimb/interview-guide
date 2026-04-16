@@ -10,7 +10,9 @@ import org.redisson.api.stream.StreamMessageId;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -41,11 +43,19 @@ public abstract class AbstractStreamConsumer<T> {
             log.warn("创建消费者组时发生异常（可能已存在）: {}", e.getMessage());
         }
 
-        this.executorService = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, threadName());
-            t.setDaemon(true);
-            return t;
-        });
+        this.executorService = new ThreadPoolExecutor(
+            1,
+            1,
+            0L,
+            TimeUnit.MILLISECONDS,
+            new LinkedBlockingQueue<>(),
+            r -> {
+                Thread t = new Thread(r, threadName());
+                t.setDaemon(true);
+                return t;
+            },
+            new ThreadPoolExecutor.AbortPolicy()
+        );
 
         running.set(true);
         executorService.submit(this::consumeLoop);

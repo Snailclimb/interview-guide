@@ -1,5 +1,7 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.common.exception.BusinessException;
+import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.knowledgebase.repository.VectorRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
@@ -32,8 +34,8 @@ public class KnowledgeBaseVectorService {
     public KnowledgeBaseVectorService(VectorStore vectorStore, VectorRepository vectorRepository) {
         this.vectorStore = vectorStore;
         this.vectorRepository = vectorRepository;
-        // 使用TokenTextSplitter，每个chunk约500 tokens，重叠50 tokens
-        this.textSplitter = new TokenTextSplitter();
+        // 使用 TokenTextSplitter 默认配置，每个 chunk 约 800 tokens，基于标点边界切分（无重叠）
+        this.textSplitter = TokenTextSplitter.builder().build();
     }
     /**
      * 将知识库内容向量化并存储
@@ -73,7 +75,8 @@ public class KnowledgeBaseVectorService {
                     knowledgeBaseId, totalChunks, batchCount);
         } catch (Exception e) {
             log.error("向量化知识库失败: kbId={}, error={}", knowledgeBaseId, e.getMessage(), e);
-            throw new RuntimeException("向量化知识库失败: " + e.getMessage(), e);
+            throw new BusinessException(ErrorCode.KNOWLEDGE_BASE_VECTORIZATION_FAILED,
+                "向量化知识库失败: " + e.getMessage());
         }
     }
     
@@ -106,9 +109,14 @@ public class KnowledgeBaseVectorService {
             if (results == null) {
                 return List.of();
             }
-            
-            log.info("搜索完成: 找到 {} 个相关文档", results.size());
-            return results;
+
+            // Apply topK limiting in case VectorStore returns more than requested
+            List<Document> limitedResults = results.stream()
+                .limit(topK)
+                .collect(Collectors.toList());
+
+            log.info("搜索完成: 找到 {} 个相关文档", limitedResults.size());
+            return limitedResults;
             
         } catch (Exception e) {
             log.warn("向量搜索前置过滤失败，回退到本地过滤: {}", e.getMessage());
@@ -145,7 +153,8 @@ public class KnowledgeBaseVectorService {
             return results;
         } catch (Exception e) {
             log.error("向量搜索失败: {}", e.getMessage(), e);
-            throw new RuntimeException("向量搜索失败: " + e.getMessage(), e);
+            throw new BusinessException(ErrorCode.KNOWLEDGE_BASE_QUERY_FAILED,
+                "向量搜索失败: " + e.getMessage());
         }
     }
 
@@ -187,8 +196,7 @@ public class KnowledgeBaseVectorService {
             log.error("删除向量数据失败: kbId={}, error={}", knowledgeBaseId, e.getMessage(), e);
             // 不抛出异常，允许继续执行其他删除操作
             // 如果确实需要严格保证，可以取消下面的注释
-            // throw new RuntimeException("删除向量数据失败: " + e.getMessage(), e);
+            // throw new BusinessException(ErrorCode.KNOWLEDGE_BASE_DELETE_FAILED, "删除向量数据失败");
         }
     }
 }
-

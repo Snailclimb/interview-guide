@@ -16,7 +16,7 @@ services:
     container_name: interview-postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       POSTGRES_DB: interview_guide
     volumes:
       # 数据持久化：确保容器重启或删除后，数据库数据不丢失
@@ -144,7 +144,7 @@ services:
       POSTGRES_PORT: 5432
       POSTGRES_DB: interview_guide
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       
       # === Redis 连接 ===
       REDIS_HOST: redis

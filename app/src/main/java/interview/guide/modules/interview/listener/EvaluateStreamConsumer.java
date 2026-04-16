@@ -1,9 +1,11 @@
 package interview.guide.modules.interview.listener;
 
 import interview.guide.common.async.AbstractStreamConsumer;
+import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.constant.AsyncTaskStreamConstants;
 import interview.guide.common.model.AsyncTaskStatus;
 import interview.guide.infrastructure.redis.RedisService;
+import interview.guide.modules.interview.model.InterviewAnswerEntity;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewReportDTO;
 import interview.guide.modules.interview.model.InterviewSessionEntity;
@@ -12,6 +14,7 @@ import interview.guide.modules.interview.service.AnswerEvaluationService;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.stream.StreamMessageId;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
@@ -32,19 +35,22 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<EvaluateStrea
     private final AnswerEvaluationService evaluationService;
     private final InterviewPersistenceService persistenceService;
     private final ObjectMapper objectMapper;
+    private final LlmProviderRegistry llmProviderRegistry;
 
     public EvaluateStreamConsumer(
         RedisService redisService,
         InterviewSessionRepository sessionRepository,
         AnswerEvaluationService evaluationService,
         InterviewPersistenceService persistenceService,
-        ObjectMapper objectMapper
+        ObjectMapper objectMapper,
+        LlmProviderRegistry llmProviderRegistry
     ) {
         super(redisService);
         this.sessionRepository = sessionRepository;
         this.evaluationService = evaluationService;
         this.persistenceService = persistenceService;
         this.objectMapper = objectMapper;
+        this.llmProviderRegistry = llmProviderRegistry;
     }
 
     record EvaluatePayload(String sessionId) {}
@@ -109,9 +115,8 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<EvaluateStrea
             new TypeReference<>() {}
         );
 
-        List<interview.guide.modules.interview.model.InterviewAnswerEntity> answers =
-            persistenceService.findAnswersBySessionId(sessionId);
-        for (interview.guide.modules.interview.model.InterviewAnswerEntity answer : answers) {
+        List<InterviewAnswerEntity> answers = persistenceService.findAnswersBySessionId(sessionId);
+        for (InterviewAnswerEntity answer : answers) {
             int index = answer.getQuestionIndex();
             if (index >= 0 && index < questions.size()) {
                 InterviewQuestionDTO question = questions.get(index);
@@ -119,8 +124,12 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<EvaluateStrea
             }
         }
 
-        String resumeText = session.getResume().getResumeText();
-        InterviewReportDTO report = evaluationService.evaluateInterview(sessionId, resumeText, questions);
+        // 获取 LLM 客户端
+        String provider = session.getLlmProvider();
+        ChatClient chatClient = llmProviderRegistry.getChatClientOrDefault(provider);
+
+        String resumeText = session.getResume() != null ? session.getResume().getResumeText() : "";
+        InterviewReportDTO report = evaluationService.evaluateInterview(chatClient, sessionId, resumeText, questions);
         persistenceService.saveReport(sessionId, report);
     }
 

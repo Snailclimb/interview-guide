@@ -1,5 +1,7 @@
 package interview.guide.infrastructure.redis;
 
+import interview.guide.common.exception.BusinessException;
+import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO.SessionStatus;
 import lombok.Data;
@@ -68,7 +70,7 @@ public class InterviewSessionCache {
             try {
                 this.questionsJson = objectMapper.writeValueAsString(questions);
             } catch (JacksonException e) {
-                throw new RuntimeException("序列化问题列表失败", e);
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "序列化问题列表失败", e);
             }
         }
 
@@ -76,7 +78,7 @@ public class InterviewSessionCache {
             try {
                 return objectMapper.readValue(questionsJson, new TypeReference<>() {});
             } catch (JacksonException e) {
-                throw new RuntimeException("反序列化问题列表失败", e);
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "反序列化问题列表失败");
             }
         }
     }

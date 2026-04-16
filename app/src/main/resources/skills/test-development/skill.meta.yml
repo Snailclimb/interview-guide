@@ -1,0 +1,40 @@
+displayName: 测试开发
+display:
+  icon: 测
+  gradient: from-emerald-500 to-teal-500
+  iconBg: bg-emerald-100 dark:bg-emerald-900/30
+  iconColor: text-emerald-600 dark:text-emerald-400
+categories:
+  - key: TESTING_BASIC
+    label: 测试基础
+    priority: CORE
+    ref: test-development.md
+    shared: true
+  - key: TEST_CASE_DESIGN
+    label: 用例设计
+    priority: CORE
+    ref: test-development.md
+    shared: true
+  - key: AUTOMATION
+    label: 自动化测试
+    priority: CORE
+    ref: test-development.md
+    shared: true
+  - key: PERFORMANCE_SECURITY
+    label: 性能与安全测试
+    priority: CORE
+    ref: test-development.md
+    shared: true
+  - key: API_TESTING
+    label: API 测试
+    priority: NORMAL
+    ref: test-development.md
+    shared: true
+  - key: WEB_MOBILE_TESTING
+    label: Web/移动端测试
+    priority: NORMAL
+    ref: test-development.md
+    shared: true
+  - key: PROJECT
+    label: 项目经历
+    priority: ALWAYS_ONE

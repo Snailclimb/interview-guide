@@ -1,0 +1,50 @@
+displayName: 阿里后端
+display:
+  icon: 阿
+  gradient: from-orange-500 to-red-500
+  iconBg: bg-orange-100 dark:bg-orange-900/30
+  iconColor: text-orange-600 dark:text-orange-400
+categories:
+  - key: PROJECT
+    label: 项目经历
+    priority: ALWAYS_ONE
+  - key: SYSTEM_DESIGN_SCENARIO
+    label: 系统设计/场景题
+    priority: CORE
+    ref: system-design-scenarios.md
+    shared: true
+  - key: DB_DESIGN
+    label: 数据库设计
+    priority: CORE
+    ref: db-design.md
+    shared: true
+  - key: DISTRIBUTED
+    label: 分布式
+    priority: CORE
+    ref: distributed.md
+    shared: true
+  - key: MYSQL
+    label: MySQL
+    priority: NORMAL
+    ref: mysql.md
+    shared: true
+  - key: REDIS
+    label: Redis
+    priority: NORMAL
+    ref: redis.md
+    shared: true
+  - key: CACHE
+    label: 缓存
+    priority: NORMAL
+    ref: redis.md
+    shared: true
+  - key: MQ
+    label: 消息队列
+    priority: NORMAL
+    ref: mq.md
+    shared: true
+  - key: DESIGN_PATTERN
+    label: 设计模式
+    priority: NORMAL
+    ref: design-pattern.md
+    shared: true

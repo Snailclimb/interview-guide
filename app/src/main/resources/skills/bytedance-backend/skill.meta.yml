@@ -1,0 +1,40 @@
+displayName: 字节后端
+display:
+  icon: 字
+  gradient: from-blue-500 to-cyan-500
+  iconBg: bg-blue-100 dark:bg-blue-900/30
+  iconColor: text-blue-600 dark:text-blue-400
+categories:
+  - key: ARRAY_LINKEDLIST
+    label: 数组/链表
+    priority: CORE
+    ref: algorithm-data-structures.md
+    shared: true
+  - key: HASH_HEAP_QUEUE
+    label: 哈希/堆/栈/队列
+    priority: CORE
+    ref: algorithm-data-structures.md
+    shared: true
+  - key: TREE_GRAPH
+    label: 树/图
+    priority: CORE
+    ref: algorithm-data-structures.md
+    shared: true
+  - key: DP
+    label: 动态规划
+    priority: CORE
+    ref: algorithm-data-structures.md
+    shared: true
+  - key: DISTRIBUTED
+    label: 分布式场景
+    priority: NORMAL
+    ref: distributed.md
+    shared: true
+  - key: SYSTEM_DESIGN_SCENARIO
+    label: 系统设计/场景题
+    priority: NORMAL
+    ref: system-design-scenarios.md
+    shared: true
+  - key: PROJECT
+    label: 项目经历
+    priority: ALWAYS_ONE

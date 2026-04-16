@@ -1,15 +1,26 @@
 package interview.guide.modules.interview.service;
 
+import interview.guide.common.constant.CommonConstants.InterviewDefaults;
+import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.model.AsyncTaskStatus;
 import interview.guide.infrastructure.redis.InterviewSessionCache;
 import interview.guide.infrastructure.redis.InterviewSessionCache.CachedSession;
 import interview.guide.modules.interview.listener.EvaluateStreamProducer;
-import interview.guide.modules.interview.model.*;
+import interview.guide.modules.interview.model.CreateInterviewRequest;
+import interview.guide.modules.interview.model.HistoricalQuestion;
+import interview.guide.modules.interview.model.InterviewAnswerEntity;
+import interview.guide.modules.interview.model.InterviewQuestionDTO;
+import interview.guide.modules.interview.model.InterviewReportDTO;
+import interview.guide.modules.interview.model.InterviewSessionDTO;
+import interview.guide.modules.interview.model.InterviewSessionEntity;
+import interview.guide.modules.interview.model.SubmitAnswerRequest;
+import interview.guide.modules.interview.model.SubmitAnswerResponse;
 import interview.guide.modules.interview.model.InterviewSessionDTO.SessionStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
@@ -34,6 +45,7 @@ public class InterviewSessionService {
     private final InterviewSessionCache sessionCache;
     private final ObjectMapper objectMapper;
     private final EvaluateStreamProducer evaluateStreamProducer;
+    private final LlmProviderRegistry llmProviderRegistry;
 
     /**
      * 创建新的面试会话
@@ -52,27 +64,35 @@ public class InterviewSessionService {
         }
 
         String sessionId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        String skillId = request.skillId() != null ? request.skillId() : InterviewDefaults.SKILL_ID;
+        String difficulty = request.difficulty() != null ? request.difficulty() : InterviewDefaults.DIFFICULTY;
 
-        log.info("创建新面试会话: {}, 题目数量: {}, resumeId: {}",
-            sessionId, request.questionCount(), request.resumeId());
+        log.info("创建新面试会话: {}, skill: {}, difficulty: {}, questionCount: {}, resumeId: {}",
+            sessionId, skillId, difficulty, request.questionCount(), request.resumeId());
 
-        // 获取历史问题
-        List<String> historicalQuestions = null;
-        if (request.resumeId() != null) {
-            historicalQuestions = persistenceService.getHistoricalQuestionsByResumeId(request.resumeId());
-        }
+        // 获取历史问题（通用模式按 skillId 查询，有简历时按 resumeId + skillId 精确匹配）
+        List<HistoricalQuestion> historicalQuestions =
+            persistenceService.getHistoricalQuestions(skillId, request.resumeId());
 
-        // 生成面试问题
-        List<InterviewQuestionDTO> questions = questionService.generateQuestions(
+        // 获取 LLM 客户端
+        ChatClient chatClient = llmProviderRegistry.getChatClientOrDefault(request.llmProvider());
+
+        // 基于 Skill 生成面试问题
+        List<InterviewQuestionDTO> questions = questionService.generateQuestionsBySkill(
+            chatClient,
+            skillId,
+            difficulty,
             request.resumeText(),
             request.questionCount(),
-            historicalQuestions
+            historicalQuestions,
+            request.customCategories(),
+            request.jdText()
         );
 
         // 保存到 Redis 缓存
         sessionCache.saveSession(
             sessionId,
-            request.resumeText(),
+            request.resumeText() != null ? request.resumeText() : "",
             request.resumeId(),
             questions,
             0,
@@ -80,18 +100,16 @@ public class InterviewSessionService {
         );
 
         // 保存到数据库
-        if (request.resumeId() != null) {
-            try {
-                persistenceService.saveSession(sessionId, request.resumeId(),
-                    questions.size(), questions);
-            } catch (Exception e) {
-                log.warn("保存面试会话到数据库失败: {}", e.getMessage());
-            }
+        try {
+            persistenceService.saveSession(sessionId, request.resumeId(),
+                questions.size(), questions, request.llmProvider(), skillId, difficulty);
+        } catch (Exception e) {
+            log.warn("保存面试会话到数据库失败: {}", e.getMessage());
         }
 
         return new InterviewSessionDTO(
             sessionId,
-            request.resumeText(),
+            request.resumeText() != null ? request.resumeText() : "",
             questions.size(),
             0,
             questions,
@@ -198,8 +216,8 @@ public class InterviewSessionService {
             // 保存到 Redis 缓存
             sessionCache.saveSession(
                 entity.getSessionId(),
-                entity.getResume().getResumeText(),
-                entity.getResume().getId(),
+                entity.getResume() != null ? entity.getResume().getResumeText() : "",
+                entity.getResume() != null ? entity.getResume().getId() : null,
                 questions,
                 entity.getCurrentQuestionIndex(),
                 status
@@ -443,7 +461,16 @@ public class InterviewSessionService {
 
         List<InterviewQuestionDTO> questions = session.getQuestions(objectMapper);
 
+        // 获取 LLM 客户端
+        String provider = InterviewDefaults.LLM_PROVIDER;
+        Optional<InterviewSessionEntity> entityOpt = persistenceService.findBySessionId(sessionId);
+        if (entityOpt.isPresent()) {
+            provider = entityOpt.get().getLlmProvider();
+        }
+        ChatClient chatClient = llmProviderRegistry.getChatClientOrDefault(provider);
+
         InterviewReportDTO report = evaluationService.evaluateInterview(
+            chatClient,
             sessionId,
             session.getResumeText(),
             questions
