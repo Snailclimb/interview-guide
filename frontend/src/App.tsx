@@ -4,6 +4,7 @@ import { useEffect, useState, Suspense, lazy } from 'react';
 import { historyApi, type InterviewDetail } from './api/history';
 import type { UploadKnowledgeBaseResponse } from './api/knowledgebase';
 import type { Difficulty } from './components/UnifiedInterviewModal';
+import type { CategoryDTO } from './api/skill';
 import { Loader2 } from 'lucide-react';
 import { ROUTES } from './constants/routes';
 
@@ -20,6 +21,8 @@ const VoiceInterviewPage = lazy(() => import('./pages/VoiceInterviewPage'));
 const VoiceInterviewEvaluationPage = lazy(() => import('./pages/VoiceInterviewEvaluationPage'));
 const InterviewSchedulePage = lazy(() => import('./pages/InterviewSchedulePage'));
 const InterviewHubPage = lazy(() => import('./pages/InterviewHubPage'));
+const ReviewListPage = lazy(() => import('./pages/ReviewListPage'));
+const ReviewDetailPage = lazy(() => import('./pages/ReviewDetailPage'));
 const InterviewDetailPanel = lazy(() => import('./components/InterviewDetailPanel'));
 
 // Loading component
@@ -88,6 +91,8 @@ interface InterviewEntryState {
     difficulty?: Difficulty;
     questionCount?: number;
     llmProvider?: string;
+    customCategories?: CategoryDTO[];
+    jdText?: string;
   };
 }
 
@@ -206,6 +211,10 @@ function App() {
 
             {/* 面试日程管理 */}
             <Route path="interview-schedule" element={<InterviewSchedulePage />} />
+
+            {/* 面试复盘 */}
+            <Route path="reviews" element={<ReviewListPage />} />
+            <Route path="reviews/:reviewId" element={<ReviewDetailPage />} />
 
             {/* 问答助手（知识库聊天） */}
             <Route path="knowledgebase/chat" element={<KnowledgeBaseQueryPageWrapper />} />

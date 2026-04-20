@@ -1,6 +1,6 @@
 import {Link, Outlet, useLocation, useNavigate} from 'react-router-dom';
 import {motion} from 'framer-motion';
-import {Calendar, ChevronRight, Database, FileStack, MessageSquare, Moon, Sparkles, Sun, Users,} from 'lucide-react';
+import {Calendar, ChevronRight, ClipboardCheck, Database, FileStack, MessageSquare, Moon, Sparkles, Sun, Users,} from 'lucide-react';
 import {useTheme} from '../hooks/useTheme';
 import {useState} from 'react';
 import UnifiedInterviewModal, {UnifiedInterviewConfig} from './UnifiedInterviewModal';
@@ -89,6 +89,7 @@ export default function Layout() {
         { id: 'interview-hub', path: '/interview-hub', label: '模拟面试', icon: Sparkles, description: '文字/语音面试练习' },
         { id: 'interviews', path: '/interviews', label: '面试记录', icon: Users, description: '查看面试历史' },
         { id: 'interview-schedule', path: '/interview-schedule', label: '面试日程', icon: Calendar, description: '管理面试安排' },
+        { id: 'reviews', path: '/reviews', label: '面试复盘', icon: ClipboardCheck, description: '复盘面试记录' },
       ],
     },
     {
