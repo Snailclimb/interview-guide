@@ -47,6 +47,20 @@ public class FileStorageService {
     }
 
     /**
+     * 上传复盘转录稿文件
+     */
+    public String uploadReview(MultipartFile file) {
+        return uploadFile(file, "reviews");
+    }
+
+    /**
+     * 删除复盘转录稿文件
+     */
+    public void deleteReview(String fileKey) {
+        deleteFile(fileKey);
+    }
+
+    /**
      * 上传知识库文件
      */
     public String uploadKnowledgeBase(MultipartFile file) {

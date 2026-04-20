@@ -131,4 +131,31 @@ public final class AsyncTaskStreamConstants {
      * 语音面试会话ID字段
      */
     public static final String FIELD_VOICE_SESSION_ID = "voiceSessionId";
+
+    // ========== 面试复盘分析任务 ==========
+
+    /**
+     * 面试复盘分析 Stream Key
+     */
+    public static final String REVIEW_ANALYZE_STREAM = "review:analyze:stream";
+
+    /**
+     * 面试复盘分析 Consumer Group 名称
+     */
+    public static final String REVIEW_ANALYZE_GROUP = "review-analyze-group";
+
+    /**
+     * 面试复盘分析 Consumer 名称前缀
+     */
+    public static final String REVIEW_ANALYZE_CONSUMER_PREFIX = "review-analyze-consumer-";
+
+    /**
+     * 复盘记录ID字段
+     */
+    public static final String FIELD_REVIEW_ID = "reviewId";
+
+    /**
+     * 分析产物类型字段
+     */
+    public static final String FIELD_ARTIFACT_TYPE = "artifactType";
 }

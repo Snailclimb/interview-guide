@@ -73,7 +73,13 @@ public enum ErrorCode {
     VOICE_SESSION_ALREADY_ENDED(10003, "语音面试会话已结束"),
     VOICE_EVALUATION_FAILED(10004, "语音面试评估失败"),
     VOICE_EVALUATION_IN_PROGRESS(10005, "语音面试评估正在进行中"),
-    VOICE_EVALUATION_NOT_FOUND(10006, "语音面试评估结果不存在");
+    VOICE_EVALUATION_NOT_FOUND(10006, "语音面试评估结果不存在"),
+
+    // ========== 面试复盘模块错误 11xxx ==========
+    REVIEW_NOT_FOUND(11001, "面试复盘记录不存在"),
+    ARTIFACT_NOT_FOUND(11002, "分析产物不存在"),
+    REVIEW_UPLOAD_FAILED(11003, "复盘文件上传失败"),
+    REVIEW_ANALYSIS_FAILED(11004, "复盘分析失败");
     
     private final Integer code;
     private final String message;

@@ -26,26 +26,29 @@ public abstract class AbstractStreamConsumer<T> {
     private final RedisService redisService;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private ExecutorService executorService;
-    private String consumerName;
 
     protected AbstractStreamConsumer(RedisService redisService) {
         this.redisService = redisService;
     }
 
+    protected int concurrency() {
+        return 1;
+    }
+
     @PostConstruct
     public void init() {
-        this.consumerName = consumerPrefix() + UUID.randomUUID().toString().substring(0, 8);
+        int poolSize = concurrency();
 
         try {
             redisService.createStreamGroup(streamKey(), groupName());
-            log.info("Redis Stream 消费者组已创建或已存在: {}", groupName());
+            log.info("[Stream] {} 消费者组已创建或已存在: {}", taskDisplayName(), groupName());
         } catch (Exception e) {
-            log.warn("创建消费者组时发生异常（可能已存在）: {}", e.getMessage());
+            log.warn("[Stream] {} 创建消费者组异常（可能已存在）: {}", taskDisplayName(), e.getMessage());
         }
 
         this.executorService = new ThreadPoolExecutor(
-            1,
-            1,
+            poolSize,
+            poolSize,
             0L,
             TimeUnit.MILLISECONDS,
             new LinkedBlockingQueue<>(),
@@ -58,8 +61,12 @@ public abstract class AbstractStreamConsumer<T> {
         );
 
         running.set(true);
-        executorService.submit(this::consumeLoop);
-        log.info("{}消费者已启动: consumerName={}", taskDisplayName(), consumerName);
+        for (int i = 0; i < poolSize; i++) {
+            String consumerName = consumerPrefix() + UUID.randomUUID().toString().substring(0, 8);
+            executorService.submit(() -> consumeLoop(consumerName));
+            log.info("[Stream] {} 消费者线程已启动: consumer={}, concurrency={}",
+                taskDisplayName(), consumerName, poolSize);
+        }
     }
 
     @PreDestroy
@@ -68,10 +75,11 @@ public abstract class AbstractStreamConsumer<T> {
         if (executorService != null) {
             executorService.shutdown();
         }
-        log.info("{}消费者已关闭: consumerName={}", taskDisplayName(), consumerName);
+        log.info("[Stream] {} 消费者已关闭, concurrency={}", taskDisplayName(), concurrency());
     }
 
-    private void consumeLoop() {
+    private void consumeLoop(String consumerName) {
+        log.info("[Stream] {} 消费循环启动: consumer={}", taskDisplayName(), consumerName);
         while (running.get()) {
             try {
                 redisService.streamConsumeMessages(
@@ -84,33 +92,59 @@ public abstract class AbstractStreamConsumer<T> {
                 );
             } catch (Exception e) {
                 if (Thread.currentThread().isInterrupted()) {
-                    log.info("消费者线程被中断");
+                    log.info("[Stream] {} 消费者线程被中断: consumer={}", taskDisplayName(), consumerName);
                     break;
                 }
-                log.error("消费消息时发生错误: {}", e.getMessage(), e);
+                if (e.getMessage() != null && e.getMessage().contains("NOGROUP")) {
+                    log.warn("[Stream] {} 消费者组不存在，尝试重建: consumer={}", taskDisplayName(), consumerName);
+                    try {
+                        redisService.createStreamGroup(streamKey(), groupName());
+                    } catch (Exception ignored) {
+                    }
+                }
+                log.error("[Stream] {} 消费循环异常: consumer={}, error={}",
+                    taskDisplayName(), consumerName, e.getMessage(), e);
             }
         }
+        log.info("[Stream] {} 消费循环退出: consumer={}", taskDisplayName(), consumerName);
     }
 
     private void processMessage(StreamMessageId messageId, Map<String, String> data) {
         T payload = parsePayload(messageId, data);
         if (payload == null) {
+            log.warn("[Stream] {} 消息解析为空，ACK 跳过: messageId={}", taskDisplayName(), messageId);
             ackMessage(messageId);
             return;
         }
 
         int retryCount = parseRetryCount(data);
-        log.info("开始处理{}任务: {}, messageId={}, retryCount={}",
+        log.info("[Stream] {} >>> 收到任务: {}, messageId={}, retryCount={}",
             taskDisplayName(), payloadIdentifier(payload), messageId, retryCount);
 
+        long start = System.currentTimeMillis();
         try {
+            long t0 = System.currentTimeMillis();
             markProcessing(payload);
+            log.info("[Stream] {} markProcessing done: {} ({}ms)",
+                taskDisplayName(), payloadIdentifier(payload), System.currentTimeMillis() - t0);
+
+            t0 = System.currentTimeMillis();
             processBusiness(payload);
+            log.info("[Stream] {} processBusiness done: {} ({}ms)",
+                taskDisplayName(), payloadIdentifier(payload), System.currentTimeMillis() - t0);
+
+            t0 = System.currentTimeMillis();
             markCompleted(payload);
+            log.info("[Stream] {} markCompleted done: {} ({}ms)",
+                taskDisplayName(), payloadIdentifier(payload), System.currentTimeMillis() - t0);
+
             ackMessage(messageId);
-            log.info("{}任务完成: {}", taskDisplayName(), payloadIdentifier(payload));
+            log.info("[Stream] {} <<< 任务完成: {}, total={}ms",
+                taskDisplayName(), payloadIdentifier(payload), System.currentTimeMillis() - start);
         } catch (Exception e) {
-            log.error("{}任务失败: {}, error={}", taskDisplayName(), payloadIdentifier(payload), e.getMessage(), e);
+            long elapsed = System.currentTimeMillis() - start;
+            log.error("[Stream] {} <<< 任务失败: {}, elapsed={}ms, error={}",
+                taskDisplayName(), payloadIdentifier(payload), elapsed, e.getMessage(), e);
             if (retryCount < AsyncTaskStreamConstants.MAX_RETRY_COUNT) {
                 retryMessage(payload, retryCount + 1);
             } else {
@@ -140,8 +174,9 @@ public abstract class AbstractStreamConsumer<T> {
     private void ackMessage(StreamMessageId messageId) {
         try {
             redisService.streamAck(streamKey(), groupName(), messageId);
+            log.debug("[Stream] {} ACK success: messageId={}", taskDisplayName(), messageId);
         } catch (Exception e) {
-            log.error("确认消息失败: messageId={}, error={}", messageId, e.getMessage(), e);
+            log.error("[Stream] {} ACK failed: messageId={}, error={}", taskDisplayName(), messageId, e.getMessage(), e);
         }
     }
 
