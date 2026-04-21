@@ -1,6 +1,7 @@
 package interview.guide.modules.voiceinterview.service;
 
 import interview.guide.common.ai.LlmProviderRegistry;
+import interview.guide.common.ai.PromptSanitizer;
 import interview.guide.modules.resume.model.ResumeEntity;
 import interview.guide.modules.resume.repository.ResumeRepository;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
@@ -27,6 +28,7 @@ public class DashscopeLlmService {
     private final VoiceInterviewPromptService promptService;
     private final ResumeRepository resumeRepository;
     private final VoiceInterviewProperties voiceInterviewProperties;
+    private final PromptSanitizer promptSanitizer;
 
     public String chat(String userInput, VoiceInterviewSessionEntity session, List<String> conversationHistory) {
         try {
@@ -35,7 +37,7 @@ public class DashscopeLlmService {
             String provider = session.getLlmProvider();
             log.info("[VoiceInterview] Session {} using LLM provider: {}", session.getId(), provider);
 
-            ChatClient chatClient = llmProviderRegistry.getChatClientOrDefault(provider);
+            ChatClient chatClient = llmProviderRegistry.getVoiceChatClient(provider);
 
             ChatClient.CallResponseSpec response = chatClient.prompt()
                 .system(promptContext.systemPrompt())
@@ -74,7 +76,7 @@ public class DashscopeLlmService {
             String provider = session.getLlmProvider();
             log.info("[VoiceInterview] Session {} using LLM provider (sentence stream): {}", session.getId(), provider);
 
-            ChatClient chatClient = llmProviderRegistry.getChatClientOrDefault(provider);
+            ChatClient chatClient = llmProviderRegistry.getVoiceChatClient(provider);
             StringBuilder raw = new StringBuilder();
             AtomicLong lastEmitNanos = new AtomicLong(System.nanoTime());
             AtomicInteger lastEmitLength = new AtomicInteger(0);
@@ -167,11 +169,12 @@ public class DashscopeLlmService {
         if (conversationHistory != null && !conversationHistory.isEmpty()) {
             promptBuilder.append("【之前的对话】\n");
             for (String message : conversationHistory) {
-                promptBuilder.append(message).append("\n");
+                promptBuilder.append(promptSanitizer.sanitize(message)).append("\n");
             }
             promptBuilder.append("\n【当前对话】\n");
         }
-        promptBuilder.append("用户：").append(userInput);
+        promptBuilder.append("用户：").append(
+            promptSanitizer.wrapWithDelimiters("input", promptSanitizer.sanitize(userInput)));
         return new PromptContext(systemPrompt, promptBuilder.toString());
     }
 

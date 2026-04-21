@@ -13,6 +13,7 @@ import interview.guide.modules.voiceinterview.listener.VoiceEvaluateStreamProduc
 import interview.guide.modules.voiceinterview.model.VoiceInterviewMessageEntity;
 import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
 import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionStatus;
+import interview.guide.modules.voiceinterview.repository.VoiceInterviewEvaluationRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewMessageRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewSessionRepository;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +46,7 @@ public class VoiceInterviewService {
 
     private final VoiceInterviewSessionRepository sessionRepository;
     private final VoiceInterviewMessageRepository messageRepository;
+    private final VoiceInterviewEvaluationRepository evaluationRepository;
     private final RedissonClient redissonClient;
     private final VoiceInterviewProperties properties;
     private final VoiceEvaluateStreamProducer voiceEvaluateStreamProducer;
@@ -93,6 +95,21 @@ public class VoiceInterviewService {
     }
 
     /**
+     * 仅当会话处于 IN_PROGRESS 状态时结束，用于 WebSocket 异常断开的兜底。
+     * 正常结束的 endSession 已设为 COMPLETED，此方法不会重复操作。
+     */
+    @Transactional
+    public void endSessionIfInProgress(String sessionId) {
+        Long sessionIdLong = parseSessionId(sessionId);
+        VoiceInterviewSessionEntity session = sessionRepository.findById(sessionIdLong).orElse(null);
+        if (session == null || session.getStatus() != VoiceInterviewSessionStatus.IN_PROGRESS) {
+            return;
+        }
+        log.info("Auto-ending IN_PROGRESS session {} after WebSocket disconnect", sessionId);
+        endSession(session);
+    }
+
+    /**
      * End interview session and update status
      * 结束面试会话并更新状态
      *
@@ -108,6 +125,11 @@ public class VoiceInterviewService {
             return;
         }
 
+        endSession(session);
+        voiceEvaluateStreamProducer.sendEvaluateTask(sessionId);
+    }
+
+    private void endSession(VoiceInterviewSessionEntity session) {
         session.setEndTime(LocalDateTime.now());
         session.setCurrentPhase(VoiceInterviewSessionEntity.InterviewPhase.COMPLETED);
         session.setStatus(VoiceInterviewSessionStatus.COMPLETED);
@@ -115,12 +137,10 @@ public class VoiceInterviewService {
         session.setEvaluateStatus(AsyncTaskStatus.PENDING);
 
         sessionRepository.save(session);
-        invalidateSessionCache(sessionIdLong);
+        invalidateSessionCache(session.getId());
 
-        // Trigger async evaluation via Redis Stream
-        voiceEvaluateStreamProducer.sendEvaluateTask(sessionId);
         log.info("Ended voice interview session: {}, duration: {} seconds, evaluation triggered",
-                sessionId, session.getActualDuration());
+                session.getId(), session.getActualDuration());
     }
 
     /**
@@ -535,6 +555,20 @@ public class VoiceInterviewService {
     public void triggerEvaluation(Long sessionId) {
         updateEvaluateStatus(sessionId, AsyncTaskStatus.PENDING, null);
         voiceEvaluateStreamProducer.sendEvaluateTask(sessionId.toString());
+    }
+
+    /**
+     * 删除语音面试会话及其关联的消息和评估记录
+     */
+    @Transactional
+    public void deleteSession(Long sessionId) {
+        if (!sessionRepository.existsById(sessionId)) {
+            throw new BusinessException(ErrorCode.VOICE_SESSION_NOT_FOUND, "会话不存在: " + sessionId);
+        }
+        evaluationRepository.findBySessionId(sessionId).ifPresent(evaluationRepository::delete);
+        messageRepository.deleteBySessionId(sessionId);
+        sessionRepository.deleteById(sessionId);
+        log.info("Deleted voice interview session: {}", sessionId);
     }
 
     /**

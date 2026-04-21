@@ -13,6 +13,7 @@ export const DIFFICULTY_OPTIONS: { value: Difficulty; label: string; desc: strin
   { value: 'senior', label: '高级', desc: '3 年+' },
 ];
 
+export const CUSTOM_SKILL_ID = 'custom';
 export const DEFAULT_SKILL_ID = 'java-backend';
 export const DEFAULT_LLM_PROVIDER = 'dashscope';
 export const MIN_JD_LENGTH = 50;
@@ -30,8 +31,11 @@ export interface InterviewConfigState {
   questionCount: number;
   plannedDuration: number;
   customJdText: string;
+  parsedCustomJdText: string;
   customCategories: CategoryDTO[];
   parsingJd: boolean;
+  jdNeedsReparse: boolean;
+  isCustomStartDisabled: boolean;
 }
 
 export function useInterviewConfig(options?: {
@@ -54,10 +58,14 @@ export function useInterviewConfig(options?: {
   const [plannedDuration, setPlannedDuration] = useState(30);
   const [llmProvider, setLlmProvider] = useState(preferences.defaultLlmProvider);
   const [customJdText, setCustomJdText] = useState('');
+  const [parsedCustomJdText, setParsedCustomJdText] = useState('');
   const [customCategories, setCustomCategories] = useState<CategoryDTO[]>([]);
   const [parsingJd, setParsingJd] = useState(false);
 
-  const isCustomSkill = skillId === 'custom';
+  const isCustomSkill = skillId === CUSTOM_SKILL_ID;
+  const jdNeedsReparse = parsedCustomJdText.length > 0 && customJdText !== parsedCustomJdText;
+  const isCustomStartDisabled = isCustomSkill
+    && (customCategories.length === 0 || jdNeedsReparse || parsingJd);
 
   const loadSkills = async () => {
     setLoadingSkills(true);
@@ -91,6 +99,7 @@ export function useInterviewConfig(options?: {
     try {
       const categories = await skillApi.parseJd(customJdText);
       setCustomCategories(categories);
+      setParsedCustomJdText(customJdText);
     } catch {
       alert('JD 解析失败，请重试或选择预设主题');
     } finally {
@@ -125,8 +134,11 @@ export function useInterviewConfig(options?: {
     plannedDuration, setPlannedDuration,
     llmProvider, setLlmProvider,
     customJdText, setCustomJdText,
+    parsedCustomJdText,
     customCategories,
     parsingJd,
+    jdNeedsReparse,
+    isCustomStartDisabled,
     isCustomSkill,
     // Actions
     loadSkills,

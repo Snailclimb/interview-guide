@@ -17,6 +17,10 @@ import interview.guide.modules.knowledgebase.repository.RagChatMessageRepository
 import interview.guide.modules.knowledgebase.repository.RagChatSessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Flux;
@@ -39,6 +43,7 @@ public class RagChatSessionService {
     private final KnowledgeBaseQueryService queryService;
     private final RagChatMapper ragChatMapper;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
+    private final KnowledgeBaseQueryProperties queryProperties;
 
     /**
      * 创建新会话
@@ -155,15 +160,18 @@ public class RagChatSessionService {
     }
 
     /**
-     * 获取流式回答
+     * 获取流式回答（带多轮上下文）
      */
     public Flux<String> getStreamAnswer(Long sessionId, String question) {
         RagChatSessionEntity session = sessionRepository.findByIdWithKnowledgeBases(sessionId)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
 
         List<Long> kbIds = session.getKnowledgeBaseIds();
+        List<Message> history = queryProperties.getHistory().isEnabled()
+            ? loadHistoryMessages(sessionId) : List.of();
 
-        return queryService.answerQuestionStream(kbIds, question);
+        log.info("加载历史上下文: sessionId={}, historySize={}", sessionId, history.size());
+        return queryService.answerQuestionStream(kbIds, question, history);
     }
 
     /**
@@ -227,6 +235,32 @@ public class RagChatSessionService {
     }
 
     // ========== 私有方法 ==========
+
+    /**
+     * 加载会话中最近的历史消息作为多轮上下文。
+     * 排除当前轮的 user 消息（prepareStreamMessage 中 completed=true 但尚未回答）。
+     */
+    private List<Message> loadHistoryMessages(Long sessionId) {
+        int limit = queryProperties.getHistory().getMaxMessages() + 1;
+        List<RagChatMessageEntity> recent = messageRepository
+            .findRecentCompletedBySessionId(sessionId, PageRequest.of(0, limit));
+
+        if (recent.isEmpty()) {
+            return List.of();
+        }
+
+        // 查询结果按 messageOrder DESC 排列，最后一条（DESC 首条）是当前轮的 user 消息，排除
+        List<RagChatMessageEntity> historyMessages = recent.size() <= 1
+            ? List.of()
+            : recent.subList(1, recent.size());
+
+        // 反转为正序（时间从早到晚）
+        return historyMessages.reversed().stream()
+            .map(m -> m.getType() == RagChatMessageEntity.MessageType.USER
+                ? (Message) new UserMessage(m.getContent())
+                : (Message) new AssistantMessage(m.getContent()))
+            .toList();
+    }
 
     private String generateTitle(List<KnowledgeBaseEntity> knowledgeBases) {
         if (knowledgeBases.isEmpty()) {

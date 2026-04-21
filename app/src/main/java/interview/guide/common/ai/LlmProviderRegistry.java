@@ -7,6 +7,7 @@ import io.micrometer.observation.ObservationRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
+import org.springframework.ai.chat.client.advisor.SafeGuardAdvisor;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
 import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
@@ -26,6 +27,7 @@ import org.springframework.web.client.RestClient;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -88,49 +90,25 @@ public class LlmProviderRegistry {
             : getDefaultChatClient();
     }
 
+    /**
+     * 获取不带 SkillsTool 的 ChatClient，用于简历题生成等不需要 Agent 工具调用的场景。
+     */
+    public ChatClient getPlainChatClient(String providerId) {
+        String id = resolveProviderId(providerId);
+        return clientCache.computeIfAbsent(id + ":plain", key -> createPlainChatClient(id));
+    }
+
+    /**
+     * 获取语音面试专用 ChatClient：SkillsTool + ToolCallAdvisor（流式）。
+     * 不加 Memory Advisor（语音面试手动管理对话历史）。
+     */
+    public ChatClient getVoiceChatClient(String providerId) {
+        String id = resolveProviderId(providerId);
+        return clientCache.computeIfAbsent(id + ":voice", key -> createVoiceChatClient(id));
+    }
+
     private ChatClient createChatClient(String providerId) {
-        ProviderConfig config = properties.getProviders().get(providerId);
-        if (config == null) {
-            log.error("[LlmProviderRegistry] Provider config not found: {}", providerId);
-            throw new IllegalArgumentException("Unknown LLM provider: " + providerId);
-        }
-
-        log.info("[LlmProviderRegistry] Building client - Provider: {}, BaseUrl: {}, Model: {}", 
-                 providerId, config.getBaseUrl(), config.getModel());
-
-        // Setup SimpleClientHttpRequestFactory with long timeouts (5 minutes for local models)
-        // This provides better compatibility with local servers like LM Studio
-        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(10000); // 10 seconds
-        requestFactory.setReadTimeout(300000);   // 5 minutes
-
-        // Create RestClient.Builder with timeout
-        RestClient.Builder restClientBuilder = RestClient.builder()
-                .requestFactory(requestFactory);
-
-        // Create OpenAiApi using builder to ensure compatibility
-        OpenAiApi openAiApi = OpenAiApi.builder()
-                .baseUrl(config.getBaseUrl())
-                .apiKey(config.getApiKey())
-                .restClientBuilder(restClientBuilder)
-                .build();
-
-        // Create OpenAiChatOptions with model name and default temperature
-        OpenAiChatOptions options = OpenAiChatOptions.builder()
-                .model(config.getModel())
-                .temperature(0.2)
-                .build();
-        
-        // Instantiate OpenAiChatModel with all required parameters for Spring AI 2.0.0-M4
-        OpenAiChatModel chatModel = new OpenAiChatModel(
-                openAiApi,
-                options,
-                toolCallingManager,
-                RetryUtils.DEFAULT_RETRY_TEMPLATE,
-                observationRegistry != null ? observationRegistry : ObservationRegistry.NOOP
-        );
-
-        log.info("[LlmProviderRegistry] Successfully created ChatClient for {}", providerId);
+        OpenAiChatModel chatModel = buildChatModel(providerId);
 
         ChatClient.Builder builder = ChatClient.builder(chatModel);
         if (interviewSkillsToolCallback != null) {
@@ -142,8 +120,71 @@ public class LlmProviderRegistry {
             log.info("[LlmProviderRegistry] Applied {} advisors for provider {}", advisors.size(), providerId);
         }
 
-        // Build and return the ChatClient
         return builder.build();
+    }
+
+    private ChatClient createPlainChatClient(String providerId) {
+        OpenAiChatModel chatModel = buildChatModel(providerId);
+        ChatClient.Builder builder = ChatClient.builder(chatModel);
+        buildSafeGuardAdvisor().ifPresent(advisor -> builder.defaultAdvisors(advisor));
+        log.info("[LlmProviderRegistry] Created plain ChatClient (no tools) for {}", providerId);
+        return builder.build();
+    }
+
+    private ChatClient createVoiceChatClient(String providerId) {
+        OpenAiChatModel chatModel = buildChatModel(providerId);
+
+        ChatClient.Builder builder = ChatClient.builder(chatModel);
+        if (interviewSkillsToolCallback != null) {
+            builder.defaultToolCallbacks(interviewSkillsToolCallback);
+        }
+        List<Advisor> advisors = new ArrayList<>();
+        if (toolCallingManager != null) {
+            advisors.add(buildToolCallAdvisor(true, true));
+        }
+        buildSafeGuardAdvisor().ifPresent(advisors::add);
+        if (!advisors.isEmpty()) {
+            builder.defaultAdvisors(advisors.toArray(new Advisor[0]));
+        }
+        log.info("[LlmProviderRegistry] Created voice ChatClient (SkillsTool + streaming ToolCall) for {}", providerId);
+        return builder.build();
+    }
+
+    private OpenAiChatModel buildChatModel(String providerId) {
+        ProviderConfig config = properties.getProviders().get(providerId);
+        if (config == null) {
+            log.error("[LlmProviderRegistry] Provider config not found: {}", providerId);
+            throw new IllegalArgumentException("Unknown LLM provider: " + providerId);
+        }
+
+        log.info("[LlmProviderRegistry] Building ChatModel - Provider: {}, BaseUrl: {}, Model: {}",
+                 providerId, config.getBaseUrl(), config.getModel());
+
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(10000);
+        requestFactory.setReadTimeout(300000);
+
+        RestClient.Builder restClientBuilder = RestClient.builder()
+                .requestFactory(requestFactory);
+
+        OpenAiApi openAiApi = OpenAiApi.builder()
+                .baseUrl(config.getBaseUrl())
+                .apiKey(config.getApiKey())
+                .restClientBuilder(restClientBuilder)
+                .build();
+
+        OpenAiChatOptions options = OpenAiChatOptions.builder()
+                .model(config.getModel())
+                .temperature(0.2)
+                .build();
+
+        return new OpenAiChatModel(
+                openAiApi,
+                options,
+                toolCallingManager,
+                RetryUtils.DEFAULT_RETRY_TEMPLATE,
+                observationRegistry != null ? observationRegistry : ObservationRegistry.NOOP
+        );
     }
 
     private List<Advisor> buildDefaultAdvisors(String providerId) {
@@ -156,12 +197,9 @@ public class LlmProviderRegistry {
 
         if (config.isToolCallEnabled()) {
             if (toolCallingManager != null) {
-                ToolCallAdvisor toolCallAdvisor = ToolCallAdvisor.builder()
-                    .toolCallingManager(toolCallingManager)
-                    .conversationHistoryEnabled(config.isToolCallConversationHistoryEnabled())
-                    .streamToolCallResponses(config.isStreamToolCallResponses())
-                    .build();
-                advisors.add(toolCallAdvisor);
+                advisors.add(buildToolCallAdvisor(
+                    config.isToolCallConversationHistoryEnabled(),
+                    config.isStreamToolCallResponses()));
             } else {
                 log.warn("[LlmProviderRegistry] ToolCallAdvisor skipped: ToolCallingManager unavailable, provider={}", providerId);
             }
@@ -181,6 +219,35 @@ public class LlmProviderRegistry {
             advisors.add(new SimpleLoggerAdvisor());
         }
 
+        buildSafeGuardAdvisor().ifPresent(advisors::add);
+
         return advisors;
+    }
+
+    private ToolCallAdvisor buildToolCallAdvisor(boolean conversationHistoryEnabled,
+                                                  boolean streamToolCallResponses) {
+        return ToolCallAdvisor.builder()
+            .toolCallingManager(toolCallingManager)
+            .conversationHistoryEnabled(conversationHistoryEnabled)
+            .streamToolCallResponses(streamToolCallResponses)
+            .build();
+    }
+
+    private Optional<SafeGuardAdvisor> buildSafeGuardAdvisor() {
+        AdvisorConfig config = properties.getAdvisors();
+        if (config == null || !config.isSafeguardEnabled()) {
+            return Optional.empty();
+        }
+        SafeGuardAdvisor advisor = SafeGuardAdvisor.builder()
+            .sensitiveWords(config.getSafeguardWords())
+            .failureResponse("抱歉，我只能协助面试相关的任务。")
+            .order(100)
+            .build();
+        return Optional.of(advisor);
+    }
+
+    private String resolveProviderId(String providerId) {
+        return (providerId != null && !providerId.isBlank())
+            ? providerId : properties.getDefaultProvider();
     }
 }

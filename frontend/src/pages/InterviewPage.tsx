@@ -6,6 +6,8 @@ import InterviewChatPanel from '../components/InterviewChatPanel';
 import InterviewPageHeader from '../components/InterviewPageHeader';
 import type {InterviewQuestion, InterviewSession} from '../types/interview';
 import type {Difficulty} from '../components/UnifiedInterviewModal';
+import type {CategoryDTO} from '../api/skill';
+import { CUSTOM_SKILL_ID } from '../hooks/useInterviewConfig';
 
 interface Message {
   type: 'interviewer' | 'user';
@@ -23,6 +25,8 @@ interface InterviewProps {
     llmProvider?: string;
     skillId?: string;
     difficulty?: Difficulty;
+    customCategories?: CategoryDTO[];
+    jdText?: string;
   };
   onBack: () => void;
   onInterviewComplete: () => void;
@@ -50,6 +54,8 @@ export default function Interview({
   const llmProvider = initialConfig?.llmProvider ?? 'dashscope';
   const skillId = initialConfig?.skillId ?? 'java-backend';
   const difficulty = initialConfig?.difficulty ?? 'mid';
+  const customCategories = initialConfig?.customCategories;
+  const jdText = initialConfig?.jdText;
 
   // 自动开始面试（恢复已有会话 或 创建新会话）
   useEffect(() => {
@@ -77,6 +83,8 @@ export default function Interview({
         llmProvider,
         skillId,
         difficulty,
+        customCategories: skillId === CUSTOM_SKILL_ID ? customCategories : undefined,
+        jdText: skillId === CUSTOM_SKILL_ID ? jdText : undefined,
       });
 
       initSession(newSession);

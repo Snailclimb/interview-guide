@@ -68,11 +68,13 @@ public class StructuredOutputInvoker {
     ) {
         long startNanos = System.nanoTime();
         String contextTag = normalizeContextTag(logContext);
+        String securedSystemPrompt = systemPromptWithFormat
+            + PromptSecurityConstants.ANTI_INJECTION_INSTRUCTION;
         Exception lastError = null;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             String attemptSystemPrompt = attempt == 1
-                ? systemPromptWithFormat
-                : buildRetrySystemPrompt(systemPromptWithFormat, lastError);
+                ? securedSystemPrompt
+                : buildRetrySystemPrompt(securedSystemPrompt, lastError);
             try {
                 T result = chatClient.prompt()
                     .system(attemptSystemPrompt)

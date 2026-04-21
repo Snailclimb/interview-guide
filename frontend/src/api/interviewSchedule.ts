@@ -40,7 +40,7 @@ export const interviewScheduleApi = {
   },
 
   updateStatus: async (id: number, status: InterviewStatus): Promise<InterviewSchedule> => {
-    return await request.put<InterviewSchedule>(`/api/interview-schedule/${id}/status`, null, {
+    return await request.patch<InterviewSchedule>(`/api/interview-schedule/${id}/status`, null, {
       params: { status }
     });
   },

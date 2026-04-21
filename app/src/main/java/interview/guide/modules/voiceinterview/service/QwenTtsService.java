@@ -323,7 +323,7 @@ public class QwenTtsService {
                         String fullErrorMessage = String.format("TTS Error [%s/%s]: %s", errorType, errorCode, errorMessage);
                         log.error("{}", fullErrorMessage);
 
-                        errorRef.set(new RuntimeException(fullErrorMessage));
+                        errorRef.set(new IllegalStateException(fullErrorMessage));
                         synthesisLatch.countDown();
                     }
                     break;

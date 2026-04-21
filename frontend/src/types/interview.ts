@@ -1,5 +1,7 @@
 // 面试相关类型定义
 
+import type { CategoryDTO } from '../api/skill';
+
 export interface InterviewSession {
   sessionId: string;
   resumeText: string;
@@ -27,6 +29,8 @@ export interface CreateInterviewRequest {
   llmProvider?: string;
   skillId: string;
   difficulty?: string;
+  customCategories?: CategoryDTO[];
+  jdText?: string;
 }
 
 export interface SubmitAnswerRequest {

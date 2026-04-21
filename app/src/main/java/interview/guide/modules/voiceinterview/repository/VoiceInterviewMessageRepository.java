@@ -17,8 +17,7 @@ public interface VoiceInterviewMessageRepository extends JpaRepository<VoiceInte
      */
     List<VoiceInterviewMessageEntity> findBySessionIdOrderBySequenceNumAsc(Long sessionId);
 
-    /**
-     * Count messages for a session
-     */
     long countBySessionId(Long sessionId);
+
+    void deleteBySessionId(Long sessionId);
 }

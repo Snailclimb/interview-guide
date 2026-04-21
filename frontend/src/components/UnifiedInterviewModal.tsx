@@ -4,7 +4,7 @@ import {
   X, Sparkles, FileText, Mic,
   FileStack, ChevronDown, ChevronUp, Loader2
 } from 'lucide-react';
-import { useInterviewConfig, DIFFICULTY_OPTIONS, type InterviewMode, type Difficulty } from '../hooks/useInterviewConfig';
+import { useInterviewConfig, CUSTOM_SKILL_ID, DIFFICULTY_OPTIONS, type InterviewMode, type Difficulty } from '../hooks/useInterviewConfig';
 import { getSkillIcon } from '../utils/skillIcons';
 
 // Re-export for backward compatibility
@@ -68,6 +68,11 @@ export default function UnifiedInterviewModal({
 
   const handleStart = () => {
     const selectedSkill = config.selectedSkill;
+
+    if (config.isCustomStartDisabled) {
+      return;
+    }
+
     onStart({
       mode: config.mode,
       skillId: config.skillId,
@@ -80,7 +85,7 @@ export default function UnifiedInterviewModal({
       projectEnabled: true,
       hrEnabled: true,
       plannedDuration: config.plannedDuration,
-      customJdText: config.isCustomSkill ? config.customJdText : undefined,
+      customJdText: config.isCustomSkill ? config.parsedCustomJdText : undefined,
       customCategories: config.isCustomSkill ? config.customCategories : undefined,
     });
   };
@@ -233,7 +238,7 @@ export default function UnifiedInterviewModal({
                       })}
                       {/* 自定义按钮 */}
                       <button
-                        onClick={() => config.setSkillId('custom')}
+                        onClick={() => config.setSkillId(CUSTOM_SKILL_ID)}
                         className={`flex items-center gap-3 p-3 rounded-xl border-2 border-dashed transition-all duration-200 text-left
                           ${config.isCustomSkill
                             ? 'border-primary-500 bg-primary-50/80 dark:bg-primary-900/20'
@@ -244,7 +249,7 @@ export default function UnifiedInterviewModal({
                           config.isCustomSkill ? 'bg-primary-100 dark:bg-primary-900/50' : 'bg-slate-100 dark:bg-slate-700'
                         }`}>
                           {(() => {
-                            const CustomIcon = getSkillIcon('custom');
+                            const CustomIcon = getSkillIcon(CUSTOM_SKILL_ID);
                             return CustomIcon
                               ? <CustomIcon className={`w-5 h-5 ${config.isCustomSkill ? 'text-primary-600 dark:text-primary-400' : 'text-slate-500 dark:text-slate-400'}`} />
                               : <span className="text-base">✨</span>;
@@ -302,6 +307,11 @@ export default function UnifiedInterviewModal({
                               </span>
                             ))}
                           </div>
+                        )}
+                        {config.jdNeedsReparse && (
+                          <p className="text-xs text-amber-600 dark:text-amber-400">
+                            JD 已修改，请重新解析后再开始面试。
+                          </p>
                         )}
                       </div>
                     </motion.div>
@@ -447,8 +457,10 @@ export default function UnifiedInterviewModal({
                     onClick={handleStart}
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
+                    disabled={config.isCustomStartDisabled}
                     className="flex-1 px-5 py-3 rounded-xl font-semibold text-sm transition-all
-                      bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white shadow-lg shadow-primary-500/25"
+                      bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700
+                      text-white shadow-lg shadow-primary-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {startButtonText}
                   </motion.button>

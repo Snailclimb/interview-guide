@@ -1,10 +1,10 @@
 const STORAGE_KEY = 'interview.preferences.v1';
 
-export interface InterviewPreferences {
+interface InterviewPreferences {
   defaultLlmProvider: string;
 }
 
-export const DEFAULT_INTERVIEW_PREFERENCES: InterviewPreferences = {
+const DEFAULT_INTERVIEW_PREFERENCES: InterviewPreferences = {
   defaultLlmProvider: 'dashscope',
 };
 
@@ -40,11 +40,4 @@ export function saveInterviewPreferences(preferences: InterviewPreferences) {
     return;
   }
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
-}
-
-export function resetInterviewPreferences() {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  window.localStorage.removeItem(STORAGE_KEY);
 }

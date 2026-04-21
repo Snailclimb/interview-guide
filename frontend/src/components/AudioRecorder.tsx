@@ -89,11 +89,9 @@ export default function AudioRecorder({
         onnxWASMBasePath: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/',
         baseAssetPath: 'https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/',
         onSpeechStart: () => {
-          console.log('[VAD] User started speaking');
           onSpeechStart?.();
         },
         onSpeechEnd: () => {
-          console.log('[VAD] User stopped speaking');
           onSpeechEnd?.();
         },
       });

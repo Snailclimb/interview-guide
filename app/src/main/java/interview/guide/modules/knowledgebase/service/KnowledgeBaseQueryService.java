@@ -1,11 +1,15 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.common.ai.PromptSecurityConstants;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.knowledgebase.model.QueryRequest;
 import interview.guide.modules.knowledgebase.model.QueryResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.document.Document;
 import org.springframework.core.io.ResourceLoader;
@@ -22,8 +26,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -34,14 +36,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Service
 public class KnowledgeBaseQueryService {
     private static final String NO_RESULT_RESPONSE = "抱歉，在选定的知识库中未检索到相关信息。请换一个更具体的关键词或补充上下文后再试。";
-    private static final Pattern SHORT_TOKEN_PATTERN = Pattern.compile("^[\\p{L}\\p{N}_-]{2,20}$");
-    // 中文疑问前缀："什么是X" / "如何X" → 提取 X
-    private static final Pattern ZH_QUESTION_PREFIX = Pattern.compile(
-            "^(?:什么是|如何|怎么|怎样|为什么|什么叫|什么叫做|讲一下|解释一下|介绍一下|说一下|谈谈|描述)(.+)$");
-    // 中文疑问后缀："X是什么" / "X有哪些" → 提取 X
-    private static final Pattern ZH_QUESTION_SUFFIX = Pattern.compile(
-            "^(.+?)(?:是什么|怎么样|如何|有哪些|有什么|是啥|是干什么的).*$");
     private static final int STREAM_PROBE_CHARS = 120;
+    private static final int MAX_REWRITE_HISTORY_CHAR = 200;
 
     private final ChatClient chatClient;
     private final KnowledgeBaseVectorService vectorService;
@@ -114,30 +110,23 @@ public class KnowledgeBaseQueryService {
             return NO_RESULT_RESPONSE;
         }
 
-        // 1. 验证知识库是否存在并更新问题计数（合并数据库操作）
         countService.updateQuestionCounts(knowledgeBaseIds);
 
-        // 2. Query rewrite + 动态参数检索（RAG）
-        QueryContext queryContext = buildQueryContext(question);
+        QueryContext queryContext = buildQueryContext(question, List.of());
         List<Document> relevantDocs = retrieveRelevantDocs(queryContext, knowledgeBaseIds);
 
-        if (!hasEffectiveHit(question, relevantDocs)) {
+        if (!hasEffectiveHit(relevantDocs)) {
             return NO_RESULT_RESPONSE;
         }
 
-        // 3. 构建上下文（合并检索到的文档）
         String context = relevantDocs.stream()
                 .map(Document::getText)
                 .collect(Collectors.joining("\n\n---\n\n"));
 
-        log.debug("检索到 {} 个相关文档片段", relevantDocs.size());
-
-        // 4. 构建提示词
         String systemPrompt = buildSystemPrompt();
         String userPrompt = buildUserPrompt(context, question);
 
         try {
-            // 5. 调用AI生成回答
             String answer = chatClient.prompt()
                     .system(systemPrompt)
                     .user(userPrompt)
@@ -158,7 +147,8 @@ public class KnowledgeBaseQueryService {
      * 构建系统提示词
      */
     private String buildSystemPrompt() {
-        return systemPromptTemplate.render();
+        return systemPromptTemplate.render()
+            + PromptSecurityConstants.ANTI_INJECTION_INSTRUCTION;
     }
 
     /**
@@ -188,14 +178,27 @@ public class KnowledgeBaseQueryService {
     }
 
     /**
-     * 流式查询知识库（SSE）
+     * 流式查询知识库（SSE，无上下文）
      *
      * @param knowledgeBaseIds 知识库ID列表
      * @param question 用户问题
      * @return 流式响应
      */
     public Flux<String> answerQuestionStream(List<Long> knowledgeBaseIds, String question) {
-        log.info("收到知识库流式提问: kbIds={}, question={}", knowledgeBaseIds, question);
+        return answerQuestionStream(knowledgeBaseIds, question, List.of());
+    }
+
+    /**
+     * 流式查询知识库（SSE，支持多轮上下文）
+     *
+     * @param knowledgeBaseIds 知识库ID列表
+     * @param question 用户问题
+     * @param history 历史对话消息（可选）
+     * @return 流式响应
+     */
+    public Flux<String> answerQuestionStream(List<Long> knowledgeBaseIds, String question, List<Message> history) {
+        log.info("收到知识库流式提问: kbIds={}, question={}, historySize={}", knowledgeBaseIds, question,
+                history != null ? history.size() : 0);
         if (knowledgeBaseIds == null || knowledgeBaseIds.isEmpty() || normalizeQuestion(question).isBlank()) {
             return Flux.just(NO_RESULT_RESPONSE);
         }
@@ -205,10 +208,11 @@ public class KnowledgeBaseQueryService {
             countService.updateQuestionCounts(knowledgeBaseIds);
 
             // 2. Query rewrite + 动态参数检索
-            QueryContext queryContext = buildQueryContext(question);
+            List<Message> effectiveHistory = sanitizeHistory(history);
+            QueryContext queryContext = buildQueryContext(question, effectiveHistory);
             List<Document> relevantDocs = retrieveRelevantDocs(queryContext, knowledgeBaseIds);
 
-            if (!hasEffectiveHit(question, relevantDocs)) {
+            if (!hasEffectiveHit(relevantDocs)) {
                 return Flux.just(NO_RESULT_RESPONSE);
             }
 
@@ -223,9 +227,12 @@ public class KnowledgeBaseQueryService {
             String systemPrompt = buildSystemPrompt();
             String userPrompt = buildUserPrompt(context, question);
 
-            // 5. 流式调用 + 探测窗口归一化：既保留流式速度，又避免无信息长文
-            Flux<String> responseFlux = chatClient.prompt()
-                    .system(systemPrompt)
+            // 5. 流式调用（带历史上下文）+ 探测窗口归一化
+            var promptSpec = chatClient.prompt().system(systemPrompt);
+            if (!effectiveHistory.isEmpty()) {
+                promptSpec = promptSpec.messages(effectiveHistory);
+            }
+            Flux<String> responseFlux = promptSpec
                     .user(userPrompt)
                     .stream()
                     .content();
@@ -244,15 +251,22 @@ public class KnowledgeBaseQueryService {
         }
     }
 
-    private QueryContext buildQueryContext(String originalQuestion) {
+    private QueryContext buildQueryContext(String originalQuestion, List<Message> history) {
         String normalizedQuestion = normalizeQuestion(originalQuestion);
-        String rewrittenQuestion = rewriteQuestion(normalizedQuestion);
+        String rewrittenQuestion = rewriteQuestion(normalizedQuestion, history);
         Set<String> candidates = new LinkedHashSet<>();
         candidates.add(rewrittenQuestion);
         candidates.add(normalizedQuestion);
 
         SearchParams searchParams = resolveSearchParams(normalizedQuestion);
         return new QueryContext(normalizedQuestion, new ArrayList<>(candidates), searchParams);
+    }
+
+    private List<Message> sanitizeHistory(List<Message> history) {
+        if (history == null || history.isEmpty()) {
+            return List.of();
+        }
+        return history;
     }
 
 //       清洗
@@ -273,7 +287,7 @@ public class KnowledgeBaseQueryService {
                 queryContext.searchParams().minScore()
             );
             log.info("检索候选 query='{}'，命中 {} 条", candidateQuery, docs.size());
-            if (hasEffectiveHit(candidateQuery, docs)) {
+            if (hasEffectiveHit(docs)) {
                 return docs;
             }
         }
@@ -292,13 +306,14 @@ public class KnowledgeBaseQueryService {
     }
 
 //    改写
-    private String rewriteQuestion(String question) {
+    private String rewriteQuestion(String question, List<Message> history) {
         if (!rewriteEnabled || question.isBlank()) {
             return question;
         }
         try {
             Map<String, Object> variables = new HashMap<>();
             variables.put("question", question);
+            variables.put("history", formatHistoryForRewrite(history));
             String rewritePrompt = rewritePromptTemplate.render(variables);
             String rewritten = chatClient.prompt()
                 .user(rewritePrompt)
@@ -308,7 +323,7 @@ public class KnowledgeBaseQueryService {
                 return question;
             }
             String normalized = rewritten.trim();
-            log.info("Query rewrite: origin='{}', rewritten='{}'", question, normalized);
+            log.info("Query rewrite: origin='{}', rewritten='{}', historySize={}", question, normalized, history.size());
             return normalized;
         } catch (Exception e) {
             log.warn("Query rewrite 失败，使用原问题继续检索: {}", e.getMessage());
@@ -317,60 +332,31 @@ public class KnowledgeBaseQueryService {
     }
 
     /**
-     * 检索命中不等于可回答。
-     * 对短 token 场景增加一次命中确认，避免把弱相关片段交给模型后生成大段“信息不足说明”。
+     * 将历史消息格式化为重写 prompt 中的文本摘要。
+     * 每条消息格式：用户: xxx / 助手: xxx
      */
-    private boolean hasEffectiveHit(String question, List<Document> docs) {
-        if (docs == null || docs.isEmpty()) {
-            return false;
+    private String formatHistoryForRewrite(List<Message> history) {
+        if (history == null || history.isEmpty()) {
+            return "";
         }
-
-        String normalized = normalizeQuestion(question);
-        if (!isShortTokenQuery(normalized)) {
-            return true;
-        }
-
-        // 对中文问句提取核心词再做字面匹配，如 "什么是进程" → "进程"
-        String coreTerm = extractCoreTerm(normalized).toLowerCase();
-        for (Document doc : docs) {
-            String text = doc.getText();
-            if (text != null && text.toLowerCase().contains(coreTerm)) {
-                return true;
+        StringBuilder sb = new StringBuilder();
+        for (Message msg : history) {
+            if (msg instanceof UserMessage) {
+                sb.append("用户: ").append(msg.getText()).append("\n");
+            } else if (msg instanceof AssistantMessage) {
+                // 截断过长的助手回复，避免 rewrite prompt 过长
+                String text = msg.getText();
+                if (text.length() > MAX_REWRITE_HISTORY_CHAR) {
+                    text = text.substring(0, MAX_REWRITE_HISTORY_CHAR) + "...";
+                }
+                sb.append("助手: ").append(text).append("\n");
             }
         }
-
-        log.info("短 query 命中确认失败，视为无有效结果: question='{}', docs={}", normalized, docs.size());
-        return false;
+        return sb.toString().trim();
     }
 
-    private boolean isShortTokenQuery(String question) {
-        if (question == null) {
-            return false;
-        }
-        String compact = question.trim();
-        if (!SHORT_TOKEN_PATTERN.matcher(compact).matches()) {
-            return false;
-        }
-        // 中文无空格分词，"操作系统中进程的定义与基本概念"(15字)也会匹配模式。
-        // 对含 CJK 字符的文本额外限制长度：超过6字的视为短语而非短 token，跳过字面确认。
-        boolean hasCjk = compact.chars().anyMatch(c -> c >= 0x4E00 && c <= 0x9FFF);
-        return !hasCjk || compact.length() <= 6;
-    }
-
-    /**
-     * 从中文问句中提取核心检索词。
-     * "什么是进程" → "进程"，"进程是什么" → "进程"，无法识别则原样返回。
-     */
-    private String extractCoreTerm(String question) {
-        Matcher m = ZH_QUESTION_PREFIX.matcher(question);
-        if (m.matches()) {
-            return m.group(1).trim();
-        }
-        m = ZH_QUESTION_SUFFIX.matcher(question);
-        if (m.matches()) {
-            return m.group(1).trim();
-        }
-        return question;
+    private boolean hasEffectiveHit(List<Document> docs) {
+        return docs != null && !docs.isEmpty();
     }
 
     private String normalizeAnswer(String answer) {

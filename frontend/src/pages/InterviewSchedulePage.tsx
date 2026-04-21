@@ -200,6 +200,11 @@ export const InterviewSchedulePage: React.FC = () => {
           setSelectedInterview(null);
         }}
         onSubmit={handleFormSubmit}
+        onDelete={(id) => {
+          setIsModalOpen(false);
+          setSelectedInterview(null);
+          handleDeleteClick(id);
+        }}
         initialData={selectedInterview || undefined}
         mode={modalMode}
       />

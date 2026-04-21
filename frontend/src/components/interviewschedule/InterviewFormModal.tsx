@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { X, ChevronRight, ChevronLeft, AlertCircle, CheckCircle } from 'lucide-react';
+import { X, ChevronRight, ChevronLeft, AlertCircle, CheckCircle, Trash2 } from 'lucide-react';
 import type { InterviewFormData, ParseResponse, InterviewType } from '../../types/interviewSchedule';
 import { interviewScheduleApi } from '../../api/interviewSchedule';
 import dayjs from 'dayjs';
@@ -11,6 +11,7 @@ interface InterviewFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (data: InterviewFormData) => Promise<void>;
+  onDelete?: (id: number) => void;
   initialData?: InterviewFormData;
   mode: 'create' | 'edit';
 }
@@ -30,6 +31,7 @@ export const InterviewFormModal: React.FC<InterviewFormModalProps> = ({
   isOpen,
   onClose,
   onSubmit,
+  onDelete,
   initialData,
   mode,
 }) => {
@@ -423,7 +425,7 @@ export const InterviewFormModal: React.FC<InterviewFormModalProps> = ({
       )}
 
       <div className="flex justify-between pt-5 gap-3">
-        {mode === 'create' && step !== 'text' && (
+        {mode === 'create' && step !== 'text' ? (
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
@@ -433,7 +435,18 @@ export const InterviewFormModal: React.FC<InterviewFormModalProps> = ({
           >
             重置
           </motion.button>
-        )}
+        ) : mode === 'edit' && onDelete && initialData?.id ? (
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            type="button"
+            onClick={() => onDelete(initialData.id!)}
+            className="px-5 py-2.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-xl font-medium flex items-center gap-2 transition-all"
+          >
+            <Trash2 className="w-4 h-4" />
+            删除
+          </motion.button>
+        ) : null}
         <div className="flex gap-3 ml-auto">
           <motion.button
             whileHover={{ scale: 1.02 }}

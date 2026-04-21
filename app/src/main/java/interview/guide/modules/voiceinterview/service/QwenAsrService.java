@@ -456,7 +456,7 @@ public class QwenAsrService {
                     String fullErrorMessage = String.format("ASR Error [%s/%s]: %s", errorType, errorCode, errorMessage);
                     log.error("[Session: {}] {}", sessionId, fullErrorMessage);
 
-                    onError.accept(new RuntimeException(fullErrorMessage));
+                    onError.accept(new IllegalStateException(fullErrorMessage));
                     break;
 
                 case "session.finished":

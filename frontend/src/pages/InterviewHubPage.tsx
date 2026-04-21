@@ -14,6 +14,7 @@ import { getScoreTextColor } from '../utils/score';
 import { formatDateTime } from '../utils/date';
 import {
   useInterviewConfig,
+  CUSTOM_SKILL_ID,
   type InterviewMode,
   DIFFICULTY_OPTIONS,
 } from '../hooks/useInterviewConfig';
@@ -91,6 +92,10 @@ export default function InterviewHubPage() {
     const selectedSkill = config.selectedSkill;
     const skillName = selectedSkill?.name || '自定义';
 
+    if (config.isCustomStartDisabled) {
+      return;
+    }
+
     if (config.mode === 'text') {
       navigate('/interview', {
         state: {
@@ -101,7 +106,7 @@ export default function InterviewHubPage() {
             difficulty: config.difficulty,
             questionCount: config.questionCount,
             llmProvider: config.llmProvider,
-            customJdText: config.isCustomSkill ? config.customJdText : undefined,
+            jdText: config.isCustomSkill ? config.parsedCustomJdText : undefined,
             customCategories: config.isCustomSkill ? config.customCategories : undefined,
           },
         },
@@ -235,7 +240,7 @@ export default function InterviewHubPage() {
                 })}
                 {/* 自定义按钮 */}
                 <button
-                  onClick={() => config.setSkillId('custom')}
+                  onClick={() => config.setSkillId(CUSTOM_SKILL_ID)}
                   className={`flex items-center gap-2.5 p-3 rounded-xl border-2 border-dashed transition-all duration-200 text-left
                     ${config.isCustomSkill
                       ? 'border-primary-500 bg-primary-50/80 dark:bg-primary-900/20'
@@ -246,7 +251,7 @@ export default function InterviewHubPage() {
                     config.isCustomSkill ? 'bg-primary-100 dark:bg-primary-900/50' : 'bg-slate-100 dark:bg-slate-700'
                   }`}>
                     {(() => {
-                      const CustomIcon = getSkillIcon('custom');
+                      const CustomIcon = getSkillIcon(CUSTOM_SKILL_ID);
                       return CustomIcon
                         ? <CustomIcon className={`w-4 h-4 ${config.isCustomSkill ? 'text-primary-600 dark:text-primary-400' : 'text-slate-500 dark:text-slate-400'}`} />
                         : <span className="text-sm">✨</span>;
@@ -302,6 +307,11 @@ export default function InterviewHubPage() {
                         </span>
                       ))}
                     </div>
+                  )}
+                  {config.jdNeedsReparse && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      JD 已修改，请重新解析后再开始面试。
+                    </p>
                   )}
                 </div>
               </motion.div>
@@ -436,9 +446,10 @@ export default function InterviewHubPage() {
             onClick={handleStart}
             whileHover={{ scale: 1.01 }}
             whileTap={{ scale: 0.99 }}
+            disabled={config.isCustomStartDisabled}
             className="w-full px-6 py-3 rounded-xl font-semibold text-sm transition-all
               bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700
-              text-white shadow-lg shadow-primary-500/25"
+              text-white shadow-lg shadow-primary-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             开始{config.mode === 'text' ? '文字' : '语音'}面试
           </motion.button>

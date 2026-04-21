@@ -1,14 +1,27 @@
 package interview.guide.modules.interviewschedule;
 
 import interview.guide.common.result.Result;
-import interview.guide.modules.interviewschedule.model.*;
+import interview.guide.modules.interviewschedule.model.CreateInterviewRequest;
+import interview.guide.modules.interviewschedule.model.InterviewScheduleDTO;
+import interview.guide.modules.interviewschedule.model.InterviewStatus;
+import interview.guide.modules.interviewschedule.model.ParseRequest;
+import interview.guide.modules.interviewschedule.model.ParseResponse;
 import interview.guide.modules.interviewschedule.service.InterviewParseService;
 import interview.guide.modules.interviewschedule.service.InterviewScheduleService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -119,7 +132,7 @@ public class InterviewScheduleController {
      * @param status 新状态
      * @return 更新后的面试记录
      */
-    @PatchMapping("/{id}/status")
+    @RequestMapping(path = "/{id}/status", method = {RequestMethod.PATCH, RequestMethod.PUT})
     public Result<InterviewScheduleDTO> updateStatus(
         @PathVariable Long id,
         @RequestParam InterviewStatus status

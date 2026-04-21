@@ -2,7 +2,10 @@ package interview.guide.modules.interviewschedule.service;
 
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
-import interview.guide.modules.interviewschedule.model.*;
+import interview.guide.modules.interviewschedule.model.CreateInterviewRequest;
+import interview.guide.modules.interviewschedule.model.InterviewScheduleDTO;
+import interview.guide.modules.interviewschedule.model.InterviewScheduleEntity;
+import interview.guide.modules.interviewschedule.model.InterviewStatus;
 import interview.guide.modules.interviewschedule.repository.InterviewScheduleRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.BeanUtils;

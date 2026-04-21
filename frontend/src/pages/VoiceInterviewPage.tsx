@@ -282,12 +282,13 @@ export default function VoiceInterviewPage() {
       return;
     }
     setIsSubmitting(true);
+    const text = userText.trim();
     setMessages(prev => [
       ...prev,
-      { role: 'user', text: userText.trim(), id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }
+      { role: 'user', text, id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }
     ]);
     setUserText('');
-    wsRef.current.sendControl('submit');
+    wsRef.current.sendControl('submit', { text });
   }, [userText, isSubmitting]);
 
   const createWebSocketHandlers = useCallback(() => ({

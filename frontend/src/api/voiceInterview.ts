@@ -215,6 +215,13 @@ export const voiceInterviewApi = {
     );
   },
 
+  /**
+   * 删除语音面试会话
+   */
+  async deleteSession(sessionId: number): Promise<void> {
+    return request.delete(`/api/voice-interview/sessions/${sessionId}`);
+  },
+
 };
 
 // ========== WebSocket 连接管理类 ==========

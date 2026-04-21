@@ -4,6 +4,8 @@ export interface CategoryDTO {
   key: string;
   label: string;
   priority: 'CORE' | 'NORMAL' | 'ALWAYS_ONE';
+  ref?: string;
+  shared?: boolean;
 }
 
 export interface DisplayDTO {

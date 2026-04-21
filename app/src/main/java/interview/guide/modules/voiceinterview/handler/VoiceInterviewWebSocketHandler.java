@@ -374,6 +374,13 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
             // Stop STT transcription
             sttService.stopTranscription(sessionId);
             log.info("WebSocket connection closed for session: {}, status: {}", sessionId, status);
+
+            // WebSocket 异常断开时自动结束会话，防止状态永远停留在 IN_PROGRESS
+            try {
+                interviewService.endSessionIfInProgress(sessionId);
+            } catch (Exception endEx) {
+                log.warn("Failed to auto-end session {} after disconnect: {}", sessionId, endEx.getMessage());
+            }
         } catch (Exception e) {
             log.error("Error cleaning up session {} after close", sessionId, e);
         }
@@ -779,6 +786,16 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
 
         switch (control.getAction()) {
             case "submit":
+                // 文本提交：前端可能通过 data.text 传入用户输入的文本（非语音识别）
+                if (control.getData() != null) {
+                    Object textObj = control.getData().get("text");
+                    if (textObj instanceof String text && !text.isBlank()) {
+                        SessionState state = sessionStates.get(sessionId);
+                        if (state != null) {
+                            state.appendFinalSttSegment(text);
+                        }
+                    }
+                }
                 flushMergedUtteranceToLlm(sessionId);
                 break;
             case "end_interview":

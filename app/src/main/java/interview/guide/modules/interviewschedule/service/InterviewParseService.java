@@ -3,6 +3,8 @@ package interview.guide.modules.interviewschedule.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import interview.guide.common.ai.LlmProviderRegistry;
+import interview.guide.common.ai.PromptSanitizer;
+import interview.guide.common.ai.PromptSecurityConstants;
 import interview.guide.modules.interviewschedule.model.CreateInterviewRequest;
 import interview.guide.modules.interviewschedule.model.ParseResponse;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +29,7 @@ public class InterviewParseService {
 
     private final LlmProviderRegistry llmProviderRegistry;
     private final ObjectMapper objectMapper;
+    private final PromptSanitizer promptSanitizer;
 
     // Date formatters
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
@@ -295,7 +298,10 @@ public class InterviewParseService {
     private CreateInterviewRequest parseWithAI(String rawText, String provider) {
         try {
             String currentDate = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
-            String prompt = String.format(PARSE_PROMPT, currentDate, rawText);
+            String safeRawText = promptSanitizer.sanitize(rawText);
+            String prompt = String.format(PARSE_PROMPT, currentDate,
+                PromptSecurityConstants.DATA_BOUNDARY_INSTRUCTION + "\n" +
+                promptSanitizer.wrapWithDelimiters("parse-input", safeRawText));
 
             ChatClient chatClient = llmProviderRegistry.getChatClientOrDefault(provider);
 

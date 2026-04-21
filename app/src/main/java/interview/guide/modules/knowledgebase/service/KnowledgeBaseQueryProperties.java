@@ -11,6 +11,7 @@ public class KnowledgeBaseQueryProperties {
 
     private Rewrite rewrite = new Rewrite();
     private Search search = new Search();
+    private History history = new History();
     private String systemPromptPath = "classpath:prompts/knowledgebase-query-system.st";
     private String userPromptPath = "classpath:prompts/knowledgebase-query-user.st";
     private String rewritePromptPath = "classpath:prompts/knowledgebase-query-rewrite.st";
@@ -26,7 +27,13 @@ public class KnowledgeBaseQueryProperties {
         private int topkShort = 20;
         private int topkMedium = 12;
         private int topkLong = 8;
-        private double minScoreShort = 0.18;
+        private double minScoreShort = 0.25;
         private double minScoreDefault = 0.28;
+    }
+
+    @Data
+    public static class History {
+        private boolean enabled = true;
+        private int maxMessages = 10;
     }
 }

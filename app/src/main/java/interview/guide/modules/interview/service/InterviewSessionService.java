@@ -84,7 +84,9 @@ public class InterviewSessionService {
             difficulty,
             request.resumeText(),
             request.questionCount(),
-            historicalQuestions
+            historicalQuestions,
+            request.customCategories(),
+            request.jdText()
         );
 
         // 保存到 Redis 缓存

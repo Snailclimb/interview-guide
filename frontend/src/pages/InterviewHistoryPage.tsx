@@ -320,7 +320,11 @@ export default function InterviewHistoryPage({ onBack: _onBack, onViewInterview,
     if (!deleteItem) return;
     setDeletingSessionId(deleteItem.sessionId);
     try {
-      await historyApi.deleteInterview(deleteItem.sessionId);
+      if (deleteItem.type === 'voice' && deleteItem.voiceSessionId) {
+        await voiceInterviewApi.deleteSession(deleteItem.voiceSessionId);
+      } else {
+        await historyApi.deleteInterview(deleteItem.sessionId);
+      }
       await loadAll();
       setDeleteItem(null);
     } catch (err) {
@@ -579,8 +583,7 @@ export default function InterviewHistoryPage({ onBack: _onBack, onViewInterview,
                             <RotateCcw className="w-4 h-4" />
                           </button>
                         )}
-                        {item.type === 'text' && (
-                          <button
+                        <button
                             onClick={(e) => handleDeleteClick(item, e)}
                             disabled={deletingSessionId === item.sessionId}
                             className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors disabled:opacity-50"
@@ -588,7 +591,6 @@ export default function InterviewHistoryPage({ onBack: _onBack, onViewInterview,
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
-                        )}
                         <ChevronRight className="w-5 h-5 text-slate-300 dark:text-slate-600 group-hover:text-primary-500 group-hover:translate-x-1 transition-all"/>
                       </div>
                     </td>
