@@ -4,6 +4,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ApiPathResolverTest {
@@ -132,7 +134,7 @@ class ApiPathResolverTest {
     @DisplayName("自定义超时参数生效")
     void customTimeouts() {
       var api = ApiPathResolver.buildOpenAiApi(
-          "https://api.openai.com", "test-key", 5000, 60000);
+          "https://api.openai.com", "test-key", Duration.ofSeconds(5), Duration.ofMinutes(1));
 
       assertThat(api).isNotNull();
     }
