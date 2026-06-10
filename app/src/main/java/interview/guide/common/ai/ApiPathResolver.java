@@ -11,8 +11,8 @@ import java.util.regex.Pattern;
 /**
  * OpenAI API 客户端构造器。
  * 不同 LLM Provider 的 baseUrl 结构不同：
- * - OpenAI 系：https://api.openai.com/v1  → API 路径为 /v1/chat/completions
- * - Ollama 等：http://localhost:11434      → 路径就是 /chat/completions（无版本前缀）
+ * - OpenAI 系：{@code https://api.openai.com/v1}  → API 路径为 /v1/chat/completions
+ * - Ollama 等：{@code http://localhost:11434}      → 路径就是 /chat/completions（无版本前缀）
  * 此类自动识别 baseUrl 中是否已包含版本段，决定是否需要补全 API 路径。
  */
 public final class ApiPathResolver {
