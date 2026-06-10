@@ -9,6 +9,7 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
+import org.jspecify.annotations.Nullable;
 import org.redisson.api.RScript;
 import org.redisson.api.RedissonClient;
 import org.redisson.client.codec.StringCodec;
@@ -100,29 +101,29 @@ public class RateLimitAspect {
         };
 
         try {
-            Object resultObj = rScript.evalSha(
-                    RScript.Mode.READ_WRITE,
-                    luaScriptSha,
-                    RScript.ReturnType.VALUE,
-                    keysList,
-                    args
-            );
-            return convertToLong(resultObj);
+            return executeRateLimitScript(keysList, args);
         } catch (org.redisson.client.RedisException e) {
             // Redis 重启后脚本缓存丢失，重新加载并重试
             if (e.getMessage() != null && e.getMessage().contains("NOSCRIPT")) {
                 loadScript();
-                Object resultObj = rScript.evalSha(
-                        RScript.Mode.READ_WRITE,
-                        luaScriptSha,
-                        RScript.ReturnType.VALUE,
-                        keysList,
-                        args
-                );
-                return convertToLong(resultObj);
+                return executeRateLimitScript(keysList, args);
             }
             throw e;
         }
+    }
+
+    /**
+     * 执行限流 Lua 脚本
+     */
+    private @Nullable Long executeRateLimitScript(List<Object> keysList, Object[] args) {
+        Object resultObj = rScript.evalSha(
+                RScript.Mode.READ_WRITE,
+                luaScriptSha,
+                RScript.ReturnType.VALUE,
+                keysList,
+                args
+        );
+        return convertToLong(resultObj);
     }
 
     private long calculateIntervalMs(long interval, RateLimit.TimeUnit unit) {
@@ -162,8 +163,7 @@ public class RateLimitAspect {
         };
     }
 
-    private Object handleRateLimitExceeded(ProceedingJoinPoint joinPoint, RateLimit rateLimit, String key)
-            throws Throwable {
+    private Object handleRateLimitExceeded(ProceedingJoinPoint joinPoint, RateLimit rateLimit, String key) {
         String methodName = joinPoint.getSignature().getName();
 
         if (rateLimit.fallback() != null && !rateLimit.fallback().isEmpty()) {
