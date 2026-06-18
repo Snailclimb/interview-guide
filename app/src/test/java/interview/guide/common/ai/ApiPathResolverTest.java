@@ -109,34 +109,53 @@ class ApiPathResolverTest {
   }
 
   @Nested
-  @DisplayName("buildOpenAiApi")
-  class BuildOpenAiApi {
+  @DisplayName("resolveVersionedBaseUrl")
+  class ResolveVersionedBaseUrl {
 
     @Test
-    @DisplayName("带版本段的 base-url 使用无前缀路径")
-    void versionedBaseUrlUsesShortPaths() {
-      var api = ApiPathResolver.buildOpenAiApi(
-          "https://api.moonshot.cn/v1", "test-key");
-
-      assertThat(api).isNotNull();
+    @DisplayName("带版本段的 base-url 保持原样")
+    void versionedBaseUrlStaysUnchanged() {
+      assertThat(ApiPathResolver.resolveVersionedBaseUrl("https://api.moonshot.cn/v1/"))
+          .isEqualTo("https://api.moonshot.cn/v1");
     }
 
     @Test
-    @DisplayName("不带版本段的 base-url 使用默认路径")
-    void plainBaseUrlUsesDefaultPaths() {
-      var api = ApiPathResolver.buildOpenAiApi(
+    @DisplayName("不带版本段的 base-url 自动追加 /v1")
+    void plainBaseUrlGetsV1() {
+      assertThat(ApiPathResolver.resolveVersionedBaseUrl("https://api.openai.com"))
+          .isEqualTo("https://api.openai.com/v1");
+    }
+  }
+
+  @Nested
+  @DisplayName("buildOpenAiClient")
+  class BuildOpenAiClient {
+
+    @Test
+    @DisplayName("带版本段的 base-url 可构建客户端")
+    void versionedBaseUrlBuildsClient() {
+      var client = ApiPathResolver.buildOpenAiClient(
+          "https://api.moonshot.cn/v1", "test-key");
+
+      assertThat(client).isNotNull();
+    }
+
+    @Test
+    @DisplayName("不带版本段的 base-url 可构建客户端")
+    void plainBaseUrlBuildsClient() {
+      var client = ApiPathResolver.buildOpenAiClient(
           "https://api.openai.com", "test-key");
 
-      assertThat(api).isNotNull();
+      assertThat(client).isNotNull();
     }
 
     @Test
     @DisplayName("自定义超时参数生效")
     void customTimeouts() {
-      var api = ApiPathResolver.buildOpenAiApi(
+      var client = ApiPathResolver.buildOpenAiClient(
           "https://api.openai.com", "test-key", Duration.ofSeconds(5), Duration.ofMinutes(1));
 
-      assertThat(api).isNotNull();
+      assertThat(client).isNotNull();
     }
   }
 }

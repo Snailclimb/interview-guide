@@ -4,6 +4,7 @@ import interview.guide.common.config.AppConfigProperties;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.model.AsyncTaskStatus;
+import interview.guide.common.transaction.TransactionalExecutor;
 import interview.guide.infrastructure.file.FileStorageService;
 import interview.guide.infrastructure.file.FileValidationService;
 import interview.guide.modules.interview.model.ResumeAnalysisResponse;
@@ -13,7 +14,6 @@ import interview.guide.modules.resume.repository.ResumeRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
 import java.util.Optional;
@@ -35,6 +35,7 @@ public class ResumeUploadService {
     private final FileValidationService fileValidationService;
     private final AnalyzeStreamProducer analyzeStreamProducer;
     private final ResumeRepository resumeRepository;
+    private final TransactionalExecutor transactionalExecutor;
 
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -169,32 +170,66 @@ public class ResumeUploadService {
      *
      * @param resumeId 简历ID
      */
-    @Transactional
     public void reanalyze(Long resumeId) {
+        ResumeReanalyzeSource source = loadReanalyzeSource(resumeId);
+
+        log.info("开始重新分析简历: resumeId={}, filename={}", resumeId, source.originalFilename());
+
+        String resumeText = source.resumeText();
+        boolean shouldCacheResumeText = !hasText(resumeText);
+        if (shouldCacheResumeText) {
+            // 如果没有缓存的文本，尝试重新解析
+            resumeText = parseService.downloadAndParseContent(
+                source.storageKey(), source.originalFilename());
+            if (!hasText(resumeText)) {
+                throw new BusinessException(ErrorCode.RESUME_PARSE_FAILED, "无法获取简历文本内容");
+            }
+        }
+
+        String taskContent = resumeText;
+        transactionalExecutor.run(
+            () -> updateResumeForReanalysis(resumeId, taskContent, shouldCacheResumeText));
+
+        // 事务提交后再发送分析任务到 Stream
+        analyzeStreamProducer.sendAnalyzeTask(resumeId, taskContent);
+
+        log.info("重新分析任务已发送: resumeId={}", resumeId);
+    }
+
+    private ResumeReanalyzeSource loadReanalyzeSource(Long resumeId) {
+        ResumeEntity resume = resumeRepository.findById(resumeId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
+        return new ResumeReanalyzeSource(
+            resume.getOriginalFilename(),
+            resume.getStorageKey(),
+            resume.getResumeText()
+        );
+    }
+
+    private void updateResumeForReanalysis(
+        Long resumeId,
+        String resumeText,
+        boolean shouldCacheResumeText
+    ) {
         ResumeEntity resume = resumeRepository.findById(resumeId)
             .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
 
-        log.info("开始重新分析简历: resumeId={}, filename={}", resumeId, resume.getOriginalFilename());
-
-        String resumeText = resume.getResumeText();
-        if (resumeText == null || resumeText.trim().isEmpty()) {
-            // 如果没有缓存的文本，尝试重新解析
-            resumeText = parseService.downloadAndParseContent(resume.getStorageKey(), resume.getOriginalFilename());
-            if (resumeText == null || resumeText.trim().isEmpty()) {
-                throw new BusinessException(ErrorCode.RESUME_PARSE_FAILED, "无法获取简历文本内容");
-            }
-            // 更新缓存的文本
+        if (shouldCacheResumeText || !hasText(resume.getResumeText())) {
             resume.setResumeText(resumeText);
         }
-
-        // 更新状态为 PENDING
         resume.setAnalyzeStatus(AsyncTaskStatus.PENDING);
         resume.setAnalyzeError(null);
         resumeRepository.save(resume);
+    }
 
-        // 发送分析任务到 Stream
-        analyzeStreamProducer.sendAnalyzeTask(resumeId, resumeText);
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
+    }
 
-        log.info("重新分析任务已发送: resumeId={}", resumeId);
+    private record ResumeReanalyzeSource(
+        String originalFilename,
+        String storageKey,
+        String resumeText
+    ) {
     }
 }

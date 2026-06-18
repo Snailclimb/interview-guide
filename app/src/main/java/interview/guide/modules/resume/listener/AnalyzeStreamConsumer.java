@@ -83,6 +83,13 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<AnalyzeStreamC
     }
 
     @Override
+    protected boolean shouldSkip(AnalyzePayload payload) {
+        return resumeRepository.findById(payload.resumeId())
+            .map(resume -> resume.getAnalyzeStatus() == AsyncTaskStatus.COMPLETED)
+            .orElse(true);
+    }
+
+    @Override
     protected void markProcessing(AnalyzePayload payload) {
         updateAnalyzeStatus(payload.resumeId(), AsyncTaskStatus.PROCESSING, null);
     }

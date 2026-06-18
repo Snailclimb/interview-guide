@@ -34,17 +34,30 @@ public class ApiKeyEncryptionService {
 
   @PostConstruct
   void init() {
-    LlmProviderProperties.SecurityConfig security = properties.getSecurity();
-    String configuredKey = security != null ? security.getApiKeyEncryptionKey() : null;
-    if (configuredKey == null || configuredKey.isBlank()) {
-      if (security != null && security.isRequireEncryptionKey()) {
-        throw new BusinessException(ErrorCode.PROVIDER_CONFIG_READ_FAILED,
-            "APP_AI_CONFIG_ENCRYPTION_KEY 未配置，无法解密 Provider API Key");
-      }
-      log.warn("APP_AI_CONFIG_ENCRYPTION_KEY is not configured; using development fallback key");
-      configuredKey = DEV_FALLBACK_KEY;
-    }
+    String configuredKey = resolveConfiguredKey(properties.getSecurity());
     secretKey = new SecretKeySpec(resolveKeyBytes(configuredKey), "AES");
+  }
+
+  private String resolveConfiguredKey(LlmProviderProperties.SecurityConfig security) {
+    String configuredKey = security != null ? security.getApiKeyEncryptionKey() : null;
+    if (configuredKey != null && !configuredKey.isBlank()) {
+      return configuredKey;
+    }
+
+    boolean requireEncryptionKey = security == null || security.isRequireEncryptionKey();
+    if (requireEncryptionKey) {
+      throw new BusinessException(ErrorCode.PROVIDER_CONFIG_READ_FAILED,
+          "APP_AI_CONFIG_ENCRYPTION_KEY 未配置，无法初始化 Provider API Key 加密");
+    }
+
+    boolean allowFallback = security != null && security.isAllowFallbackEncryptionKey();
+    if (!allowFallback) {
+      throw new BusinessException(ErrorCode.PROVIDER_CONFIG_READ_FAILED,
+          "APP_AI_CONFIG_ENCRYPTION_KEY 未配置，且未显式允许 Provider API Key 开发 fallback");
+    }
+
+    log.warn("APP_AI_CONFIG_ENCRYPTION_KEY is not configured; using explicitly enabled fallback key");
+    return DEV_FALLBACK_KEY;
   }
 
   public EncryptedValue encrypt(String plainText) {

@@ -1,5 +1,6 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.common.exception.BusinessException;
 import interview.guide.modules.knowledgebase.repository.VectorRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -166,8 +167,9 @@ class KnowledgeBaseVectorServiceTest {
             // When: 执行向量化
             vectorService.vectorizeAndStore(knowledgeBaseId, content);
 
-            // Then: 验证先删除旧数据
+            // Then: 验证所有新数据写入成功后才替换旧数据
             verify(vectorRepository, times(1)).deleteByKnowledgeBaseId(knowledgeBaseId);
+            verify(vectorRepository, times(1)).promoteVectorJob(eq(knowledgeBaseId), anyString());
 
             // 验证 VectorStore.add 被调用（文本足够长时应产生 chunks）
             verify(vectorStore, atLeastOnce()).add(anyList());
@@ -199,7 +201,7 @@ class KnowledgeBaseVectorServiceTest {
         }
 
         @Test
-        @DisplayName("验证 metadata 正确设置 kb_id")
+        @DisplayName("验证 metadata 使用临时 kb_id 和任务标记")
         void testMetadataContainsKnowledgeBaseId() {
             // Given: 使用足够长的内容确保产生 chunks
             Long knowledgeBaseId = 123L;
@@ -218,15 +220,20 @@ class KnowledgeBaseVectorServiceTest {
 
             for (List<Document> batch : allBatches) {
                 for (Document doc : batch) {
-                    assertEquals(knowledgeBaseId.toString(), doc.getMetadata().get("kb_id"),
-                        "metadata 中的 kb_id 应该等于知识库ID的字符串形式");
+                    assertTrue(doc.getMetadata().get("kb_id").toString()
+                            .startsWith("pending:" + knowledgeBaseId + ":"),
+                        "metadata 中的 kb_id 应该先写入临时值，避免失败时污染正式检索");
+                    assertEquals(knowledgeBaseId.toString(), doc.getMetadata().get("kb_target_id"),
+                        "metadata 中的 kb_target_id 应该等于目标知识库ID");
+                    assertTrue(doc.getMetadata().get("kb_vector_job_id").toString().length() > 10,
+                        "metadata 中应包含向量化任务ID");
                 }
             }
         }
 
         @Test
-        @DisplayName("向量化前应先删除旧数据")
-        void testDeleteOldDataBeforeVectorize() {
+        @DisplayName("向量化成功后才删除旧数据并提升新数据")
+        void testDeleteOldDataAfterVectorize() {
             // Given: 使用足够长的内容确保产生 chunks
             Long knowledgeBaseId = 1L;
             String content = generateLongContent(10);
@@ -234,15 +241,16 @@ class KnowledgeBaseVectorServiceTest {
             // When
             vectorService.vectorizeAndStore(knowledgeBaseId, content);
 
-            // Then: 验证 delete 在 add 之前执行（通过 inOrder 严格顺序验证）
+            // Then: 验证 add 成功后再删除旧数据并提升新数据
             var inOrder = inOrder(vectorRepository, vectorStore);
-            inOrder.verify(vectorRepository).deleteByKnowledgeBaseId(knowledgeBaseId);
             inOrder.verify(vectorStore, atLeastOnce()).add(anyList());
+            inOrder.verify(vectorRepository).deleteByKnowledgeBaseId(knowledgeBaseId);
+            inOrder.verify(vectorRepository).promoteVectorJob(eq(knowledgeBaseId), anyString());
         }
 
         @Test
-        @DisplayName("向量化失败时抛出异常")
-        void testVectorizeFailureThrowsException() {
+        @DisplayName("向量写入失败时清理临时数据且不删除旧数据")
+        void testVectorizeFailureKeepsOldVectors() {
             // Given: 使用足够长的内容确保产生 chunks
             Long knowledgeBaseId = 1L;
             String content = generateLongContent(10);
@@ -251,12 +259,15 @@ class KnowledgeBaseVectorServiceTest {
                 .when(vectorStore).add(anyList());
 
             // When & Then
-            RuntimeException exception = assertThrows(
-                RuntimeException.class,
+            BusinessException exception = assertThrows(
+                BusinessException.class,
                 () -> vectorService.vectorizeAndStore(knowledgeBaseId, content)
             );
 
             assertTrue(exception.getMessage().contains("向量化知识库失败"));
+            verify(vectorRepository, never()).deleteByKnowledgeBaseId(knowledgeBaseId);
+            verify(vectorRepository, never()).promoteVectorJob(eq(knowledgeBaseId), anyString());
+            verify(vectorRepository, times(1)).deleteByVectorJobId(anyString());
         }
 
         @Test
@@ -269,8 +280,9 @@ class KnowledgeBaseVectorServiceTest {
             // When
             vectorService.vectorizeAndStore(knowledgeBaseId, content);
 
-            // Then: 即使是空内容，也应该删除旧数据
+            // Then: 空内容成功向量化后会删除旧数据并提升空任务结果
             verify(vectorRepository, times(1)).deleteByKnowledgeBaseId(knowledgeBaseId);
+            verify(vectorRepository, times(1)).promoteVectorJob(eq(knowledgeBaseId), anyString());
             // 空内容不会产生 chunks，所以 add 不会被调用
             verify(vectorStore, never()).add(anyList());
         }
@@ -531,17 +543,17 @@ class KnowledgeBaseVectorServiceTest {
         }
 
         @Test
-        @DisplayName("内容为null时 - 应抛出 NullPointerException")
+        @DisplayName("内容为null时 - 应包装为业务异常")
         void testNullContent() {
             // Given
             Long knowledgeBaseId = 1L;
 
-            // When & Then: null content 在调用 content.length() 时会抛出 NPE
-            // 注意：NPE 发生在 try 块之外，不会被包装
-            assertThrows(
-                NullPointerException.class,
+            // When & Then: null content 应被统一包装为向量化业务异常
+            BusinessException exception = assertThrows(
+                BusinessException.class,
                 () -> vectorService.vectorizeAndStore(knowledgeBaseId, null)
             );
+            assertTrue(exception.getMessage().contains("向量化知识库失败"));
         }
 
         @Test

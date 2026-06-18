@@ -77,12 +77,24 @@ public class VectorizeStreamConsumer extends AbstractStreamConsumer<VectorizeStr
     }
 
     @Override
+    protected boolean shouldSkip(VectorizePayload payload) {
+        return knowledgeBaseRepository.findById(payload.kbId())
+            .map(kb -> kb.getVectorStatus() == VectorStatus.COMPLETED)
+            .orElse(true);
+    }
+
+    @Override
     protected void markProcessing(VectorizePayload payload) {
         updateVectorStatus(payload.kbId(), VectorStatus.PROCESSING, null);
     }
 
     @Override
     protected void processBusiness(VectorizePayload payload) {
+        Long kbId = payload.kbId();
+        if (!knowledgeBaseRepository.existsById(kbId)) {
+            log.warn("知识库已被删除，跳过向量化任务: kbId={}", kbId);
+            return;
+        }
         vectorService.vectorizeAndStore(payload.kbId(), payload.content());
     }
 

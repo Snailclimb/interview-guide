@@ -3,6 +3,7 @@ package interview.guide.modules.interview.listener;
 import interview.guide.common.async.AbstractStreamProducer;
 import interview.guide.common.constant.AsyncTaskStreamConstants;
 import interview.guide.common.model.AsyncTaskStatus;
+import interview.guide.common.transaction.TransactionalExecutor;
 import interview.guide.infrastructure.redis.RedisService;
 import interview.guide.modules.interview.repository.InterviewSessionRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -19,10 +20,16 @@ import java.util.Map;
 public class EvaluateStreamProducer extends AbstractStreamProducer<String> {
 
     private final InterviewSessionRepository sessionRepository;
+    private final TransactionalExecutor transactionalExecutor;
 
-    public EvaluateStreamProducer(RedisService redisService, InterviewSessionRepository sessionRepository) {
+    public EvaluateStreamProducer(
+        RedisService redisService,
+        InterviewSessionRepository sessionRepository,
+        TransactionalExecutor transactionalExecutor
+    ) {
         super(redisService);
         this.sessionRepository = sessionRepository;
+        this.transactionalExecutor = transactionalExecutor;
     }
 
     /**
@@ -59,7 +66,8 @@ public class EvaluateStreamProducer extends AbstractStreamProducer<String> {
 
     @Override
     protected void onSendFailed(String sessionId, String error) {
-        updateEvaluateStatus(sessionId, AsyncTaskStatus.FAILED, truncateError(error));
+        transactionalExecutor.runRequiresNew(
+            () -> updateEvaluateStatus(sessionId, AsyncTaskStatus.FAILED, truncateError(error)));
     }
 
     /**

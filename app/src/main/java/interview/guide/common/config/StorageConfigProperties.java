@@ -1,5 +1,6 @@
 package interview.guide.common.config;
 
+import java.time.Duration;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -17,4 +18,7 @@ public class StorageConfigProperties {
     private String secretKey;
     private String bucket;
     private String region = "us-east-1";
+    private Duration apiCallTimeout = Duration.ofSeconds(60);
+    private Duration apiCallAttemptTimeout = Duration.ofSeconds(20);
+    private boolean autoCreateBucket = true;
 }

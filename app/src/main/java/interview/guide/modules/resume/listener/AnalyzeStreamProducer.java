@@ -3,6 +3,7 @@ package interview.guide.modules.resume.listener;
 import interview.guide.common.async.AbstractStreamProducer;
 import interview.guide.common.constant.AsyncTaskStreamConstants;
 import interview.guide.common.model.AsyncTaskStatus;
+import interview.guide.common.transaction.TransactionalExecutor;
 import interview.guide.infrastructure.redis.RedisService;
 import interview.guide.modules.resume.repository.ResumeRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -19,12 +20,18 @@ import java.util.Map;
 public class AnalyzeStreamProducer extends AbstractStreamProducer<AnalyzeStreamProducer.AnalyzeTaskPayload> {
 
     private final ResumeRepository resumeRepository;
+    private final TransactionalExecutor transactionalExecutor;
 
     record AnalyzeTaskPayload(Long resumeId, String content) {}
 
-    public AnalyzeStreamProducer(RedisService redisService, ResumeRepository resumeRepository) {
+    public AnalyzeStreamProducer(
+        RedisService redisService,
+        ResumeRepository resumeRepository,
+        TransactionalExecutor transactionalExecutor
+    ) {
         super(redisService);
         this.resumeRepository = resumeRepository;
+        this.transactionalExecutor = transactionalExecutor;
     }
 
     /**
@@ -63,7 +70,8 @@ public class AnalyzeStreamProducer extends AbstractStreamProducer<AnalyzeStreamP
 
     @Override
     protected void onSendFailed(AnalyzeTaskPayload payload, String error) {
-        updateAnalyzeStatus(payload.resumeId(), AsyncTaskStatus.FAILED, truncateError(error));
+        transactionalExecutor.runRequiresNew(
+            () -> updateAnalyzeStatus(payload.resumeId(), AsyncTaskStatus.FAILED, truncateError(error)));
     }
 
     /**

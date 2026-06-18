@@ -1,5 +1,6 @@
 package interview.guide.common.ai;
 
+import com.openai.client.OpenAIClient;
 import interview.guide.common.config.LlmProviderProperties;
 import interview.guide.common.config.LlmProviderProperties.AdvisorConfig;
 import interview.guide.common.config.LlmProviderProperties.ProviderConfig;
@@ -16,7 +17,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.SafeGuardAdvisor;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
-import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
+import org.springframework.ai.chat.client.advisor.ToolCallingAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.document.MetadataMode;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -26,8 +27,6 @@ import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.OpenAiEmbeddingModel;
 import org.springframework.ai.openai.OpenAiEmbeddingOptions;
-import org.springframework.ai.openai.api.OpenAiApi;
-import org.springframework.ai.retry.RetryUtils;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -40,8 +39,12 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * LLM Provider 注册中心，负责 ChatClient / EmbeddingModel 的创建、缓存和路由。
  *
+ * * Registry for managing and caching LLM providers.
+ *  * Supports dynamic creation of ChatClient based on provider configurations.
+ *  <p>
+ * LLM Provider 注册中心，负责 ChatClient / EmbeddingModel 的创建、缓存和路由。
+ * <p>
  * 职责：
  * - 按 providerId 创建并缓存 ChatClient，避免重复创建底层 ChatModel
  * - 区分 通用/纯文本(plain)/语音(voice) 三种客户端场景，各自装配不同的 Advisor
@@ -197,11 +200,11 @@ public class LlmProviderRegistry {
         ChatClient.Builder builder = ChatClient.builder(chatModel);
         // SkillsTool 可选依赖，不存在时跳过（如测试环境）
         if (interviewSkillsToolCallback != null) {
-            builder.defaultToolCallbacks(interviewSkillsToolCallback);
+            builder.defaultTools(interviewSkillsToolCallback);
         }
         List<Advisor> advisors = buildDefaultAdvisors(providerId);
         if (!advisors.isEmpty()) {
-            builder.defaultAdvisors(advisors.toArray(new Advisor[0]));
+            builder.defaultAdvisors(advisors);
             log.info("[LlmProviderRegistry] Applied {} advisors for provider {}", advisors.size(), providerId);
         }
 
@@ -215,7 +218,7 @@ public class LlmProviderRegistry {
     private ChatClient createPlainChatClient(String providerId) {
         OpenAiChatModel chatModel = getChatModel(providerId);
         ChatClient.Builder builder = ChatClient.builder(chatModel);
-        buildSafeGuardAdvisor().ifPresent(builder::defaultAdvisors);
+        buildSafeGuardAdvisor().ifPresent(advisor -> builder.defaultAdvisors(List.of(advisor)));
         log.info("[LlmProviderRegistry] Created plain ChatClient (no tools) for {}", providerId);
         return builder.build();
     }
@@ -229,15 +232,15 @@ public class LlmProviderRegistry {
 
         ChatClient.Builder builder = ChatClient.builder(chatModel);
         if (interviewSkillsToolCallback != null) {
-            builder.defaultToolCallbacks(interviewSkillsToolCallback);
+            builder.defaultTools(interviewSkillsToolCallback);
         }
         List<Advisor> advisors = new ArrayList<>();
         if (toolCallingManager != null) {
-            advisors.add(buildToolCallAdvisor(true, true));
+            advisors.add(buildToolCallAdvisor(true));
         }
         buildSafeGuardAdvisor().ifPresent(advisors::add);
         if (!advisors.isEmpty()) {
-            builder.defaultAdvisors(advisors.toArray(new Advisor[0]));
+            builder.defaultAdvisors(advisors);
         }
         log.info("[LlmProviderRegistry] Created voice ChatClient (SkillsTool + streaming ToolCall) for {}", providerId);
         return builder.build();
@@ -264,21 +267,19 @@ public class LlmProviderRegistry {
         log.info("[LlmProviderRegistry] Building ChatModel - Provider: {}, BaseUrl: {}, Model: {}",
                  providerId, config.baseUrl(), config.model());
 
-        OpenAiApi openAiApi = ApiPathResolver.buildOpenAiApi(config.baseUrl(), config.apiKey());
+        OpenAIClient openAiClient = ApiPathResolver.buildOpenAiClient(config.baseUrl(), config.apiKey());
 
         OpenAiChatOptions options = OpenAiChatOptions.builder()
                 .model(config.model())
                 .temperature(config.temperature() != null ? config.temperature() : 0.2)
                 .build();
 
-        return new OpenAiChatModel(
-                openAiApi,
-                options,
-                toolCallingManager,
-                RetryUtils.DEFAULT_RETRY_TEMPLATE,
-                // observationRegistry 可能为 null（required=false），降级为 NOOP 避免 NPE
-                observationRegistry != null ? observationRegistry : ObservationRegistry.NOOP
-        );
+        return OpenAiChatModel.builder()
+            .openAiClient(openAiClient)
+            .openAiClientAsync(openAiClient.async())
+            .options(options)
+            .observationRegistry(observationRegistry != null ? observationRegistry : ObservationRegistry.NOOP)
+            .build();
     }
 
     /**
@@ -305,19 +306,18 @@ public class LlmProviderRegistry {
         log.info("[LlmProviderRegistry] Building EmbeddingModel - Provider: {}, BaseUrl: {}, Model: {}",
             providerId, config.baseUrl(), config.embeddingModel());
 
-        OpenAiApi openAiApi = ApiPathResolver.buildOpenAiApi(config.baseUrl(), config.apiKey());
+        OpenAIClient openAiClient = ApiPathResolver.buildOpenAiClient(config.baseUrl(), config.apiKey());
         OpenAiEmbeddingOptions options = OpenAiEmbeddingOptions.builder()
             .model(config.embeddingModel())
             .dimensions(resolveEmbeddingDimensions(config.embeddingDimensions()))
             .build();
 
-        return new OpenAiEmbeddingModel(
-            openAiApi,
-            MetadataMode.EMBED,
-            options,
-            RetryUtils.DEFAULT_RETRY_TEMPLATE,
-            observationRegistry != null ? observationRegistry : ObservationRegistry.NOOP
-        );
+        return OpenAiEmbeddingModel.builder()
+            .openAiClient(openAiClient)
+            .metadataMode(MetadataMode.EMBED)
+            .options(options)
+            .observationRegistry(observationRegistry != null ? observationRegistry : ObservationRegistry.NOOP)
+            .build();
     }
 
     // ---- Advisor 装配 ----
@@ -336,9 +336,7 @@ public class LlmProviderRegistry {
 
         if (config.isToolCallEnabled()) {
             if (toolCallingManager != null) {
-                advisors.add(buildToolCallAdvisor(
-                    config.isToolCallConversationHistoryEnabled(),
-                    config.isStreamToolCallResponses()));
+                advisors.add(buildToolCallAdvisor(config.isToolCallConversationHistoryEnabled()));
             } else {
                 log.warn("[LlmProviderRegistry] ToolCallAdvisor skipped: ToolCallingManager unavailable, provider={}", providerId);
             }
@@ -364,19 +362,10 @@ public class LlmProviderRegistry {
         return advisors;
     }
 
-    /**
-     * 构建 ToolCallAdvisor。
-     * 配置项：
-     * - toolCallingManager：工具调用管理器，由 Spring 创建
-     * - conversationHistoryEnabled：是否启用对话记忆
-     * - streamToolCallResponses：是否流式返回工具调用结果
-     */
-    private ToolCallAdvisor buildToolCallAdvisor(boolean conversationHistoryEnabled,
-                                                  boolean streamToolCallResponses) {
-        return ToolCallAdvisor.builder()
+    private ToolCallingAdvisor buildToolCallAdvisor(boolean conversationHistoryEnabled) {
+        return ToolCallingAdvisor.builder()
             .toolCallingManager(toolCallingManager)
             .conversationHistoryEnabled(conversationHistoryEnabled)
-            .streamToolCallResponses(streamToolCallResponses)
             .build();
     }
 

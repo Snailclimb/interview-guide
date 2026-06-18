@@ -23,6 +23,8 @@ import org.redisson.api.RBucket;
 import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -128,7 +130,7 @@ public class VoiceInterviewService {
         }
 
         endSession(session);
-        voiceEvaluateStreamProducer.sendEvaluateTask(sessionId);
+        sendEvaluateTaskAfterCommit(sessionIdLong);
     }
 
     private void endSession(VoiceInterviewSessionEntity session) {
@@ -581,7 +583,22 @@ public class VoiceInterviewService {
     @Transactional
     public void triggerEvaluation(Long sessionId) {
         updateEvaluateStatus(sessionId, AsyncTaskStatus.PENDING, null);
-        voiceEvaluateStreamProducer.sendEvaluateTask(sessionId.toString());
+        sendEvaluateTaskAfterCommit(sessionId);
+    }
+
+    private void sendEvaluateTaskAfterCommit(Long sessionId) {
+        Runnable sendTask = () -> voiceEvaluateStreamProducer.sendEvaluateTask(sessionId.toString());
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            sendTask.run();
+            return;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                sendTask.run();
+            }
+        });
     }
 
     /**

@@ -1,14 +1,15 @@
 package interview.guide.common.config;
 
+import java.net.URI;
+import java.time.Duration;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
-
-import java.net.URI;
 
 /**
  * S3客户端配置（用于RustFS）
@@ -30,7 +31,22 @@ public class S3Config {
             .endpointOverride(URI.create(storageConfig.getEndpoint()))
             .region(Region.of(storageConfig.getRegion()))
             .credentialsProvider(StaticCredentialsProvider.create(credentials))
-                .forcePathStyle(true) // 关键配置：使用路径风格访问，否则 SDK 会使用虚拟主机风格（`bucket.endpoint`）导致 DNS 解析失败
+            .overrideConfiguration(clientOverrideConfiguration())
+            // 使用路径风格访问，避免 SDK 使用 bucket.endpoint 导致 DNS 解析失败。
+            .forcePathStyle(true)
             .build();
+    }
+
+    private ClientOverrideConfiguration clientOverrideConfiguration() {
+        ClientOverrideConfiguration.Builder builder = ClientOverrideConfiguration.builder();
+        Duration apiCallTimeout = storageConfig.getApiCallTimeout();
+        Duration apiCallAttemptTimeout = storageConfig.getApiCallAttemptTimeout();
+        if (apiCallTimeout != null) {
+            builder.apiCallTimeout(apiCallTimeout);
+        }
+        if (apiCallAttemptTimeout != null) {
+            builder.apiCallAttemptTimeout(apiCallAttemptTimeout);
+        }
+        return builder.build();
     }
 }

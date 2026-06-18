@@ -3,7 +3,9 @@
 
 # Ignore Gradle build output directory
 build
-/.claude
+/.claude/*
+!/.claude/rules/
+!/.claude/rules/**
 /.idea
 /app/bin
 # Environment variables
@@ -17,7 +19,7 @@ app/src/main/resources/application-dev.yml
 SETUP_API_KEYS.md
 
 # AI Assistant documentation
-CLAUDE.md
+CLAUDE.local.md
 GEMINI.md
 
 # Playwright MCP

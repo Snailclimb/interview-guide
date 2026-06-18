@@ -2,6 +2,7 @@ package interview.guide.modules.knowledgebase.service;
 
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.common.transaction.TransactionalExecutor;
 import interview.guide.modules.knowledgebase.repository.VectorRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
@@ -9,11 +10,12 @@ import org.springframework.ai.transformer.splitter.TextSplitter;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -28,38 +30,58 @@ public class KnowledgeBaseVectorService {
      * 阿里云 DashScope Embedding API 批量大小限制
      */
     private static final int MAX_BATCH_SIZE = 10;
+    private static final String TEMP_KB_ID_PREFIX = "pending:";
+    private static final String METADATA_KB_ID = "kb_id";
+    private static final String METADATA_TARGET_KB_ID = "kb_target_id";
+    private static final String METADATA_VECTOR_JOB_ID = "kb_vector_job_id";
     private final VectorStore vectorStore;
     private final TextSplitter textSplitter;
     private final VectorRepository vectorRepository;
-    public KnowledgeBaseVectorService(VectorStore vectorStore, VectorRepository vectorRepository) {
+    private final TransactionalExecutor transactionalExecutor;
+
+    @Autowired
+    public KnowledgeBaseVectorService(
+        VectorStore vectorStore,
+        VectorRepository vectorRepository,
+        TransactionalExecutor transactionalExecutor
+    ) {
         this.vectorStore = vectorStore;
         this.vectorRepository = vectorRepository;
+        this.transactionalExecutor = transactionalExecutor;
         // 使用 TokenTextSplitter 默认配置，每个 chunk 约 800 tokens，基于标点边界切分（无重叠）
         this.textSplitter = TokenTextSplitter.builder().build();
     }
+
+    KnowledgeBaseVectorService(VectorStore vectorStore, VectorRepository vectorRepository) {
+        this(vectorStore, vectorRepository, null);
+    }
+
     /**
      * 将知识库内容向量化并存储
      * @param knowledgeBaseId 知识库ID
      * @param content 知识库文本内容
      */
-    @Transactional
     public void vectorizeAndStore(Long knowledgeBaseId, String content) {
-        log.info("开始向量化知识库: kbId={}, contentLength={}", knowledgeBaseId, content.length());
+        String jobId = null;
         try {
-            // 1. 先删除该知识库的旧向量数据
-            deleteByKnowledgeBaseId(knowledgeBaseId);
-            
-            // 2. 将文本分块
+            if (knowledgeBaseId == null) {
+                throw new IllegalArgumentException("knowledgeBaseId不能为空");
+            }
+            jobId = UUID.randomUUID().toString();
+            log.info("开始向量化知识库: kbId={}, jobId={}, contentLength={}",
+                knowledgeBaseId, jobId, content.length());
+
+            // 1. 将文本分块
             List<Document> chunks = textSplitter.apply(
                 List.of(new Document(content))
             );
             
             log.info("文本分块完成: {} 个chunks", chunks.size());
             
-            // 3. 为每个chunk添加metadata（知识库ID）
-            // 统一使用 String 类型存储，确保查询一致性
-            chunks.forEach(chunk -> chunk.getMetadata().put("kb_id", knowledgeBaseId.toString()));
-            // 4. 分批向量化并存储（阿里云 DashScope API 限制 batch size <= 10）
+            // 2. 为每个 chunk 添加临时 metadata，成功后再提升为正式 kb_id。
+            applyPendingMetadata(chunks, knowledgeBaseId, jobId);
+
+            // 3. 分批向量化并存储（阿里云 DashScope API 限制 batch size <= 10）
             int totalChunks = chunks.size();
             int batchCount = (totalChunks + MAX_BATCH_SIZE - 1) / MAX_BATCH_SIZE; // 向上取整
             log.info("开始分批向量化: 总共 {} 个chunks，分 {} 批处理，每批最多 {} 个",
@@ -71,13 +93,25 @@ public class KnowledgeBaseVectorService {
                 log.debug("处理第 {}/{} 批: chunks {}-{}", i + 1, batchCount, start + 1, end);
                 vectorStore.add(batch);
             }
-            log.info("知识库向量化完成: kbId={}, chunks={}, batches={}",
-                    knowledgeBaseId, totalChunks, batchCount);
+            activateVectorJob(knowledgeBaseId, jobId);
+            log.info("知识库向量化完成: kbId={}, jobId={}, chunks={}, batches={}",
+                    knowledgeBaseId, jobId, totalChunks, batchCount);
         } catch (Exception e) {
-            log.error("向量化知识库失败: kbId={}, error={}", knowledgeBaseId, e.getMessage(), e);
+            cleanupPendingVectorJob(knowledgeBaseId, jobId);
+            log.error("向量化知识库失败: kbId={}, jobId={}, error={}",
+                knowledgeBaseId, jobId, e.getMessage(), e);
             throw new BusinessException(ErrorCode.KNOWLEDGE_BASE_VECTORIZATION_FAILED,
                 "向量化知识库失败: " + e.getMessage());
         }
+    }
+
+    private void applyPendingMetadata(List<Document> chunks, Long knowledgeBaseId, String jobId) {
+        String pendingKbId = TEMP_KB_ID_PREFIX + knowledgeBaseId + ":" + jobId;
+        chunks.forEach(chunk -> {
+            chunk.getMetadata().put(METADATA_KB_ID, pendingKbId);
+            chunk.getMetadata().put(METADATA_TARGET_KB_ID, knowledgeBaseId.toString());
+            chunk.getMetadata().put(METADATA_VECTOR_JOB_ID, jobId);
+        });
     }
     
     /**
@@ -188,15 +222,45 @@ public class KnowledgeBaseVectorService {
      * 
      * @param knowledgeBaseId 知识库ID
      */
-    @Transactional(rollbackFor = Exception.class)
     public void deleteByKnowledgeBaseId(Long knowledgeBaseId) {
         try {
-            vectorRepository.deleteByKnowledgeBaseId(knowledgeBaseId);
+            deleteByKnowledgeBaseIdStrict(knowledgeBaseId);
         } catch (Exception e) {
             log.error("删除向量数据失败: kbId={}, error={}", knowledgeBaseId, e.getMessage(), e);
             // 不抛出异常，允许继续执行其他删除操作
             // 如果确实需要严格保证，可以取消下面的注释
             // throw new BusinessException(ErrorCode.KNOWLEDGE_BASE_DELETE_FAILED, "删除向量数据失败");
         }
+    }
+
+    private void deleteByKnowledgeBaseIdStrict(Long knowledgeBaseId) {
+        runVectorRepositoryMutation(() -> vectorRepository.deleteByKnowledgeBaseId(knowledgeBaseId));
+    }
+
+    private void activateVectorJob(Long knowledgeBaseId, String jobId) {
+        runVectorRepositoryMutation(() -> {
+            vectorRepository.deleteByKnowledgeBaseId(knowledgeBaseId);
+            vectorRepository.promoteVectorJob(knowledgeBaseId, jobId);
+        });
+    }
+
+    private void cleanupPendingVectorJob(Long knowledgeBaseId, String jobId) {
+        if (jobId == null) {
+            return;
+        }
+        try {
+            runVectorRepositoryMutation(() -> vectorRepository.deleteByVectorJobId(jobId));
+        } catch (Exception cleanupError) {
+            log.warn("清理临时向量数据失败，可后续按 jobId 补偿: kbId={}, jobId={}, error={}",
+                knowledgeBaseId, jobId, cleanupError.getMessage(), cleanupError);
+        }
+    }
+
+    private void runVectorRepositoryMutation(Runnable action) {
+        if (transactionalExecutor == null) {
+            action.run();
+            return;
+        }
+        transactionalExecutor.run(action);
     }
 }

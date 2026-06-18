@@ -119,6 +119,8 @@ public abstract class AbstractStreamConsumer<T> {
                     consumerName,
                     AsyncTaskStreamConstants.BATCH_SIZE,
                     AsyncTaskStreamConstants.POLL_INTERVAL_MS,
+                    AsyncTaskStreamConstants.PENDING_IDLE_TIMEOUT_MS,
+                    AsyncTaskStreamConstants.PENDING_CLAIM_BATCH_SIZE,
                     this::processMessage
                 );
             } catch (Exception e) {
@@ -139,9 +141,17 @@ public abstract class AbstractStreamConsumer<T> {
      * 避免未 ACK 消息堆积阻塞同 Group 中其他消费者的正常消费。
      */
     private void processMessage(StreamMessageId messageId, Map<String, String> data) {
-        T payload = parsePayload(messageId, data);
-        // 解析失败（payload == null）说明消息体损坏或无法识别的格式——这类 Poison Pill 必须 ACK 移除，
-        // 否则会卡在 Pending List 中永无止境地重投递
+        T payload;
+        try {
+            payload = parsePayload(messageId, data);
+        } catch (Exception e) {
+            Object fields = data == null ? null : data.keySet();
+            log.warn("Failed to parse {} stream message, ack and discard: messageId={}, fields={}",
+                taskDisplayName(), messageId, fields, e);
+            ackMessage(messageId);
+            return;
+        }
+
         if (payload == null) {
             ackMessage(messageId);
             return;
@@ -152,6 +162,11 @@ public abstract class AbstractStreamConsumer<T> {
             taskDisplayName(), payloadIdentifier(payload), messageId, retryCount);
 
         try {
+            if (shouldSkip(payload)) {
+                ackMessage(messageId);
+                log.info("{} task skipped: {}", taskDisplayName(), payloadIdentifier(payload));
+                return;
+            }
             markProcessing(payload);
             processBusiness(payload);
             markCompleted(payload);
@@ -176,6 +191,9 @@ public abstract class AbstractStreamConsumer<T> {
      * 从 Stream 消息体解析重试次数。旧版本生产者的消息可能不含此字段，兜底返回 0 表示首次处理。
      */
     protected int parseRetryCount(Map<String, String> data) {
+        if (data == null) {
+            return 0;
+        }
         try {
             return Integer.parseInt(data.getOrDefault(AsyncTaskStreamConstants.FIELD_RETRY_COUNT, "0"));
         } catch (NumberFormatException e) {
@@ -230,6 +248,10 @@ public abstract class AbstractStreamConsumer<T> {
     protected abstract T parsePayload(StreamMessageId messageId, Map<String, String> data);
 
     protected abstract String payloadIdentifier(T payload);
+
+    protected boolean shouldSkip(T payload) {
+        return false;
+    }
 
     protected abstract void markProcessing(T payload);
 

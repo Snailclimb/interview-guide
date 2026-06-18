@@ -96,6 +96,13 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<EvaluateStrea
     }
 
     @Override
+    protected boolean shouldSkip(EvaluatePayload payload) {
+        return sessionRepository.findBySessionId(payload.sessionId())
+            .map(session -> session.getEvaluateStatus() == AsyncTaskStatus.COMPLETED)
+            .orElse(true);
+    }
+
+    @Override
     protected void markProcessing(EvaluatePayload payload) {
         updateEvaluateStatus(payload.sessionId(), AsyncTaskStatus.PROCESSING, null);
     }

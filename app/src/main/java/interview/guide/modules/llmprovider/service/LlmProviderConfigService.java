@@ -24,15 +24,19 @@ import interview.guide.modules.voiceinterview.service.QwenAsrService;
 import interview.guide.modules.voiceinterview.service.QwenTtsService;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
+import org.springframework.boot.http.client.HttpClientSettings;
+import org.springframework.boot.http.client.InetAddressFilter;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.URI;
+import java.time.Duration;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -812,13 +816,17 @@ public class LlmProviderConfigService {
 
   private ProviderTestResult doTestProvider(ProviderRuntimeConfig config, String id) {
     try {
-      SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-      requestFactory.setConnectTimeout(5000);
-      requestFactory.setReadTimeout(10000);
+      HttpClientSettings settings = HttpClientSettings.defaults()
+          .withConnectTimeout(Duration.ofSeconds(5))
+          .withReadTimeout(Duration.ofSeconds(10))
+          .withInetAddressFilter(
+              InetAddressFilter.externalAddresses()
+                  .or(InetAddressFilter.adapt(InetAddress::isLoopbackAddress))
+                  .or("198.18.0.0/15"));
 
       RestClient restClient = RestClient.builder()
           .defaultHeader("Authorization", "Bearer " + config.apiKey())
-          .requestFactory(requestFactory)
+          .requestFactory(ClientHttpRequestFactoryBuilder.jdk().build(settings))
           .build();
 
       Map<String, Object> requestBody = buildConnectivityTestRequestBody(config.model());

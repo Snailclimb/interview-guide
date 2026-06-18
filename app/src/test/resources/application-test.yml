@@ -49,6 +49,8 @@ spring:
 app:
   ai:
     default-provider: dashscope
+    security:
+      api-key-encryption-key: test-provider-api-key-encryption-key
     providers:
       dashscope:
         base-url: https://dashscope.aliyuncs.com/compatible-mode
@@ -88,6 +90,7 @@ app:
     secret-key: minioadmin
     bucket: interview-guide
     region: us-east-1
+    auto-create-bucket: false
 
   cors:
     allowed-origins: http://localhost:5173,http://localhost:5174,http://localhost:80

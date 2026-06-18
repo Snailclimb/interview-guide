@@ -35,6 +35,16 @@ public final class AsyncTaskStreamConstants {
     public static final int BATCH_SIZE = 10;
 
     /**
+     * Pending 消息空闲超过该时间后允许被当前消费者认领（毫秒）
+     */
+    public static final long PENDING_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+
+    /**
+     * 每轮最多回收的 pending 消息数
+     */
+    public static final int PENDING_CLAIM_BATCH_SIZE = 10;
+
+    /**
      * 消费者轮询间隔（毫秒）
      */
     public static final long POLL_INTERVAL_MS = 1000;

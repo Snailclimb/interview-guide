@@ -1,10 +1,17 @@
 package interview.guide.common.ai;
 
+import com.openai.client.OpenAIClient;
+import com.openai.client.OpenAIClientImpl;
+import com.openai.core.ClientOptions;
+import com.openai.core.Timeout;
+import com.openai.credential.BearerTokenCredential;
+import org.springframework.ai.openai.http.okhttp.SpringAiOpenAiHttpClient;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import java.net.http.HttpClient;
+import java.time.Duration;
 import java.time.Duration;
 import java.util.regex.Pattern;
 
@@ -27,34 +34,32 @@ public final class ApiPathResolver {
 
   private ApiPathResolver() {}
 
-  public static OpenAiApi buildOpenAiApi(String baseUrl, String apiKey) {
-    return buildOpenAiApi(baseUrl, apiKey, DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT);
+  public static OpenAIClient buildOpenAiClient(String baseUrl, String apiKey) {
+    return buildOpenAiClient(baseUrl, apiKey, DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT);
   }
 
-  public static OpenAiApi buildOpenAiApi(String baseUrl, String apiKey,
-      Duration connectTimeout, Duration readTimeout) {
-    // 自定义超时：RestClient 默认无超时，LLM 请求必须设置合理超时避免线程挂死
-    // 使用 JdkClientHttpRequestFactory 替代 SimpleClientHttpRequestFactory：
-    // - Java 21 内置 HttpClient 原生支持 HTTP/2 和连接池（keep-alive）
-    // - 零额外依赖，项目 Java 21 + Spring Boot 4.0 天然适配
-    HttpClient httpClient = HttpClient.newBuilder()
-        .connectTimeout(connectTimeout)
+  public static OpenAIClient buildOpenAiClient(String baseUrl, String apiKey,
+      int connectTimeout, int readTimeout) {
+    Timeout timeout = Timeout.builder()
+        .connect(Duration.ofMillis(connectTimeout))
+        .read(Duration.ofMillis(readTimeout))
         .build();
-    JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-    requestFactory.setReadTimeout(readTimeout);
-
-    RestClient.Builder restClientBuilder = RestClient.builder()
-        .requestFactory(requestFactory);
-
-    OpenAiApi.Builder apiBuilder = OpenAiApi.builder()
-        .baseUrl(baseUrl)
+    ClientOptions options = ClientOptions.Companion.builder()
         .apiKey(apiKey)
-        .restClientBuilder(restClientBuilder);
-    // baseUrl 末尾含版本段（如 /v1）时，API 路径不再拼接版本前缀
-    if (baseUrlContainsVersion(baseUrl)) {
-      apiBuilder.completionsPath("/chat/completions").embeddingsPath("/embeddings");
+        .credential(BearerTokenCredential.create(apiKey))
+        .baseUrl(resolveVersionedBaseUrl(baseUrl))
+        .timeout(timeout)
+        .httpClient(SpringAiOpenAiHttpClient.builder().timeout(timeout).build())
+        .build();
+    return new OpenAIClientImpl(options);
+  }
+
+  public static String resolveVersionedBaseUrl(String baseUrl) {
+    String stripped = stripTrailingSlashes(baseUrl);
+    if (baseUrlContainsVersion(stripped)) {
+      return stripped;
     }
-    return apiBuilder.build();
+    return stripped + "/v1";
   }
 
   /** 判断 baseUrl 末尾是否包含 /v1 之类的版本段。 */

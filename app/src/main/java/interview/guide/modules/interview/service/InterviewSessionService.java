@@ -312,34 +312,14 @@ public class InterviewSessionService {
 
         SessionStatus newStatus = hasNextQuestion ? SessionStatus.IN_PROGRESS : SessionStatus.COMPLETED;
 
-        // 更新 Redis 缓存
+        persistSubmittedAnswer(request, index, question, newIndex, newStatus);
+
+        // 更新 Redis 缓存。DB 已经持久化成功，缓存失败时可由后续读取从数据库恢复。
         sessionCache.updateQuestions(request.sessionId(), questions);
         sessionCache.updateCurrentIndex(request.sessionId(), newIndex);
         if (newStatus == SessionStatus.COMPLETED) {
             sessionCache.updateSessionStatus(request.sessionId(), SessionStatus.COMPLETED);
-        }
-
-        // 保存答案到数据库
-        try {
-            persistenceService.saveAnswer(
-                request.sessionId(), index,
-                question.question(), question.category(),
-                request.answer(), 0, null  // 分数在报告生成时更新
-            );
-            persistenceService.updateCurrentQuestionIndex(request.sessionId(), newIndex);
-            persistenceService.updateSessionStatus(request.sessionId(),
-                newStatus == SessionStatus.COMPLETED
-                    ? InterviewSessionEntity.SessionStatus.COMPLETED
-                    : InterviewSessionEntity.SessionStatus.IN_PROGRESS);
-
-            // 如果是最后一题，设置评估状态为 PENDING 并触发异步评估
-            if (!hasNextQuestion) {
-                persistenceService.updateEvaluateStatus(request.sessionId(), AsyncTaskStatus.PENDING, null);
-                evaluateStreamProducer.sendEvaluateTask(request.sessionId());
-                log.info("会话 {} 已完成所有问题，评估任务已入队", request.sessionId());
-            }
-        } catch (Exception e) {
-            log.warn("保存答案到数据库失败: {}", e.getMessage());
+            enqueueEvaluationTask(request.sessionId());
         }
 
         log.info("会话 {} 提交答案: 问题{}, 剩余{}题",
@@ -351,6 +331,36 @@ public class InterviewSessionService {
             newIndex,
             questions.size()
         );
+    }
+
+    private void persistSubmittedAnswer(SubmitAnswerRequest request, int index,
+                                        InterviewQuestionDTO question, int newIndex,
+                                        SessionStatus newStatus) {
+        try {
+            persistenceService.saveAnswer(
+                request.sessionId(), index,
+                question.question(), question.category(),
+                request.answer(), 0, null  // 分数在报告生成时更新
+            );
+            persistenceService.updateCurrentQuestionIndex(request.sessionId(), newIndex);
+            persistenceService.updateSessionStatus(request.sessionId(),
+                newStatus == SessionStatus.COMPLETED
+                    ? InterviewSessionEntity.SessionStatus.COMPLETED
+                    : InterviewSessionEntity.SessionStatus.IN_PROGRESS);
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("保存答案到数据库失败: sessionId={}, questionIndex={}",
+                request.sessionId(), index, e);
+            throw new BusinessException(ErrorCode.INTERVIEW_ANSWER_SAVE_FAILED,
+                "保存答案失败，请稍后重试");
+        }
+    }
+
+    private void enqueueEvaluationTask(String sessionId) {
+        persistenceService.updateEvaluateStatus(sessionId, AsyncTaskStatus.PENDING, null);
+        evaluateStreamProducer.sendEvaluateTask(sessionId);
+        log.info("会话 {} 已完成所有问题，评估任务已入队", sessionId);
     }
 
     /**

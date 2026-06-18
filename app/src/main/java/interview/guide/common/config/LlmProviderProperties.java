@@ -34,7 +34,8 @@ public class LlmProviderProperties {
     @Data
     public static class SecurityConfig {
         private String apiKeyEncryptionKey;
-        private boolean requireEncryptionKey = false;
+        private boolean requireEncryptionKey = true;
+        private boolean allowFallbackEncryptionKey = false;
     }
 
     @Data
@@ -44,7 +45,6 @@ public class LlmProviderProperties {
         // ToolCallAdvisor
         private boolean toolCallEnabled = true;
         private boolean toolCallConversationHistoryEnabled = false;
-        private boolean streamToolCallResponses = false;
 
         // MessageChatMemoryAdvisor（默认关闭，避免会话串扰）
         private boolean messageChatMemoryEnabled = false;

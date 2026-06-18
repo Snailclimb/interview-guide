@@ -55,6 +55,7 @@ public class StructuredOutputInvoker {
     private final int errorMessageMaxLength;
     private final boolean metricsEnabled;
     // MeterRegistry 可选——无 Micrometer 依赖时不报错
+    private final boolean schemaValidationEnabled;
     private final MeterRegistry meterRegistry;
 
     public StructuredOutputInvoker(
@@ -69,6 +70,7 @@ public class StructuredOutputInvoker {
         // 错误消息截断最少保留 20 字符，避免太短看不出问题
         this.errorMessageMaxLength = Math.max(20, properties.getStructuredErrorMessageMaxLength());
         this.metricsEnabled = properties.isStructuredMetricsEnabled();
+        this.schemaValidationEnabled = properties.isStructuredSchemaValidationEnabled();
         this.meterRegistry = meterRegistry;
     }
 
@@ -102,13 +104,8 @@ public class StructuredOutputInvoker {
                 ? securedSystemPrompt
                 : buildRetrySystemPrompt(securedSystemPrompt, lastError);
             try {
-                String content = chatClient.prompt()
-                    .system(attemptSystemPrompt)
-                    .user(userPrompt)
-                    .call()
-                    .content();
-                // 先尝试本地修复（未转义引号），修复不成才抛异常触发重试
-                T result = convertWithRepair(content, outputConverter, logContext, log);
+                T result = callStructuredOutput(
+                    chatClient, attemptSystemPrompt, userPrompt, outputConverter, logContext, log);
                 recordAttempt(contextTag, STATUS_SUCCESS);
                 recordInvocation(contextTag, STATUS_SUCCESS, startNanos);
                 return result;
@@ -133,10 +130,25 @@ public class StructuredOutputInvoker {
         );
     }
 
-    /**
-     * 解析 JSON 输出，首次失败时尝试本地修复未转义引号后再解析。
-     * 本地修复比重试 LLM 成本低得多，且有很高命中率——这是 LLM 输出 JSON 最常见的格式缺陷。
-     */
+    private <T> T callStructuredOutput(
+        ChatClient chatClient,
+        String systemPrompt,
+        String userPrompt,
+        BeanOutputConverter<T> outputConverter,
+        String logContext,
+        Logger log
+    ) {
+        var call = chatClient.prompt()
+            .system(systemPrompt)
+            .user(userPrompt)
+            .call();
+        if (schemaValidationEnabled) {
+            return call.entity(outputConverter, spec -> spec.validateSchema());
+        }
+        String content = call.content();
+        return convertWithRepair(content, outputConverter, logContext, log);
+    }
+
     private <T> T convertWithRepair(
         String content,
         BeanOutputConverter<T> outputConverter,

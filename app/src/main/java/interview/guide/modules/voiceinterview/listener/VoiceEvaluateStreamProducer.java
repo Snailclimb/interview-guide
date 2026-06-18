@@ -3,6 +3,7 @@ package interview.guide.modules.voiceinterview.listener;
 import interview.guide.common.async.AbstractStreamProducer;
 import interview.guide.common.constant.AsyncTaskStreamConstants;
 import interview.guide.common.model.AsyncTaskStatus;
+import interview.guide.common.transaction.TransactionalExecutor;
 import interview.guide.infrastructure.redis.RedisService;
 import interview.guide.modules.voiceinterview.service.VoiceInterviewService;
 import lombok.extern.slf4j.Slf4j;
@@ -19,11 +20,14 @@ import java.util.Map;
 public class VoiceEvaluateStreamProducer extends AbstractStreamProducer<String> {
 
     private final VoiceInterviewService voiceInterviewService;
+    private final TransactionalExecutor transactionalExecutor;
 
     public VoiceEvaluateStreamProducer(RedisService redisService,
-                                       @Lazy VoiceInterviewService voiceInterviewService) {
+                                       @Lazy VoiceInterviewService voiceInterviewService,
+                                       TransactionalExecutor transactionalExecutor) {
         super(redisService);
         this.voiceInterviewService = voiceInterviewService;
+        this.transactionalExecutor = transactionalExecutor;
     }
 
     public void sendEvaluateTask(String sessionId) {
@@ -55,7 +59,7 @@ public class VoiceEvaluateStreamProducer extends AbstractStreamProducer<String> 
 
     @Override
     protected void onSendFailed(String sessionId, String error) {
-        voiceInterviewService.updateEvaluateStatus(
-                Long.parseLong(sessionId), AsyncTaskStatus.FAILED, truncateError(error));
+        transactionalExecutor.runRequiresNew(() -> voiceInterviewService.updateEvaluateStatus(
+            Long.parseLong(sessionId), AsyncTaskStatus.FAILED, truncateError(error)));
     }
 }

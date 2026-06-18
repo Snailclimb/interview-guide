@@ -1,9 +1,9 @@
 # AI Interview Platform - Dependency Management
 
 [versions]
-spring-boot = "4.0.1"
-springAi = "2.0.0-M4"
-springAiAgentUtils = "0.7.0"
+spring-boot = "4.1.0"
+springAi = "2.0.0"
+springAiAgentUtils = "0.10.0"
 tika = "2.9.2"
 lombok = "1.18.36"
 junit-jupiter = "5.12.0"

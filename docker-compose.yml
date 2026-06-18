@@ -106,13 +106,14 @@ services:
         condition: service_healthy # 必须等待 MinIO 服务健康（不仅仅是启动）
     entrypoint: >
       /bin/sh -c "
-      # 1. 配置 MinIO 客户端别名 (myminio) 连接到 minio 服务
-      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
-      # 2. 创建名为 interview-guide 的存储桶
-      /usr/bin/mc mb myminio/interview-guide;
-      # 3. 设置该存储桶为公共读权限（方便前端直接访问图片等资源）
-      /usr/bin/mc anonymous set public myminio/interview-guide;
-      exit 0;
+      set -eu;
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin &&
+      (
+        /usr/bin/mc ls myminio/interview-guide > /dev/null 2>&1 ||
+        /usr/bin/mc mb myminio/interview-guide
+      ) &&
+      /usr/bin/mc anonymous set public myminio/interview-guide &&
+      /usr/bin/mc ls myminio/interview-guide
       "
 
   # =========================================
@@ -162,6 +163,7 @@ services:
       # 这里的变量值来自宿主机的环境变量或 .env 文件
       AI_BAILIAN_API_KEY: ${AI_BAILIAN_API_KEY}
       AI_MODEL: ${AI_MODEL:-qwen3.5-flash}
+      APP_AI_CONFIG_ENCRYPTION_KEY: ${APP_AI_CONFIG_ENCRYPTION_KEY}
 
       # === 面试参数配置 ===
       APP_INTERVIEW_FOLLOW_UP_COUNT: ${APP_INTERVIEW_FOLLOW_UP_COUNT:-1}

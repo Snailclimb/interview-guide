@@ -6,7 +6,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 向量存储Repository
@@ -28,7 +27,6 @@ public class VectorRepository {
      * @param knowledgeBaseId 知识库ID
      * @return 删除的行数
      */
-    @Transactional(rollbackFor = Exception.class)
     public int deleteByKnowledgeBaseId(Long knowledgeBaseId) {
         log.info("开始删除知识库向量数据: kbId={}", knowledgeBaseId);
         
@@ -57,9 +55,55 @@ public class VectorRepository {
             return deletedRows;
             
         } catch (Exception e) {
-            log.error("执行删除向量 SQL 失败: kbId={}, error={}", knowledgeBaseId, e.getMessage());
+            log.error("执行删除向量 SQL 失败: kbId={}, error={}", knowledgeBaseId, e.getMessage(), e);
             // 抛出异常以触发事务回滚
             throw new BusinessException(ErrorCode.KNOWLEDGE_BASE_DELETE_FAILED, "删除向量数据失败");
         }
-    }    
+    }
+
+    /**
+     * 删除指定向量化任务写入的临时向量数据。
+     */
+    public int deleteByVectorJobId(String jobId) {
+        String sql = """
+            DELETE FROM vector_store
+            WHERE metadata->>'kb_vector_job_id' = ?
+            """;
+        try {
+            int deletedRows = jdbcTemplate.update(sql, jobId);
+            log.info("已清理临时向量数据: jobId={}, 删除行数={}", jobId, deletedRows);
+            return deletedRows;
+        } catch (Exception e) {
+            log.error("清理临时向量数据失败: jobId={}, error={}", jobId, e.getMessage(), e);
+            throw new BusinessException(
+                ErrorCode.KNOWLEDGE_BASE_VECTORIZATION_FAILED, "清理临时向量数据失败");
+        }
+    }
+
+    /**
+     * 将临时向量任务提升为当前知识库的正式向量数据。
+     */
+    public int promoteVectorJob(Long knowledgeBaseId, String jobId) {
+        String sql = """
+            UPDATE vector_store
+            SET metadata = (jsonb_set(
+                    metadata::jsonb,
+                    '{kb_id}',
+                    to_jsonb(?::text),
+                    true
+                ) - 'kb_vector_job_id' - 'kb_target_id')::json
+            WHERE metadata->>'kb_vector_job_id' = ?
+            """;
+        try {
+            int updatedRows = jdbcTemplate.update(sql, knowledgeBaseId.toString(), jobId);
+            log.info("临时向量数据已提升为正式数据: kbId={}, jobId={}, 更新行数={}",
+                knowledgeBaseId, jobId, updatedRows);
+            return updatedRows;
+        } catch (Exception e) {
+            log.error("提升临时向量数据失败: kbId={}, jobId={}, error={}",
+                knowledgeBaseId, jobId, e.getMessage(), e);
+            throw new BusinessException(
+                ErrorCode.KNOWLEDGE_BASE_VECTORIZATION_FAILED, "提升临时向量数据失败");
+        }
+    }
 }
