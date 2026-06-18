@@ -40,8 +40,8 @@ services:
     container_name: interview-rustfs
     command: ["/data"]
     environment:
-      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
-      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+      RUSTFS_ACCESS_KEY: ${APP_STORAGE_ACCESS_KEY:-admin}
+      RUSTFS_SECRET_KEY: ${APP_STORAGE_ACCESS_KEY:-admin}
       RUSTFS_CONSOLE_ENABLE: "true"
     ports:
       - "9000:9000"
