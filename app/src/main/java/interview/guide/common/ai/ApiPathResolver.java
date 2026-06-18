@@ -6,12 +6,7 @@ import com.openai.core.ClientOptions;
 import com.openai.core.Timeout;
 import com.openai.credential.BearerTokenCredential;
 import org.springframework.ai.openai.http.okhttp.SpringAiOpenAiHttpClient;
-import org.springframework.ai.openai.api.OpenAiApi;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
-import org.springframework.web.client.RestClient;
 
-import java.net.http.HttpClient;
-import java.time.Duration;
 import java.time.Duration;
 import java.util.regex.Pattern;
 
@@ -39,10 +34,10 @@ public final class ApiPathResolver {
   }
 
   public static OpenAIClient buildOpenAiClient(String baseUrl, String apiKey,
-      int connectTimeout, int readTimeout) {
+                                               Duration connectTimeout, Duration readTimeout) {
     Timeout timeout = Timeout.builder()
-        .connect(Duration.ofMillis(connectTimeout))
-        .read(Duration.ofMillis(readTimeout))
+        .connect(connectTimeout)
+        .read(readTimeout)
         .build();
     ClientOptions options = ClientOptions.Companion.builder()
         .apiKey(apiKey)
