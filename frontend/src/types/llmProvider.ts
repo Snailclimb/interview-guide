@@ -32,6 +32,15 @@ export interface UpdateProviderRequest {
   temperature?: number;
 }
 
+export interface DiscoverModelsRequest {
+  baseUrl: string;
+  apiKey: string;
+}
+
+export interface DiscoverModelsResponse {
+  models: string[];
+}
+
 export interface ProviderTestResult {
   success: boolean;
   message: string;

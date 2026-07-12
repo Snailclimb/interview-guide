@@ -177,12 +177,26 @@ export default function SettingsPage() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [showEmbeddingDropdown, setShowEmbeddingDropdown] = useState(false);
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
+  const [discoveringModels, setDiscoveringModels] = useState(false);
+  const [modelDiscoveryError, setModelDiscoveryError] = useState<string | null>(null);
 
   // 当前表单 Provider ID 匹配的预设
   const currentPreset = useMemo(
     () => PROVIDER_PRESETS[formId.toLowerCase()],
     [formId],
   );
+
+  const discoveredModelOptions = useMemo(
+    () => discoveredModels.map(model => ({ value: model, label: model })),
+    [discoveredModels],
+  );
+  const availableModelOptions = discoveredModelOptions.length > 0
+    ? discoveredModelOptions
+    : (currentPreset?.models ?? []);
+  const availableEmbeddingModelOptions = discoveredModelOptions.length > 0
+    ? discoveredModelOptions
+    : (currentPreset?.embeddingModels ?? []);
 
   // Test state
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -265,6 +279,8 @@ export default function SettingsPage() {
     setFormEmbeddingDimensions('1024');
     setFormSupportsEmbedding(false);
     setShowApiKey(false);
+    setDiscoveredModels([]);
+    setModelDiscoveryError(null);
     setShowModal(true);
   };
 
@@ -279,12 +295,34 @@ export default function SettingsPage() {
     setFormSupportsEmbedding(provider.supportsEmbedding);
     setFormTemperature(provider.temperature != null ? String(provider.temperature) : '');
     setShowApiKey(false);
+    setDiscoveredModels([]);
+    setModelDiscoveryError(null);
     setShowModal(true);
   };
 
   const closeModal = () => {
     setShowModal(false);
     setEditingProvider(null);
+    setDiscoveredModels([]);
+    setModelDiscoveryError(null);
+  };
+
+  const handleDiscoverModels = async () => {
+    const baseUrl = formBaseUrl.trim();
+    const apiKey = formApiKey.trim();
+    if (!baseUrl || !apiKey) return;
+
+    setDiscoveringModels(true);
+    setModelDiscoveryError(null);
+    try {
+      const response = await llmProviderApi.discoverModels({ baseUrl, apiKey });
+      setDiscoveredModels(response.models);
+    } catch (err) {
+      setDiscoveredModels([]);
+      setModelDiscoveryError(err instanceof Error ? err.message : '获取模型列表失败，请稍后重试');
+    } finally {
+      setDiscoveringModels(false);
+    }
   };
 
   // --- CRUD handlers ---
@@ -989,6 +1027,24 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
+                  <div>
+                    <button
+                      type="button"
+                      onClick={handleDiscoverModels}
+                      disabled={!formBaseUrl.trim() || !formApiKey.trim() || discoveringModels}
+                      className="inline-flex items-center gap-2 rounded-xl border border-primary-200 px-4 py-2 text-sm font-medium text-primary-700 transition-colors hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-800 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${discoveringModels ? 'animate-spin' : ''}`} />
+                      {discoveringModels ? '获取中...' : '获取模型'}
+                    </button>
+                    {!formApiKey.trim() && editingProvider && (
+                      <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">输入 API Key 后可获取模型</p>
+                    )}
+                    {modelDiscoveryError && (
+                      <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{modelDiscoveryError}</p>
+                    )}
+                  </div>
+
                   {/* Chat Model */}
                   <div>
                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
@@ -1002,7 +1058,7 @@ export default function SettingsPage() {
                           setFormModel(e.target.value);
                           setShowModelDropdown(false);
                         }}
-                        onFocus={() => currentPreset && setShowModelDropdown(true)}
+                        onFocus={() => availableModelOptions.length > 0 && setShowModelDropdown(true)}
                         onBlur={() => setTimeout(() => setShowModelDropdown(false), 150)}
                         placeholder={currentPreset ? '从下拉列表选择或输入自定义聊天模型名' : '例如: qwen3.5-flash, deepseek-v4-flash, glm-5'}
                         className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
@@ -1010,7 +1066,7 @@ export default function SettingsPage() {
                           placeholder:text-slate-400 focus:outline-none focus:ring-2
                           focus:ring-primary-500/50 focus:border-primary-400 transition-shadow"
                       />
-                      {currentPreset && (
+                      {availableModelOptions.length > 0 && (
                         <button
                           type="button"
                           onClick={() => setShowModelDropdown(!showModelDropdown)}
@@ -1020,11 +1076,11 @@ export default function SettingsPage() {
                           <ChevronDown className="w-4 h-4" />
                         </button>
                       )}
-                      {showModelDropdown && currentPreset && (
+                      {showModelDropdown && availableModelOptions.length > 0 && (
                         <div className="absolute z-10 mt-1 w-full bg-white dark:bg-slate-700
                           border border-slate-200 dark:border-slate-600 rounded-xl shadow-lg
                           max-h-60 overflow-auto">
-                          {currentPreset.models.map((m) => (
+                          {availableModelOptions.map((m) => (
                             <button
                               key={m.value}
                               type="button"
@@ -1077,7 +1133,7 @@ export default function SettingsPage() {
                           setFormEmbeddingModel(e.target.value);
                           setShowEmbeddingDropdown(false);
                         }}
-                        onFocus={() => formSupportsEmbedding && currentPreset?.embeddingModels && setShowEmbeddingDropdown(true)}
+                        onFocus={() => formSupportsEmbedding && availableEmbeddingModelOptions.length > 0 && setShowEmbeddingDropdown(true)}
                         onBlur={() => setTimeout(() => setShowEmbeddingDropdown(false), 150)}
                         disabled={!formSupportsEmbedding}
                         placeholder={formSupportsEmbedding
@@ -1089,7 +1145,7 @@ export default function SettingsPage() {
                           focus:ring-primary-500/50 focus:border-primary-400 transition-shadow
                           disabled:cursor-not-allowed disabled:opacity-60"
                       />
-                      {formSupportsEmbedding && currentPreset?.embeddingModels && (
+                      {formSupportsEmbedding && availableEmbeddingModelOptions.length > 0 && (
                         <button
                           type="button"
                           onClick={() => setShowEmbeddingDropdown(!showEmbeddingDropdown)}
@@ -1099,11 +1155,11 @@ export default function SettingsPage() {
                           <ChevronDown className="w-4 h-4" />
                         </button>
                       )}
-                      {formSupportsEmbedding && showEmbeddingDropdown && currentPreset?.embeddingModels && (
+                      {formSupportsEmbedding && showEmbeddingDropdown && availableEmbeddingModelOptions.length > 0 && (
                         <div className="absolute z-10 mt-1 w-full bg-white dark:bg-slate-700
                           border border-slate-200 dark:border-slate-600 rounded-xl shadow-lg
                           max-h-60 overflow-auto">
-                          {currentPreset.embeddingModels.map((m) => (
+                          {availableEmbeddingModelOptions.map((m) => (
                             <button
                               key={m.value}
                               type="button"

@@ -6,6 +6,8 @@ import interview.guide.modules.llmprovider.dto.AsrConfigDTO;
 import interview.guide.modules.llmprovider.dto.AsrConfigRequest;
 import interview.guide.modules.llmprovider.dto.CreateProviderRequest;
 import interview.guide.modules.llmprovider.dto.DefaultProviderDTO;
+import interview.guide.modules.llmprovider.dto.DiscoverModelsRequest;
+import interview.guide.modules.llmprovider.dto.DiscoverModelsResponse;
 import interview.guide.modules.llmprovider.dto.ProviderDTO;
 import interview.guide.modules.llmprovider.dto.ProviderTestResult;
 import interview.guide.modules.llmprovider.dto.TtsConfigDTO;
@@ -72,6 +74,13 @@ public class LlmProviderController {
   @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
   public Result<ProviderTestResult> testProvider(@PathVariable String id) {
     return Result.success(configService.testProvider(id));
+  }
+
+  @PostMapping("/models/discover")
+  @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 5)
+  public Result<DiscoverModelsResponse> discoverModels(
+      @RequestBody @Valid DiscoverModelsRequest request) {
+    return Result.success(configService.discoverModels(request));
   }
 
   @PostMapping("/reload")

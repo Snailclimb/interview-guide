@@ -1,5 +1,8 @@
 package interview.guide.modules.llmprovider.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import interview.guide.common.ai.ApiPathResolver;
 import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.config.LlmProviderProperties;
@@ -10,6 +13,8 @@ import interview.guide.modules.llmprovider.dto.AsrConfigDTO;
 import interview.guide.modules.llmprovider.dto.AsrConfigRequest;
 import interview.guide.modules.llmprovider.dto.CreateProviderRequest;
 import interview.guide.modules.llmprovider.dto.DefaultProviderDTO;
+import interview.guide.modules.llmprovider.dto.DiscoverModelsRequest;
+import interview.guide.modules.llmprovider.dto.DiscoverModelsResponse;
 import interview.guide.modules.llmprovider.dto.ProviderDTO;
 import interview.guide.modules.llmprovider.dto.ProviderTestResult;
 import interview.guide.modules.llmprovider.dto.TtsConfigDTO;
@@ -77,6 +82,8 @@ public class LlmProviderConfigService {
       "baidu", "Embedding-V1",
       "minimax", "embo-01"
   );
+  private static final int MODEL_DISCOVERY_LIMIT = 200;
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   @Autowired
   public LlmProviderConfigService(
@@ -285,6 +292,90 @@ public class LlmProviderConfigService {
     } finally {
       rwLock.readLock().unlock();
     }
+  }
+
+  public DiscoverModelsResponse discoverModels(DiscoverModelsRequest request) {
+    String targetUrl = buildModelsUrl(request.baseUrl());
+    String apiKey = requireNonBlank(request.apiKey(), "apiKey");
+    HttpClientSettings settings = HttpClientSettings.defaults()
+        .withConnectTimeout(Duration.ofSeconds(5))
+        .withReadTimeout(Duration.ofSeconds(5))
+        .withInetAddressFilter(externalAddressFilter());
+    RestClient client = RestClient.builder()
+        .defaultHeader("Authorization", "Bearer " + apiKey)
+        .defaultHeader("Accept", "application/json")
+        .requestFactory(ClientHttpRequestFactoryBuilder.jdk().build(settings))
+        .build();
+    try {
+      return parseDiscoveredModels(client.get().uri(URI.create(targetUrl))
+          .retrieve().body(String.class));
+    } catch (RestClientResponseException exception) {
+      int status = exception.getStatusCode().value();
+      if (status == 401 || status == 403) {
+        throw new BusinessException(ErrorCode.AI_API_KEY_INVALID, "API Key 无效或无模型列表权限");
+      }
+      if (status == 429) {
+        throw new BusinessException(ErrorCode.AI_RATE_LIMIT_EXCEEDED, "获取模型列表失败，请稍后重试");
+      }
+      throw new BusinessException(ErrorCode.AI_SERVICE_UNAVAILABLE, "获取模型列表失败，请稍后重试");
+    } catch (BusinessException exception) {
+      throw exception;
+    } catch (Exception exception) {
+      throw new BusinessException(ErrorCode.AI_SERVICE_UNAVAILABLE, "获取模型列表失败，请稍后重试", exception);
+    }
+  }
+
+  DiscoverModelsResponse parseDiscoveredModels(String body) {
+    try {
+      JsonNode data = OBJECT_MAPPER.readTree(body).path("data");
+      if (!data.isArray()) {
+        throw invalidModelsResponse();
+      }
+      List<String> models = new ArrayList<>();
+      for (JsonNode item : data) {
+        String id = trimOrNull(item.path("id").asText(null));
+        if (id != null) {
+          models.add(id);
+        }
+      }
+      models = models.stream().distinct().sorted().limit(MODEL_DISCOVERY_LIMIT).toList();
+      if (models.isEmpty()) {
+        throw invalidModelsResponse();
+      }
+      return new DiscoverModelsResponse(models);
+    } catch (JsonProcessingException exception) {
+      throw invalidModelsResponse();
+    }
+  }
+
+  String buildModelsUrl(String baseUrl) {
+    String normalized = requireNonBlank(baseUrl, "baseUrl");
+    URI uri;
+    try {
+      uri = URI.create(normalized);
+    } catch (IllegalArgumentException exception) {
+      throw new BusinessException(ErrorCode.BAD_REQUEST, "baseUrl 格式无效", exception);
+    }
+    if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null
+        || uri.getUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null
+        || (uri.getPort() != -1 && uri.getPort() != 443)) {
+      throw new BusinessException(ErrorCode.BAD_REQUEST, "模型发现仅支持外部 HTTPS Base URL");
+    }
+    String stripped = ApiPathResolver.stripTrailingSlashes(normalized);
+    if (stripped.endsWith("/models")) {
+      throw new BusinessException(ErrorCode.BAD_REQUEST, "baseUrl 不应包含 /models 路径");
+    }
+    return stripped + "/models";
+  }
+
+  private BusinessException invalidModelsResponse() {
+    return new BusinessException(ErrorCode.BAD_REQUEST, "供应商未返回 OpenAI Models API 格式");
+  }
+
+  private InetAddressFilter externalAddressFilter() {
+    return InetAddressFilter.externalAddresses()
+        .or(InetAddressFilter.adapt(InetAddress::isLoopbackAddress))
+        .or("198.18.0.0/15");
   }
 
   public ProviderTestResult testAsrConfig() {

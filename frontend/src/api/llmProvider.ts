@@ -9,6 +9,8 @@ import type {
   TtsConfig,
   AsrConfigRequest,
   TtsConfigRequest,
+  DiscoverModelsRequest,
+  DiscoverModelsResponse,
 } from '../types/llmProvider';
 
 export const llmProviderApi = {
@@ -27,6 +29,9 @@ export const llmProviderApi = {
 
   test: (id: string) =>
     request.post<ProviderTestResult>(`/api/llm-provider/${id}/test`),
+
+  discoverModels: (data: DiscoverModelsRequest) =>
+    request.post<DiscoverModelsResponse>('/api/llm-provider/models/discover', data),
 
   reload: () =>
     request.post<void>('/api/llm-provider/reload'),

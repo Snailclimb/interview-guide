@@ -6,6 +6,7 @@ import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.llmprovider.dto.CreateProviderRequest;
 import interview.guide.modules.llmprovider.dto.DefaultProviderDTO;
+import interview.guide.modules.llmprovider.dto.DiscoverModelsResponse;
 import interview.guide.modules.llmprovider.dto.UpdateProviderRequest;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import interview.guide.modules.voiceinterview.service.QwenAsrService;
@@ -99,6 +100,39 @@ class LlmProviderConfigServiceTest {
     @Nested
     @DisplayName("基础行为")
     class BasicBehavior {
+
+        @Test
+        @DisplayName("discoverModels 应返回去重排序后的模型 ID")
+        void discoverModelsReturnsSortedDistinctIds() {
+            DiscoverModelsResponse response = service.parseDiscoveredModels("""
+                {"object":"list","data":[
+                  {"id":"z-model"},{"id":"a-model"},{"id":"z-model"}
+                ]}
+                """);
+
+            assertEquals(List.of("a-model", "z-model"), response.models());
+        }
+
+        @Test
+        @DisplayName("models 响应没有有效 id 时抛出业务异常")
+        void parseDiscoveredModelsRejectsEmptyIds() {
+            assertThrows(BusinessException.class, () ->
+                service.parseDiscoveredModels("{\"object\":\"list\",\"data\":[{\"id\":\"  \"}]}"));
+        }
+
+        @Test
+        @DisplayName("发现 URL 必须是外部 HTTPS 地址")
+        void buildModelsUrlRejectsUnsafeBaseUrl() {
+            assertThrows(BusinessException.class, () ->
+                service.buildModelsUrl("http://localhost:11434/v1"));
+        }
+
+        @Test
+        @DisplayName("发现 URL 仅追加一个 models 路径")
+        void buildModelsUrlAppendsModelsOnce() {
+            assertEquals("https://api.siliconflow.cn/v1/models",
+                service.buildModelsUrl("https://api.siliconflow.cn/v1/"));
+        }
 
         @Test
         @DisplayName("maskApiKey 返回脱敏值")
