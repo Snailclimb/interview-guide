@@ -148,6 +148,26 @@ class LlmProviderRegistryTest {
     }
 
     @Test
+    @DisplayName("硅基流动 Qwen Embedding 模型不应被误判为聊天模型")
+    void siliconFlowQwenEmbeddingModelIsAccepted() {
+        String providerId = "siliconflow";
+        ProviderConfig config = new ProviderConfig();
+        config.setBaseUrl("https://api.siliconflow.cn/v1");
+        config.setApiKey("siliconflow-key");
+        config.setModel("Pro/zai-org/GLM-4.7");
+        config.setEmbeddingModel("Qwen/Qwen3-Embedding-0.6B");
+        config.setEmbeddingDimensions(1024);
+        config.setSupportsEmbedding(true);
+
+        Map<String, ProviderConfig> providers = new HashMap<>();
+        providers.put(providerId, config);
+
+        when(properties.getProviders()).thenReturn(providers);
+
+        assertDoesNotThrow(() -> registry.getEmbeddingModel(providerId));
+    }
+
+    @Test
     @DisplayName("reload clears cache and allows re-creation")
     void testReload() {
         String providerId = "test-provider";

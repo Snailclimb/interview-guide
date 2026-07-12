@@ -58,6 +58,7 @@ public class LlmProviderRegistry {
     private final ObservationRegistry observationRegistry;
     private final ToolCallback interviewSkillsToolCallback;
     private static final Map<String, String> RECOMMENDED_EMBEDDING_MODELS = Map.of(
+        "siliconflow", "Qwen/Qwen3-Embedding-0.6B",
         "dashscope", "text-embedding-v3",
         "glm", "embedding-3",
         "zhipu", "embedding-3",
@@ -403,6 +404,9 @@ public class LlmProviderRegistry {
 
     private boolean looksLikeChatModel(String model) {
         String lower = model.toLowerCase();
+        if (lower.contains("embedding")) {
+            return false;
+        }
         return lower.startsWith("glm-")
             || lower.startsWith("deepseek")
             || lower.startsWith("kimi")

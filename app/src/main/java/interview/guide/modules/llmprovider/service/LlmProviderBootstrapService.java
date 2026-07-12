@@ -18,6 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class LlmProviderBootstrapService {
 
+  private static final String LEGACY_DEFAULT_PROVIDER = "dashscope";
+
   private final LlmProviderProperties properties;
   private final LlmProviderRepository providerRepository;
   private final LlmGlobalSettingRepository globalSettingRepository;
@@ -26,13 +28,11 @@ public class LlmProviderBootstrapService {
   @PostConstruct
   @Transactional
   public void seedProvidersIfNecessary() {
-    if (providerRepository.count() == 0) {
-      seedProviders();
-    }
+    seedMissingProviders();
     ensureGlobalSetting();
   }
 
-  private void seedProviders() {
+  private void seedMissingProviders() {
     Map<String, ProviderConfig> providers = properties.getProviders();
     if (providers == null || providers.isEmpty()) {
       log.warn("No app.ai.providers seed configuration found");
@@ -42,6 +42,9 @@ public class LlmProviderBootstrapService {
     providers.forEach((id, config) -> {
       if (isBlank(id) || config == null || isBlank(config.getBaseUrl()) || isBlank(config.getModel())) {
         log.warn("Skip invalid provider seed: id={}", id);
+        return;
+      }
+      if (providerRepository.existsById(id)) {
         return;
       }
       ApiKeyEncryptionService.EncryptedValue encrypted =
@@ -64,16 +67,20 @@ public class LlmProviderBootstrapService {
           .build();
       providerRepository.save(entity);
     });
-    log.info("Seeded {} LLM providers from application configuration", providerRepository.count());
+    log.info("Seeded missing LLM providers from application configuration");
   }
 
   private void ensureGlobalSetting() {
-    if (globalSettingRepository.existsById(LlmGlobalSettingEntity.SINGLETON_ID)) {
+    LlmGlobalSettingEntity existing = globalSettingRepository
+        .findById(LlmGlobalSettingEntity.SINGLETON_ID)
+        .orElse(null);
+    if (existing != null) {
+      migrateLegacyDefaultSetting(existing);
       return;
     }
     String defaultChatProvider = resolveExistingProvider(
         properties.getDefaultProvider(),
-        providerRepository.findAll().stream().findFirst().map(LlmProviderEntity::getId).orElse("dashscope")
+        providerRepository.findAll().stream().findFirst().map(LlmProviderEntity::getId).orElse("siliconflow")
     );
     String configuredEmbeddingProvider = !isBlank(properties.getDefaultEmbeddingProvider())
         ? properties.getDefaultEmbeddingProvider()
@@ -87,6 +94,36 @@ public class LlmProviderBootstrapService {
         .build());
     log.info("Initialized LLM global setting: chatProvider={}, embeddingProvider={}",
         defaultChatProvider, defaultEmbeddingProvider);
+  }
+
+  private void migrateLegacyDefaultSetting(LlmGlobalSettingEntity setting) {
+    boolean changed = false;
+    String configuredChatProvider = properties.getDefaultProvider();
+    if (LEGACY_DEFAULT_PROVIDER.equals(setting.getDefaultChatProviderId())
+        && !isBlank(configuredChatProvider)
+        && providerRepository.existsById(configuredChatProvider)) {
+      setting.setDefaultChatProviderId(configuredChatProvider);
+      changed = true;
+    }
+
+    String configuredEmbeddingProvider = !isBlank(properties.getDefaultEmbeddingProvider())
+        ? properties.getDefaultEmbeddingProvider()
+        : setting.getDefaultChatProviderId();
+    if (LEGACY_DEFAULT_PROVIDER.equals(setting.getDefaultEmbeddingProviderId())) {
+      String defaultEmbeddingProvider = resolveExistingEmbeddingProvider(
+          configuredEmbeddingProvider,
+          setting.getDefaultChatProviderId());
+      if (!LEGACY_DEFAULT_PROVIDER.equals(defaultEmbeddingProvider)) {
+        setting.setDefaultEmbeddingProviderId(defaultEmbeddingProvider);
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      globalSettingRepository.save(setting);
+      log.info("Migrated legacy LLM global setting: chatProvider={}, embeddingProvider={}",
+          setting.getDefaultChatProviderId(), setting.getDefaultEmbeddingProviderId());
+    }
   }
 
   private String resolveExistingProvider(String preferredProvider, String fallbackProvider) {

@@ -11,7 +11,7 @@ import java.util.Map;
 @Component
 @ConfigurationProperties(prefix = "app.ai")
 public class LlmProviderProperties {
-    private String defaultProvider = "dashscope";
+    private String defaultProvider = "siliconflow";
     private String defaultEmbeddingProvider;
     private Integer embeddingDimensions = 1024;
     private Map<String, ProviderConfig> providers;

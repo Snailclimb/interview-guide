@@ -100,7 +100,7 @@ public class InterviewSessionEntity {
 
     // LLM提供商
     @Column(length = 50)
-    private String llmProvider = "dashscope";
+    private String llmProvider = "siliconflow";
     
     public enum SessionStatus {
         CREATED,      // 会话已创建

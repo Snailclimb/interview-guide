@@ -20,6 +20,23 @@ const PROVIDER_PRESETS: Record<string, {
   embeddingDimensions?: number;
   supportsEmbedding: boolean;
 }> = {
+  siliconflow: {
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    models: [
+      { value: 'Pro/zai-org/GLM-4.7', label: 'GLM-4.7 Pro - SiliconFlow' },
+      { value: 'Pro/zai-org/GLM-5', label: 'GLM-5 Pro - SiliconFlow' },
+      { value: 'deepseek-ai/DeepSeek-V3.2', label: 'DeepSeek V3.2 - SiliconFlow' },
+      { value: 'Pro/deepseek-ai/DeepSeek-V3.2', label: 'DeepSeek V3.2 Pro - SiliconFlow' },
+      { value: 'Qwen/Qwen3-32B', label: 'Qwen3 32B - SiliconFlow' },
+    ],
+    embeddingModels: [
+      { value: 'Qwen/Qwen3-Embedding-0.6B', label: 'Qwen3 Embedding 0.6B - 1024维' },
+      { value: 'Qwen/Qwen3-Embedding-4B', label: 'Qwen3 Embedding 4B - 1024维' },
+      { value: 'Qwen/Qwen3-Embedding-8B', label: 'Qwen3 Embedding 8B - 1024维' },
+    ],
+    embeddingDimensions: 1024,
+    supportsEmbedding: true,
+  },
   dashscope: {
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     models: [
@@ -915,7 +932,7 @@ export default function SettingsPage() {
                         }
                       }}
                       disabled={!!editingProvider}
-                      placeholder="例如: dashscope, deepseek, glm, kimi"
+                      placeholder="例如: siliconflow, dashscope, deepseek, glm, kimi"
                       className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
                         bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
                         placeholder:text-slate-400 focus:outline-none focus:ring-2

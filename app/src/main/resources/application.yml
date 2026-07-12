@@ -90,8 +90,8 @@ spring:
 # Application custom configuration
 app:
   ai:
-    default-provider: dashscope
-    default-embedding-provider: dashscope
+    default-provider: siliconflow
+    default-embedding-provider: siliconflow
     embedding-dimensions: ${APP_AI_EMBEDDING_DIMENSIONS:1024}
     security:
       api-key-encryption-key: ${APP_AI_CONFIG_ENCRYPTION_KEY:}
@@ -104,6 +104,13 @@ app:
     agent-utils:
       skills-root: ${APP_AI_AGENT_UTILS_SKILLS_ROOT:classpath:skills}
     providers:
+      siliconflow:
+        base-url: https://api.siliconflow.cn/v1
+        api-key: ${PROVIDER_SILICONFLOW_API_KEY:}
+        model: ${PROVIDER_SILICONFLOW_MODEL:Pro/zai-org/GLM-4.7}
+        embedding-model: ${PROVIDER_SILICONFLOW_EMBEDDING_MODEL:Qwen/Qwen3-Embedding-0.6B}
+        embedding-dimensions: 1024
+        supports-embedding: true
       dashscope:
         base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
         api-key: ${AI_BAILIAN_API_KEY}

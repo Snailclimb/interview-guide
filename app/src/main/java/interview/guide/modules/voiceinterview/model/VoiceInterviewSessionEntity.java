@@ -60,7 +60,7 @@ public class VoiceInterviewSessionEntity {
 
     @Column(name = "llm_provider", length = 50)
     @Builder.Default
-    private String llmProvider = "dashscope";
+    private String llmProvider = "siliconflow";
 
     @Column(name = "current_phase")
     @Enumerated(EnumType.STRING)
