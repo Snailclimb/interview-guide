@@ -80,7 +80,11 @@ public enum ErrorCode {
     MODULE_NOT_FOUND(11008, "模块不存在"),
     VOICE_CONFIG_READ_FAILED(11009, "读取语音服务配置失败"),
     VOICE_CONFIG_WRITE_FAILED(11010, "写入语音服务配置失败"),
-    VOICE_CONFIG_TEST_FAILED(11011, "语音服务连通性测试失败");
+    VOICE_CONFIG_TEST_FAILED(11011, "语音服务连通性测试失败"),
+
+    // ========== Agent 模块错误 12xxx ==========
+    AGENT_RUN_NOT_FOUND(12001, "Agent Run 不存在"),
+    AGENT_IDEMPOTENCY_CONFLICT(12002, "Agent Run 幂等请求冲突");
 
     private final Integer code;
     private final String message;
