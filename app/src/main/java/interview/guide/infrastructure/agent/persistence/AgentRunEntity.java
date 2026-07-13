@@ -86,6 +86,24 @@ public class AgentRunEntity {
     updatedAt = LocalDateTime.now();
   }
 
+  public boolean pause() {
+    if (status != AgentRunStatus.CREATED && status != AgentRunStatus.RUNNING) {
+      return false;
+    }
+    status = AgentRunStatus.PAUSED;
+    return true;
+  }
+
+  public boolean cancel() {
+    if (status == AgentRunStatus.COMPLETED
+        || status == AgentRunStatus.FAILED
+        || status == AgentRunStatus.CANCELLED) {
+      return false;
+    }
+    status = AgentRunStatus.CANCELLED;
+    return true;
+  }
+
   public String getRunId() {
     return runId;
   }

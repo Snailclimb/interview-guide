@@ -1,6 +1,7 @@
 package interview.guide.infrastructure.agent.persistence;
 
 import interview.guide.common.agent.runtime.AgentType;
+import interview.guide.common.agent.runtime.AgentRunStatus;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,9 @@ class AgentRunRepositoryTest {
   private AgentRunRepository repository;
 
   @Autowired
+  private AgentStepRepository stepRepository;
+
+  @Autowired
   private Flyway flyway;
 
   @Test
@@ -53,6 +57,27 @@ class AgentRunRepositoryTest {
     assertThat(repeatedMigration.migrationsExecuted).isZero();
     assertThat(flyway.info().applied()).hasSize(appliedMigrations);
     assertThat(repository.findById(existingRun.getRunId())).contains(existingRun);
+  }
+
+  @Test
+  @DisplayName("同一 Run 的 Step 序号只能持久化一次")
+  void enforcesUniqueStepSequenceWithinRun() {
+    AgentRunEntity run = repository.saveAndFlush(
+        createRun("step-sequence-key", "session-with-steps")
+    );
+    stepRepository.saveAndFlush(AgentStepEntity.statusChanged(
+        run.getRunId(),
+        1,
+        AgentRunStatus.CREATED,
+        AgentRunStatus.PAUSED
+    ));
+
+    assertThatThrownBy(() -> stepRepository.saveAndFlush(AgentStepEntity.statusChanged(
+        run.getRunId(),
+        1,
+        AgentRunStatus.PAUSED,
+        AgentRunStatus.CANCELLED
+    ))).isInstanceOf(DataIntegrityViolationException.class);
   }
 
   private AgentRunEntity createRun(String idempotencyKey, String businessSessionId) {

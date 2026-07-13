@@ -7,6 +7,8 @@ import interview.guide.common.agent.runtime.AgentType;
 import interview.guide.common.exception.GlobalExceptionHandler;
 import interview.guide.infrastructure.agent.persistence.AgentRunEntity;
 import interview.guide.infrastructure.agent.persistence.AgentRunRepository;
+import interview.guide.infrastructure.agent.persistence.AgentStepEntity;
+import interview.guide.infrastructure.agent.persistence.AgentStepRepository;
 import interview.guide.modules.agentinterview.controller.AgentRunController;
 import interview.guide.modules.agentinterview.service.AgentRunService;
 import interview.guide.modules.agentinterview.service.AgentRunPersistenceService;
@@ -16,6 +18,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -23,6 +27,8 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -48,11 +54,15 @@ class AgentRunApiContractTest {
   private AgentRunRepository agentRunRepository;
 
   @Mock
+  private AgentStepRepository agentStepRepository;
+
+  @Mock
   private InterviewSessionRepository interviewSessionRepository;
 
   private MockMvc mockMvc;
   private ObjectMapper objectMapper;
   private AtomicReference<AgentRunEntity> savedRun;
+  private List<AgentStepEntity> savedSteps;
   private AgentProperties agentProperties;
 
   @BeforeEach
@@ -62,6 +72,7 @@ class AgentRunApiContractTest {
     agentProperties.setEnabled(true);
     AgentRunService service = new AgentRunService(
         agentRunRepository,
+        agentStepRepository,
         interviewSessionRepository,
         persistenceService,
         agentProperties
@@ -72,6 +83,7 @@ class AgentRunApiContractTest {
         .build();
     objectMapper = JsonMapper.builder().findAndAddModules().build();
     savedRun = new AtomicReference<>();
+    savedSteps = new ArrayList<>();
 
     lenient().when(interviewSessionRepository.findBySessionId(BUSINESS_SESSION_ID))
         .thenReturn(Optional.of(new InterviewSessionEntity()));
@@ -94,6 +106,26 @@ class AgentRunApiContractTest {
           ? Optional.of(entity)
           : Optional.empty();
     });
+    lenient().when(agentStepRepository.save(any())).thenAnswer(invocation -> {
+      AgentStepEntity step = invocation.getArgument(0, AgentStepEntity.class);
+      savedSteps.add(step);
+      return step;
+    });
+    lenient().when(agentStepRepository.findTopByRunIdOrderByStepSequenceDesc(any()))
+        .thenAnswer(invocation -> savedSteps.stream()
+            .filter(step -> step.getRunId().equals(invocation.getArgument(0, String.class)))
+            .max((left, right) -> left.getStepSequence().compareTo(right.getStepSequence())));
+    lenient().when(agentStepRepository
+            .findByRunIdAndStepSequenceGreaterThanOrderByStepSequenceAsc(any(), any()))
+        .thenAnswer(invocation -> {
+          String runId = invocation.getArgument(0, String.class);
+          Long afterSequence = invocation.getArgument(1, Long.class);
+          return savedSteps.stream()
+              .filter(step -> step.getRunId().equals(runId))
+              .filter(step -> step.getStepSequence() > afterSequence)
+              .sorted((left, right) -> left.getStepSequence().compareTo(right.getStepSequence()))
+              .toList();
+        });
   }
 
   @Test
@@ -158,6 +190,135 @@ class AgentRunApiContractTest {
         .andExpect(jsonPath("$.data.runId").value(runId))
         .andExpect(jsonPath("$.data.status").value("CREATED"))
         .andExpect(jsonPath("$.data.businessSessionId").value(BUSINESS_SESSION_ID));
+  }
+
+  @Test
+  @DisplayName("CREATED Run 可暂停并通过 GET 读取 PAUSED 状态")
+  void pausesCreatedRunAndReturnsUpdatedState() throws Exception {
+    String body = objectMapper.writeValueAsString(new CreateRunBody(
+        "ADAPTIVE_INTERVIEWER",
+        BUSINESS_SESSION_ID
+    ));
+    String runId = createRunAndReadId(body);
+
+    mockMvc.perform(post("/api/agent/runs/{runId}/pause", runId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(200))
+        .andExpect(jsonPath("$.data.runId").value(runId))
+        .andExpect(jsonPath("$.data.status").value("PAUSED"));
+
+    mockMvc.perform(get("/api/agent/runs/{runId}", runId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("PAUSED"));
+  }
+
+  @Test
+  @DisplayName("非终态 Run 可取消并通过 GET 读取 CANCELLED 状态")
+  void cancelsNonTerminalRunAndReturnsUpdatedState() throws Exception {
+    String body = objectMapper.writeValueAsString(new CreateRunBody(
+        "ADAPTIVE_INTERVIEWER",
+        BUSINESS_SESSION_ID
+    ));
+    String runId = createRunAndReadId(body);
+
+    mockMvc.perform(post("/api/agent/runs/{runId}/cancel", runId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(200))
+        .andExpect(jsonPath("$.data.runId").value(runId))
+        .andExpect(jsonPath("$.data.status").value("CANCELLED"));
+
+    mockMvc.perform(get("/api/agent/runs/{runId}", runId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("CANCELLED"));
+  }
+
+  @Test
+  @DisplayName("终态 Run 不会被暂停重新激活")
+  void doesNotReactivateTerminalRun() throws Exception {
+    String body = objectMapper.writeValueAsString(new CreateRunBody(
+        "ADAPTIVE_INTERVIEWER",
+        BUSINESS_SESSION_ID
+    ));
+    String runId = createRunAndReadId(body);
+    mockMvc.perform(post("/api/agent/runs/{runId}/cancel", runId))
+        .andExpect(status().isOk());
+
+    mockMvc.perform(post("/api/agent/runs/{runId}/pause", runId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(12004))
+        .andExpect(jsonPath("$.data").doesNotExist());
+
+    mockMvc.perform(get("/api/agent/runs/{runId}", runId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("CANCELLED"));
+  }
+
+  @ParameterizedTest(name = "Session 为 {0} 时拒绝推进 Run")
+  @ValueSource(strings = {"COMPLETED", "EVALUATED"})
+  @DisplayName("终态 Session 不会被 Run 状态重新激活")
+  void doesNotAdvanceRunForTerminalSession(String sessionStatus) throws Exception {
+    String body = objectMapper.writeValueAsString(new CreateRunBody(
+        "ADAPTIVE_INTERVIEWER",
+        BUSINESS_SESSION_ID
+    ));
+    String runId = createRunAndReadId(body);
+    InterviewSessionEntity terminalSession = new InterviewSessionEntity();
+    terminalSession.setStatus(InterviewSessionEntity.SessionStatus.valueOf(sessionStatus));
+    when(interviewSessionRepository.findBySessionId(BUSINESS_SESSION_ID))
+        .thenReturn(Optional.of(terminalSession));
+
+    mockMvc.perform(post("/api/agent/runs/{runId}/pause", runId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(3004))
+        .andExpect(jsonPath("$.data").doesNotExist());
+
+    mockMvc.perform(post("/api/agent/runs/{runId}/cancel", runId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(3004))
+        .andExpect(jsonPath("$.data").doesNotExist());
+
+    mockMvc.perform(get("/api/agent/runs/{runId}", runId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("CREATED"));
+  }
+
+  @Test
+  @DisplayName("成功状态变化可按 Step 序号补读为脱敏持久化事件")
+  void readsCommittedStatusChangeAsSanitizedEvent() throws Exception {
+    String body = objectMapper.writeValueAsString(new CreateRunBody(
+        "ADAPTIVE_INTERVIEWER",
+        BUSINESS_SESSION_ID
+    ));
+    String runId = createRunAndReadId(body);
+    mockMvc.perform(post("/api/agent/runs/{runId}/pause", runId))
+        .andExpect(status().isOk());
+    mockMvc.perform(post("/api/agent/runs/{runId}/cancel", runId))
+        .andExpect(status().isOk());
+
+    mockMvc.perform(get("/api/agent/runs/{runId}/events", runId)
+            .param("afterSequence", "0"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(200))
+        .andExpect(jsonPath("$.data.length()").value(2))
+        .andExpect(jsonPath("$.data[0].runId").value(runId))
+        .andExpect(jsonPath("$.data[0].stepSequence").value(1))
+        .andExpect(jsonPath("$.data[0].eventType").value("run.paused"))
+        .andExpect(jsonPath("$.data[0].previousStatus").value("CREATED"))
+        .andExpect(jsonPath("$.data[0].status").value("PAUSED"))
+        .andExpect(jsonPath("$.data[1].stepSequence").value(2))
+        .andExpect(jsonPath("$.data[1].eventType").value("run.cancelled"))
+        .andExpect(jsonPath("$.data[1].previousStatus").value("PAUSED"))
+        .andExpect(jsonPath("$.data[1].status").value("CANCELLED"))
+        .andExpect(jsonPath("$.data[0].chainOfThought").doesNotExist())
+        .andExpect(jsonPath("$.data[0].rawData").doesNotExist());
+
+    mockMvc.perform(get("/api/agent/runs/{runId}/events", runId)
+            .param("afterSequence", "1"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(200))
+        .andExpect(jsonPath("$.data.length()").value(1))
+        .andExpect(jsonPath("$.data[0].stepSequence").value(2))
+        .andExpect(jsonPath("$.data[0].eventType").value("run.cancelled"));
   }
 
   @Test
