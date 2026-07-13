@@ -47,6 +47,8 @@ spring:
         remove-existing-vector-store-table: false
 
 app:
+  agent:
+    enabled: true
   ai:
     default-provider: dashscope
     security:

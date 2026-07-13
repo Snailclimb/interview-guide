@@ -1,5 +1,6 @@
 package interview.guide.modules.agentinterview.service;
 
+import interview.guide.common.agent.config.AgentProperties;
 import interview.guide.common.agent.runtime.AgentType;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
@@ -26,8 +27,13 @@ public class AgentRunService {
   private final AgentRunRepository agentRunRepository;
   private final InterviewSessionRepository interviewSessionRepository;
   private final AgentRunPersistenceService persistenceService;
+  private final AgentProperties agentProperties;
 
   public AgentRunResponse create(String idempotencyKey, CreateAgentRunRequest request) {
+    if (!agentProperties.isEnabled()) {
+      throw new BusinessException(ErrorCode.AGENT_DISABLED, "Agent 功能未启用");
+    }
+
     String businessSessionId = request.businessSessionId().trim();
     AgentType agentType = parseAgentType(request.agentType());
     String normalizedKey = idempotencyKey.trim();

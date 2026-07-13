@@ -53,6 +53,13 @@ spring:
       hibernate:
         format_sql: true
 
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+    validate-on-migrate: true
+
   servlet:
     multipart:
       enabled: true
@@ -89,6 +96,8 @@ spring:
 
 # Application custom configuration
 app:
+  agent:
+    enabled: ${APP_AGENT_ENABLED:false}
   ai:
     default-provider: siliconflow
     default-embedding-provider: siliconflow

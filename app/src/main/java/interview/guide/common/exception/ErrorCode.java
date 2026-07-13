@@ -84,7 +84,8 @@ public enum ErrorCode {
 
     // ========== Agent 模块错误 12xxx ==========
     AGENT_RUN_NOT_FOUND(12001, "Agent Run 不存在"),
-    AGENT_IDEMPOTENCY_CONFLICT(12002, "Agent Run 幂等请求冲突");
+    AGENT_IDEMPOTENCY_CONFLICT(12002, "Agent Run 幂等请求冲突"),
+    AGENT_DISABLED(12003, "Agent 功能未启用");
 
     private final Integer code;
     private final String message;

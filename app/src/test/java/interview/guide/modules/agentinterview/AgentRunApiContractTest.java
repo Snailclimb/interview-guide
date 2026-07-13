@@ -2,6 +2,7 @@ package interview.guide.modules.agentinterview;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import interview.guide.common.agent.config.AgentProperties;
 import interview.guide.common.agent.runtime.AgentType;
 import interview.guide.common.exception.GlobalExceptionHandler;
 import interview.guide.infrastructure.agent.persistence.AgentRunEntity;
@@ -28,6 +29,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -50,14 +53,18 @@ class AgentRunApiContractTest {
   private MockMvc mockMvc;
   private ObjectMapper objectMapper;
   private AtomicReference<AgentRunEntity> savedRun;
+  private AgentProperties agentProperties;
 
   @BeforeEach
   void setUp() {
     AgentRunPersistenceService persistenceService = new AgentRunPersistenceService(agentRunRepository);
+    agentProperties = new AgentProperties();
+    agentProperties.setEnabled(true);
     AgentRunService service = new AgentRunService(
         agentRunRepository,
         interviewSessionRepository,
-        persistenceService
+        persistenceService,
+        agentProperties
     );
     AgentRunController controller = new AgentRunController(service);
     mockMvc = MockMvcBuilders.standaloneSetup(controller)
@@ -66,9 +73,9 @@ class AgentRunApiContractTest {
     objectMapper = JsonMapper.builder().findAndAddModules().build();
     savedRun = new AtomicReference<>();
 
-    when(interviewSessionRepository.findBySessionId(BUSINESS_SESSION_ID))
+    lenient().when(interviewSessionRepository.findBySessionId(BUSINESS_SESSION_ID))
         .thenReturn(Optional.of(new InterviewSessionEntity()));
-    when(agentRunRepository.saveAndFlush(any())).thenAnswer(invocation -> {
+    lenient().when(agentRunRepository.saveAndFlush(any())).thenAnswer(invocation -> {
       var entity = invocation.getArgument(0, AgentRunEntity.class);
       savedRun.set(entity);
       return entity;
@@ -106,6 +113,27 @@ class AgentRunApiContractTest {
         .andExpect(jsonPath("$.data.runId").isNotEmpty())
         .andExpect(jsonPath("$.data.status").value("CREATED"))
         .andExpect(jsonPath("$.data.businessSessionId").value(BUSINESS_SESSION_ID));
+  }
+
+  @Test
+  @DisplayName("Agent 开关关闭时拒绝创建 Run")
+  void rejectsAgentRunCreationWhenDisabled() throws Exception {
+    agentProperties.setEnabled(false);
+    String body = objectMapper.writeValueAsString(new CreateRunBody(
+        "ADAPTIVE_INTERVIEWER",
+        BUSINESS_SESSION_ID
+    ));
+
+    mockMvc.perform(post("/api/agent/runs")
+            .header("Idempotency-Key", IDEMPOTENCY_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(12003))
+        .andExpect(jsonPath("$.message").value("Agent 功能未启用"))
+        .andExpect(jsonPath("$.data").doesNotExist());
+
+    verify(agentRunRepository, never()).saveAndFlush(any());
   }
 
   @Test
