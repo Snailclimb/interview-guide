@@ -1,0 +1,14 @@
+# Production schema is validated, never created or mutated by Hibernate or VectorStore.
+# Legacy business tables must already be provisioned; Flyway owns versioned Agent tables.
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  ai:
+    vectorstore:
+      pgvector:
+        initialize-schema: false
+
+app:
+  agent:
+    enabled: ${APP_AGENT_ENABLED:false}

@@ -47,7 +47,7 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update #首次启动用 create，表创建成功后，改回 update
+      ddl-auto: update # 本地默认；生产 profile 强制 validate，禁止自动改表
     show-sql: false
     properties:
       hibernate:
