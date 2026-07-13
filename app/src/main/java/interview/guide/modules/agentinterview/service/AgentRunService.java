@@ -9,6 +9,7 @@ import interview.guide.modules.agentinterview.model.AgentRunResponse;
 import interview.guide.modules.agentinterview.model.CreateAgentRunRequest;
 import interview.guide.modules.interview.repository.InterviewSessionRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,8 +25,8 @@ public class AgentRunService {
 
   private final AgentRunRepository agentRunRepository;
   private final InterviewSessionRepository interviewSessionRepository;
+  private final AgentRunPersistenceService persistenceService;
 
-  @Transactional
   public AgentRunResponse create(String idempotencyKey, CreateAgentRunRequest request) {
     String businessSessionId = request.businessSessionId().trim();
     AgentType agentType = parseAgentType(request.agentType());
@@ -33,13 +34,7 @@ public class AgentRunService {
     String requestFingerprint = fingerprint(agentType, businessSessionId);
     var existingRun = agentRunRepository.findByIdempotencyKey(normalizedKey);
     if (existingRun.isPresent()) {
-      if (!existingRun.get().getRequestFingerprint().equals(requestFingerprint)) {
-        throw new BusinessException(
-            ErrorCode.AGENT_IDEMPOTENCY_CONFLICT,
-            "Idempotency-Key 已用于不同的 Agent Run 请求"
-        );
-      }
-      return AgentRunResponse.from(existingRun.get());
+      return resolveIdempotentRequest(existingRun.get(), requestFingerprint);
     }
 
     if (interviewSessionRepository.findBySessionId(businessSessionId).isEmpty()) {
@@ -55,7 +50,13 @@ public class AgentRunService {
         normalizedKey,
         requestFingerprint
     );
-    return AgentRunResponse.from(agentRunRepository.save(entity));
+    try {
+      return AgentRunResponse.from(persistenceService.create(entity));
+    } catch (DataIntegrityViolationException exception) {
+      AgentRunEntity winningRun = agentRunRepository.findByIdempotencyKey(normalizedKey)
+          .orElseThrow(() -> exception);
+      return resolveIdempotentRequest(winningRun, requestFingerprint);
+    }
   }
 
   @Transactional(readOnly = true)
@@ -74,6 +75,18 @@ public class AgentRunService {
     } catch (IllegalArgumentException exception) {
       throw new BusinessException(ErrorCode.BAD_REQUEST, "不支持的 Agent 类型: " + value);
     }
+  }
+
+  private AgentRunResponse resolveIdempotentRequest(
+      AgentRunEntity existingRun,
+      String requestFingerprint) {
+    if (!existingRun.getRequestFingerprint().equals(requestFingerprint)) {
+      throw new BusinessException(
+          ErrorCode.AGENT_IDEMPOTENCY_CONFLICT,
+          "Idempotency-Key 已用于不同的 Agent Run 请求"
+      );
+    }
+    return AgentRunResponse.from(existingRun);
   }
 
   private String fingerprint(AgentType agentType, String businessSessionId) {

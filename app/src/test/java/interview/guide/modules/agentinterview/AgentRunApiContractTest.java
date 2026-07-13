@@ -2,11 +2,13 @@ package interview.guide.modules.agentinterview;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import interview.guide.common.agent.runtime.AgentType;
 import interview.guide.common.exception.GlobalExceptionHandler;
 import interview.guide.infrastructure.agent.persistence.AgentRunEntity;
 import interview.guide.infrastructure.agent.persistence.AgentRunRepository;
 import interview.guide.modules.agentinterview.controller.AgentRunController;
 import interview.guide.modules.agentinterview.service.AgentRunService;
+import interview.guide.modules.agentinterview.service.AgentRunPersistenceService;
 import interview.guide.modules.interview.model.InterviewSessionEntity;
 import interview.guide.modules.interview.repository.InterviewSessionRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -22,7 +25,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
@@ -32,8 +35,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("Agent Run API 集成测试")
-class AgentRunApiIntegrationTest {
+@DisplayName("Agent Run API 契约测试")
+class AgentRunApiContractTest {
 
   private static final String BUSINESS_SESSION_ID = "interview-session-001";
   private static final String IDEMPOTENCY_KEY = "start-agent-interview-001";
@@ -50,7 +53,12 @@ class AgentRunApiIntegrationTest {
 
   @BeforeEach
   void setUp() {
-    AgentRunService service = new AgentRunService(agentRunRepository, interviewSessionRepository);
+    AgentRunPersistenceService persistenceService = new AgentRunPersistenceService(agentRunRepository);
+    AgentRunService service = new AgentRunService(
+        agentRunRepository,
+        interviewSessionRepository,
+        persistenceService
+    );
     AgentRunController controller = new AgentRunController(service);
     mockMvc = MockMvcBuilders.standaloneSetup(controller)
         .setControllerAdvice(new GlobalExceptionHandler())
@@ -60,7 +68,7 @@ class AgentRunApiIntegrationTest {
 
     when(interviewSessionRepository.findBySessionId(BUSINESS_SESSION_ID))
         .thenReturn(Optional.of(new InterviewSessionEntity()));
-    when(agentRunRepository.save(any())).thenAnswer(invocation -> {
+    when(agentRunRepository.saveAndFlush(any())).thenAnswer(invocation -> {
       var entity = invocation.getArgument(0, AgentRunEntity.class);
       savedRun.set(entity);
       return entity;
@@ -135,7 +143,35 @@ class AgentRunApiIntegrationTest {
     String firstRunId = createRunAndReadId(body);
     String retriedRunId = createRunAndReadId(body);
 
-    assertEquals(firstRunId, retriedRunId);
+    assertThat(retriedRunId).isEqualTo(firstRunId);
+  }
+
+  @Test
+  @DisplayName("并发同键请求触发唯一约束时返回已创建的 Run")
+  void returnsWinningRunAfterConcurrentUniqueConstraintConflict() throws Exception {
+    AgentRunEntity winningRun = AgentRunEntity.create(
+        AgentType.ADAPTIVE_INTERVIEWER,
+        BUSINESS_SESSION_ID,
+        IDEMPOTENCY_KEY,
+        "485ed7f45398f9ad1ae302f696abfda9e9a9d3a021146de99ff8a6517cddd352"
+    );
+    when(agentRunRepository.saveAndFlush(any())).thenAnswer(invocation -> {
+      savedRun.set(winningRun);
+      throw new DataIntegrityViolationException("duplicate idempotency key");
+    });
+
+    String body = objectMapper.writeValueAsString(new CreateRunBody(
+        "ADAPTIVE_INTERVIEWER",
+        BUSINESS_SESSION_ID
+    ));
+
+    mockMvc.perform(post("/api/agent/runs")
+            .header("Idempotency-Key", IDEMPOTENCY_KEY)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(200))
+        .andExpect(jsonPath("$.data.runId").value(winningRun.getRunId()));
   }
 
   @Test
