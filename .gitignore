@@ -15,7 +15,9 @@ test-output.txt
 qodana.yaml
 
 app/src/main/resources/application-dev.yml
-/docs
+/docs/*
+!/docs/agents/
+!/docs/agents/**
 SETUP_API_KEYS.md
 
 # AI Assistant documentation

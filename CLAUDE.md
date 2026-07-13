@@ -13,6 +13,21 @@
 - AI / async / rate limit: `.claude/rules/ai-and-async.md`
 - Frontend: `.claude/rules/frontend.md`
 
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in `Belfast-byte/interview-guide` GitHub Issues. See
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the canonical five-role triage vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use the single-context domain layout. See `docs/agents/domain.md`.
+
 ## Maintenance
 
 - 新增规则前先判断：删掉这条后，Claude 是否更容易犯同类错误。
