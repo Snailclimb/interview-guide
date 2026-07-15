@@ -86,7 +86,10 @@ public enum ErrorCode {
     AGENT_RUN_NOT_FOUND(12001, "Agent Run 不存在"),
     AGENT_IDEMPOTENCY_CONFLICT(12002, "Agent Run 幂等请求冲突"),
     AGENT_DISABLED(12003, "Agent 功能未启用"),
-    AGENT_INVALID_STATE_TRANSITION(12004, "Agent Run 状态不允许此操作");
+    AGENT_INVALID_STATE_TRANSITION(12004, "Agent Run 状态不允许此操作"),
+    AGENT_ANSWER_MESSAGE_IDEMPOTENCY_CONFLICT(12005, "Answer Message 幂等请求冲突"),
+    AGENT_RUN_BUSY(12006, "Agent Run 正在执行，暂不接受新的回答"),
+    AGENT_ANSWER_MESSAGE_NOT_CURRENT_QUESTION(12007, "该回答对应的问题已过期，请回答当前问题");
 
     private final Integer code;
     private final String message;

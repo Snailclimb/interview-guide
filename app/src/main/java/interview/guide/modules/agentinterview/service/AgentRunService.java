@@ -5,13 +5,17 @@ import interview.guide.common.agent.runtime.AgentRunStatus;
 import interview.guide.common.agent.runtime.AgentType;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.infrastructure.agent.persistence.AnswerMessageEntity;
+import interview.guide.infrastructure.agent.persistence.AnswerMessageRepository;
 import interview.guide.infrastructure.agent.persistence.AgentRunEntity;
 import interview.guide.infrastructure.agent.persistence.AgentRunRepository;
 import interview.guide.infrastructure.agent.persistence.AgentStepEntity;
 import interview.guide.infrastructure.agent.persistence.AgentStepRepository;
 import interview.guide.modules.agentinterview.model.AgentRunEventResponse;
 import interview.guide.modules.agentinterview.model.AgentRunResponse;
+import interview.guide.modules.agentinterview.model.AnswerMessageResponse;
 import interview.guide.modules.agentinterview.model.CreateAgentRunRequest;
+import interview.guide.modules.agentinterview.model.SubmitAnswerMessageRequest;
 import interview.guide.modules.interview.model.InterviewSessionEntity;
 import interview.guide.modules.interview.repository.InterviewSessionRepository;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
@@ -31,6 +36,7 @@ import java.util.Locale;
 public class AgentRunService {
 
   private final AgentRunRepository agentRunRepository;
+  private final AnswerMessageRepository answerMessageRepository;
   private final AgentStepRepository agentStepRepository;
   private final InterviewSessionRepository interviewSessionRepository;
   private final AgentRunPersistenceService persistenceService;
@@ -112,6 +118,112 @@ public class AgentRunService {
     return AgentRunResponse.from(entity);
   }
 
+  @Transactional
+  public AnswerMessageResponse submitAnswer(String runId, SubmitAnswerMessageRequest request) {
+    String messageId = request.messageId().trim();
+    String questionId = request.questionId().trim();
+    String payloadFingerprint = fingerprint("answer:" + questionId + "\n" + request.content());
+    var existingMessage = answerMessageRepository.findByRunIdAndMessageId(runId, messageId);
+    if (existingMessage.isPresent()) {
+      return resolveAnswerMessage(existingMessage.get(), payloadFingerprint);
+    }
+
+    AgentRunEntity run = findRun(runId);
+    ensureRunCanAcceptAnswer(run, questionId);
+
+    int updatedRows = agentRunRepository.advanceWaitingUserToRunning(
+        runId,
+        questionId,
+        LocalDateTime.now()
+    );
+    if (updatedRows != 1) {
+      return recoverFromLostConditionalAdvance(runId, messageId, questionId, payloadFingerprint);
+    }
+
+    AnswerMessageEntity message = AnswerMessageEntity.create(
+        runId,
+        messageId,
+        questionId,
+        request.content(),
+        payloadFingerprint
+    );
+    answerMessageRepository.save(message);
+    persistStatusChange(runId, AgentRunStatus.WAITING_USER, AgentRunStatus.RUNNING);
+    return AnswerMessageResponse.accepted(message);
+  }
+
+  private AnswerMessageResponse recoverFromLostConditionalAdvance(
+      String runId,
+      String messageId,
+      String questionId,
+      String payloadFingerprint) {
+    var winningMessage = answerMessageRepository.findByRunIdAndMessageId(runId, messageId);
+    if (winningMessage.isPresent()) {
+      return resolveAnswerMessage(winningMessage.get(), payloadFingerprint);
+    }
+
+    AgentRunEntity latestRun = findRun(runId);
+    ensureRunCanAcceptAnswer(latestRun, questionId);
+    throw new BusinessException(
+        ErrorCode.AGENT_INVALID_STATE_TRANSITION,
+        "当前 Agent Run 不接受该回答"
+    );
+  }
+
+  private AnswerMessageResponse resolveAnswerMessage(
+      AnswerMessageEntity message,
+      String payloadFingerprint) {
+    if (message.getPayloadFingerprint().equals(payloadFingerprint)) {
+      return AnswerMessageResponse.accepted(message);
+    }
+    throw new BusinessException(
+        ErrorCode.AGENT_ANSWER_MESSAGE_IDEMPOTENCY_CONFLICT,
+        "同一 messageId 对应的 Answer Message 载荷不一致"
+    );
+  }
+
+  private void ensureRunCanAcceptAnswer(AgentRunEntity run, String questionId) {
+    ensureSessionCanAdvance(run);
+    if (run.getStatus() == AgentRunStatus.RUNNING) {
+      throw new BusinessException(ErrorCode.AGENT_RUN_BUSY);
+    }
+    if (run.getStatus() == AgentRunStatus.WAITING_USER
+        && !questionId.equals(run.getCurrentQuestionId())) {
+      throw new BusinessException(ErrorCode.AGENT_ANSWER_MESSAGE_NOT_CURRENT_QUESTION);
+    }
+    if (run.getStatus() == AgentRunStatus.PAUSED) {
+      throw new BusinessException(
+          ErrorCode.AGENT_INVALID_STATE_TRANSITION,
+          "Agent Run 已暂停，请先恢复后再提交回答"
+      );
+    }
+    if (run.getStatus() == AgentRunStatus.COMPLETED) {
+      throw new BusinessException(
+          ErrorCode.AGENT_INVALID_STATE_TRANSITION,
+          "Agent Run 已完成，不能再提交回答"
+      );
+    }
+    if (run.getStatus() == AgentRunStatus.FAILED) {
+      throw new BusinessException(
+          ErrorCode.AGENT_INVALID_STATE_TRANSITION,
+          "Agent Run 已失败，不能再提交回答"
+      );
+    }
+    if (run.getStatus() == AgentRunStatus.CANCELLED) {
+      throw new BusinessException(
+          ErrorCode.AGENT_INVALID_STATE_TRANSITION,
+          "Agent Run 已取消，不能再提交回答"
+      );
+    }
+    if (run.getStatus() != AgentRunStatus.WAITING_USER
+        || !questionId.equals(run.getCurrentQuestionId())) {
+      throw new BusinessException(
+          ErrorCode.AGENT_INVALID_STATE_TRANSITION,
+          "当前 Agent Run 不接受该回答"
+      );
+    }
+  }
+
   @Transactional(readOnly = true)
   public List<AgentRunEventResponse> getEvents(String runId, long afterSequence) {
     findRun(runId);
@@ -128,14 +240,21 @@ public class AgentRunService {
   private void persistStatusChange(
       AgentRunEntity run,
       AgentRunStatus previousStatus) {
-    long nextSequence = agentStepRepository.findTopByRunIdOrderByStepSequenceDesc(run.getRunId())
+    persistStatusChange(run.getRunId(), previousStatus, run.getStatus());
+  }
+
+  private void persistStatusChange(
+      String runId,
+      AgentRunStatus previousStatus,
+      AgentRunStatus status) {
+    long nextSequence = agentStepRepository.findTopByRunIdOrderByStepSequenceDesc(runId)
         .map(AgentStepEntity::getStepSequence)
         .orElse(0L) + 1;
     agentStepRepository.save(AgentStepEntity.statusChanged(
-        run.getRunId(),
+        runId,
         nextSequence,
         previousStatus,
-        run.getStatus()
+        status
     ));
   }
 
@@ -185,6 +304,10 @@ public class AgentRunService {
 
   private String fingerprint(AgentType agentType, String businessSessionId) {
     String canonicalRequest = agentType.name() + ":" + businessSessionId;
+    return fingerprint(canonicalRequest);
+  }
+
+  private String fingerprint(String canonicalRequest) {
     try {
       byte[] digest = MessageDigest.getInstance("SHA-256")
           .digest(canonicalRequest.getBytes(StandardCharsets.UTF_8));

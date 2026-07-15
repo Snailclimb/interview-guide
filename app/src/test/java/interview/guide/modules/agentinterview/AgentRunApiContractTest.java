@@ -3,8 +3,11 @@ package interview.guide.modules.agentinterview;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import interview.guide.common.agent.config.AgentProperties;
+import interview.guide.common.agent.runtime.AgentRunStatus;
 import interview.guide.common.agent.runtime.AgentType;
 import interview.guide.common.exception.GlobalExceptionHandler;
+import interview.guide.infrastructure.agent.persistence.AnswerMessageEntity;
+import interview.guide.infrastructure.agent.persistence.AnswerMessageRepository;
 import interview.guide.infrastructure.agent.persistence.AgentRunEntity;
 import interview.guide.infrastructure.agent.persistence.AgentRunRepository;
 import interview.guide.infrastructure.agent.persistence.AgentStepEntity;
@@ -19,6 +22,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -26,16 +31,20 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -54,6 +63,9 @@ class AgentRunApiContractTest {
   private AgentRunRepository agentRunRepository;
 
   @Mock
+  private AnswerMessageRepository answerMessageRepository;
+
+  @Mock
   private AgentStepRepository agentStepRepository;
 
   @Mock
@@ -62,6 +74,7 @@ class AgentRunApiContractTest {
   private MockMvc mockMvc;
   private ObjectMapper objectMapper;
   private AtomicReference<AgentRunEntity> savedRun;
+  private List<AnswerMessageEntity> savedAnswerMessages;
   private List<AgentStepEntity> savedSteps;
   private AgentProperties agentProperties;
 
@@ -72,6 +85,7 @@ class AgentRunApiContractTest {
     agentProperties.setEnabled(true);
     AgentRunService service = new AgentRunService(
         agentRunRepository,
+        answerMessageRepository,
         agentStepRepository,
         interviewSessionRepository,
         persistenceService,
@@ -83,6 +97,7 @@ class AgentRunApiContractTest {
         .build();
     objectMapper = JsonMapper.builder().findAndAddModules().build();
     savedRun = new AtomicReference<>();
+    savedAnswerMessages = new ArrayList<>();
     savedSteps = new ArrayList<>();
 
     lenient().when(interviewSessionRepository.findBySessionId(BUSINESS_SESSION_ID))
@@ -106,6 +121,33 @@ class AgentRunApiContractTest {
           ? Optional.of(entity)
           : Optional.empty();
     });
+    lenient().when(agentRunRepository.advanceWaitingUserToRunning(
+            any(), any(), any()))
+        .thenAnswer(invocation -> {
+          AgentRunEntity entity = savedRun.get();
+          String runId = invocation.getArgument(0, String.class);
+          String questionId = invocation.getArgument(1, String.class);
+          if (entity == null
+              || !entity.getRunId().equals(runId)
+              || entity.getStatus() != AgentRunStatus.WAITING_USER
+              || !questionId.equals(entity.getCurrentQuestionId())) {
+            return 0;
+          }
+          ReflectionTestUtils.setField(entity, "status", AgentRunStatus.RUNNING);
+          ReflectionTestUtils.setField(entity, "currentQuestionId", null);
+          return 1;
+        });
+    lenient().when(answerMessageRepository.save(any())).thenAnswer(invocation -> {
+      AnswerMessageEntity entity = invocation.getArgument(0, AnswerMessageEntity.class);
+      savedAnswerMessages.add(entity);
+      return entity;
+    });
+    lenient().when(answerMessageRepository.findByRunIdAndMessageId(any(), any()))
+        .thenAnswer(invocation -> savedAnswerMessages.stream()
+            .filter(message -> message.getRunId().equals(invocation.getArgument(0, String.class)))
+            .filter(message -> message.getMessageId()
+                .equals(invocation.getArgument(1, String.class)))
+            .findFirst());
     lenient().when(agentStepRepository.save(any())).thenAnswer(invocation -> {
       AgentStepEntity step = invocation.getArgument(0, AgentStepEntity.class);
       savedSteps.add(step);
@@ -145,6 +187,215 @@ class AgentRunApiContractTest {
         .andExpect(jsonPath("$.data.runId").isNotEmpty())
         .andExpect(jsonPath("$.data.status").value("CREATED"))
         .andExpect(jsonPath("$.data.businessSessionId").value(BUSINESS_SESSION_ID));
+  }
+
+  @Test
+  @DisplayName("当前问题的回答会被接受并将 Run 推进为 RUNNING")
+  void acceptsAnswerForCurrentQuestion() throws Exception {
+    AgentRunEntity waitingRun = createWaitingRun("current-question-001");
+    savedRun.set(waitingRun);
+    String body = objectMapper.writeValueAsString(new AnswerMessageBody(
+        "answer-message-001",
+        "current-question-001",
+        "我会先澄清边界条件，再给出复杂度分析。"
+    ));
+
+    mockMvc.perform(post("/api/agent/runs/{runId}/messages", waitingRun.getRunId())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(200))
+        .andExpect(jsonPath("$.data.runId").value(waitingRun.getRunId()))
+        .andExpect(jsonPath("$.data.messageId").value("answer-message-001"))
+        .andExpect(jsonPath("$.data.answeredQuestionId").value("current-question-001"))
+        .andExpect(jsonPath("$.data.acceptedStatus").value("RUNNING"));
+
+    assertThat(savedSteps).hasSize(1);
+    assertThat(savedSteps.getFirst().getPreviousStatus()).isEqualTo(AgentRunStatus.WAITING_USER);
+    assertThat(savedSteps.getFirst().getStatus()).isEqualTo(AgentRunStatus.RUNNING);
+    assertThat(savedAnswerMessages).hasSize(1);
+    assertThat(savedAnswerMessages.getFirst().getRunId()).isEqualTo(waitingRun.getRunId());
+    assertThat(savedAnswerMessages.getFirst().getMessageId()).isEqualTo("answer-message-001");
+    assertThat(savedAnswerMessages.getFirst().getAnsweredQuestionId())
+        .isEqualTo("current-question-001");
+    assertThat(savedRun.get().getStatus()).isEqualTo(AgentRunStatus.RUNNING);
+  }
+
+  @Test
+  @DisplayName("相同 Answer Message 重试会复用首次受理结果")
+  void reusesAcceptedAnswerForSameMessagePayload() throws Exception {
+    AgentRunEntity waitingRun = createWaitingRun("current-question-001");
+    savedRun.set(waitingRun);
+    String body = objectMapper.writeValueAsString(new AnswerMessageBody(
+        "answer-message-retry-001",
+        "current-question-001",
+        "我会说明时间复杂度和空间复杂度。"
+    ));
+
+    String firstResponse = submitAnswerAndReadResponse(waitingRun.getRunId(), body);
+    String retriedResponse = submitAnswerAndReadResponse(waitingRun.getRunId(), body);
+
+    assertThat(objectMapper.readTree(retriedResponse).path("data"))
+        .isEqualTo(objectMapper.readTree(firstResponse).path("data"));
+    assertThat(savedAnswerMessages).hasSize(1);
+    assertThat(savedSteps).hasSize(1);
+  }
+
+  @Test
+  @DisplayName("条件推进失败后会复用并发获胜者已持久化的 Answer Message")
+  void reusesWinningAnswerAfterLosingConditionalAdvance() throws Exception {
+    AgentRunEntity waitingRun = createWaitingRun("current-question-001");
+    savedRun.set(waitingRun);
+    String messageId = "answer-message-concurrent-winner-001";
+    String content = "并发获胜者已持久化的原始回答";
+    AnswerMessageEntity winningMessage = AnswerMessageEntity.create(
+        waitingRun.getRunId(),
+        messageId,
+        "current-question-001",
+        content,
+        "30413354eaab57ff3efb9c0870036ef445ee220379f31dd603605abd85b413e6"
+    );
+    when(answerMessageRepository.findByRunIdAndMessageId(waitingRun.getRunId(), messageId))
+        .thenReturn(Optional.empty(), Optional.of(winningMessage));
+    when(agentRunRepository.advanceWaitingUserToRunning(
+            any(), any(), any()))
+        .thenReturn(0);
+    String body = objectMapper.writeValueAsString(new AnswerMessageBody(
+        messageId,
+        "current-question-001",
+        content
+    ));
+
+    String response = submitAnswerAndReadResponse(waitingRun.getRunId(), body);
+
+    var responseData = objectMapper.readTree(response).path("data");
+    assertThat(responseData.path("runId").asText()).isEqualTo(winningMessage.getRunId());
+    assertThat(responseData.path("messageId").asText()).isEqualTo(winningMessage.getMessageId());
+    assertThat(responseData.path("answeredQuestionId").asText())
+        .isEqualTo(winningMessage.getAnsweredQuestionId());
+    assertThat(LocalDateTime.parse(responseData.path("receivedAt").asText()))
+        .isEqualTo(winningMessage.getReceivedAt());
+    assertThat(responseData.path("acceptedStatus").asText()).isEqualTo("RUNNING");
+    assertThat(savedAnswerMessages).isEmpty();
+    assertThat(savedSteps).isEmpty();
+    verify(answerMessageRepository, never()).save(any());
+    verify(agentStepRepository, never()).save(any());
+    verify(answerMessageRepository, times(2))
+        .findByRunIdAndMessageId(waitingRun.getRunId(), messageId);
+  }
+
+  @Test
+  @DisplayName("同一 messageId 携带不同内容或问题时会被拒绝为幂等冲突")
+  void rejectsConflictingPayloadForSameMessageId() throws Exception {
+    AgentRunEntity waitingRun = createWaitingRun("current-question-001");
+    savedRun.set(waitingRun);
+    String acceptedBody = objectMapper.writeValueAsString(new AnswerMessageBody(
+        "answer-message-conflict-001",
+        "current-question-001",
+        "原始回答"
+    ));
+    submitAnswerAndReadResponse(waitingRun.getRunId(), acceptedBody);
+
+    String differentContent = objectMapper.writeValueAsString(new AnswerMessageBody(
+        "answer-message-conflict-001",
+        "current-question-001",
+        "不同回答"
+    ));
+    assertAnswerMessageIdempotencyConflict(waitingRun.getRunId(), differentContent);
+
+    String differentQuestion = objectMapper.writeValueAsString(new AnswerMessageBody(
+        "answer-message-conflict-001",
+        "other-question-001",
+        "原始回答"
+    ));
+    assertAnswerMessageIdempotencyConflict(waitingRun.getRunId(), differentQuestion);
+
+    assertThat(savedAnswerMessages).hasSize(1);
+    assertThat(savedSteps).hasSize(1);
+    assertThat(savedRun.get().getStatus()).isEqualTo(AgentRunStatus.RUNNING);
+  }
+
+  @Test
+  @DisplayName("RUNNING Run 会拒绝不同 messageId 的新回答且不排队")
+  void rejectsNewAnswerWhenRunIsRunning() throws Exception {
+    AgentRunEntity waitingRun = createWaitingRun("current-question-001");
+    savedRun.set(waitingRun);
+    String acceptedBody = objectMapper.writeValueAsString(new AnswerMessageBody(
+        "answer-message-running-001",
+        "current-question-001",
+        "第一条回答"
+    ));
+    submitAnswerAndReadResponse(waitingRun.getRunId(), acceptedBody);
+
+    String newBody = objectMapper.writeValueAsString(new AnswerMessageBody(
+        "answer-message-running-002",
+        "current-question-001",
+        "第二条回答"
+    ));
+    mockMvc.perform(post("/api/agent/runs/{runId}/messages", waitingRun.getRunId())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(newBody))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(12006))
+        .andExpect(jsonPath("$.message").value("Agent Run 正在执行，暂不接受新的回答"))
+        .andExpect(jsonPath("$.data").doesNotExist());
+
+    assertThat(savedAnswerMessages).hasSize(1);
+    assertThat(savedSteps).hasSize(1);
+    assertThat(savedRun.get().getStatus()).isEqualTo(AgentRunStatus.RUNNING);
+  }
+
+  @Test
+  @DisplayName("过期问题的回答会被拒绝且不泄露当前问题")
+  void rejectsAnswerForStaleQuestionWithoutPersistingAnything() throws Exception {
+    AgentRunEntity waitingRun = createWaitingRun("current-question-002");
+    savedRun.set(waitingRun);
+    String body = objectMapper.writeValueAsString(new AnswerMessageBody(
+        "answer-message-stale-001",
+        "stale-question-001",
+        "这是上一题的回答"
+    ));
+
+    mockMvc.perform(post("/api/agent/runs/{runId}/messages", waitingRun.getRunId())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(12007))
+        .andExpect(jsonPath("$.message").value("该回答对应的问题已过期，请回答当前问题"))
+        .andExpect(jsonPath("$.data").doesNotExist());
+
+    assertThat(savedAnswerMessages).isEmpty();
+    assertThat(savedSteps).isEmpty();
+    assertThat(savedRun.get().getStatus()).isEqualTo(AgentRunStatus.WAITING_USER);
+    assertThat(savedRun.get().getCurrentQuestionId()).isEqualTo("current-question-002");
+  }
+
+  @ParameterizedTest(name = "{0} Run 会拒绝提交回答")
+  @MethodSource("nonAnswerableRunStates")
+  @DisplayName("暂停或终态 Run 会明确拒绝回答且不产生副作用")
+  void rejectsAnswerWhenRunIsPausedOrTerminalWithoutPersistingAnything(
+      AgentRunStatus runStatus,
+      String expectedMessage) throws Exception {
+    AgentRunEntity run = createWaitingRun("current-question-001");
+    ReflectionTestUtils.setField(run, "status", runStatus);
+    savedRun.set(run);
+    String body = objectMapper.writeValueAsString(new AnswerMessageBody(
+        "answer-message-non-answerable-" + runStatus.name().toLowerCase(),
+        "current-question-001",
+        "不应被接受的回答"
+    ));
+
+    mockMvc.perform(post("/api/agent/runs/{runId}/messages", run.getRunId())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(12004))
+        .andExpect(jsonPath("$.message").value(expectedMessage))
+        .andExpect(jsonPath("$.data").doesNotExist());
+
+    assertThat(savedAnswerMessages).isEmpty();
+    assertThat(savedSteps).isEmpty();
+    assertThat(savedRun.get().getStatus()).isEqualTo(runStatus);
   }
 
   @Test
@@ -398,6 +649,51 @@ class AgentRunApiContractTest {
     return objectMapper.readTree(response).path("data").path("runId").asText();
   }
 
+  private String submitAnswerAndReadResponse(String runId, String body) throws Exception {
+    return mockMvc.perform(post("/api/agent/runs/{runId}/messages", runId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(200))
+        .andReturn()
+        .getResponse()
+        .getContentAsString();
+  }
+
+  private void assertAnswerMessageIdempotencyConflict(String runId, String body) throws Exception {
+    mockMvc.perform(post("/api/agent/runs/{runId}/messages", runId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.code").value(12005))
+        .andExpect(jsonPath("$.message").value("同一 messageId 对应的 Answer Message 载荷不一致"))
+        .andExpect(jsonPath("$.data").doesNotExist());
+  }
+
+  private AgentRunEntity createWaitingRun(String currentQuestionId) {
+    AgentRunEntity run = AgentRunEntity.create(
+        AgentType.ADAPTIVE_INTERVIEWER,
+        BUSINESS_SESSION_ID,
+        "waiting-run-idempotency-key",
+        "waiting-run-fingerprint"
+    );
+    ReflectionTestUtils.setField(run, "status", AgentRunStatus.WAITING_USER);
+    ReflectionTestUtils.setField(run, "currentQuestionId", currentQuestionId);
+    return run;
+  }
+
+  private static Stream<Arguments> nonAnswerableRunStates() {
+    return Stream.of(
+        Arguments.of(AgentRunStatus.PAUSED, "Agent Run 已暂停，请先恢复后再提交回答"),
+        Arguments.of(AgentRunStatus.COMPLETED, "Agent Run 已完成，不能再提交回答"),
+        Arguments.of(AgentRunStatus.FAILED, "Agent Run 已失败，不能再提交回答"),
+        Arguments.of(AgentRunStatus.CANCELLED, "Agent Run 已取消，不能再提交回答")
+    );
+  }
+
   private record CreateRunBody(String agentType, String businessSessionId) {
+  }
+
+  private record AnswerMessageBody(String messageId, String questionId, String content) {
   }
 }

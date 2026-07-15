@@ -47,6 +47,9 @@ public class AgentRunEntity {
   @Column(name = "request_fingerprint", nullable = false, length = 64)
   private String requestFingerprint;
 
+  @Column(name = "current_question_id", length = 64)
+  private String currentQuestionId;
+
   @Column(name = "created_at", nullable = false)
   private LocalDateTime createdAt;
 
@@ -101,6 +104,7 @@ public class AgentRunEntity {
       return false;
     }
     status = AgentRunStatus.CANCELLED;
+    currentQuestionId = null;
     return true;
   }
 
@@ -126,6 +130,10 @@ public class AgentRunEntity {
 
   public String getRequestFingerprint() {
     return requestFingerprint;
+  }
+
+  public String getCurrentQuestionId() {
+    return currentQuestionId;
   }
 
   public LocalDateTime getCreatedAt() {

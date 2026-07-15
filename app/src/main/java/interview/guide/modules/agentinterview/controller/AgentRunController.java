@@ -2,8 +2,10 @@ package interview.guide.modules.agentinterview.controller;
 
 import interview.guide.common.result.Result;
 import interview.guide.modules.agentinterview.model.AgentRunResponse;
+import interview.guide.modules.agentinterview.model.AnswerMessageResponse;
 import interview.guide.modules.agentinterview.model.CreateAgentRunRequest;
 import interview.guide.modules.agentinterview.model.AgentRunEventResponse;
+import interview.guide.modules.agentinterview.model.SubmitAnswerMessageRequest;
 import interview.guide.modules.agentinterview.service.AgentRunService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +45,13 @@ public class AgentRunController {
   @PostMapping("/api/agent/runs/{runId}/cancel")
   public Result<AgentRunResponse> cancel(@PathVariable String runId) {
     return Result.success(agentRunService.cancel(runId));
+  }
+
+  @PostMapping("/api/agent/runs/{runId}/messages")
+  public Result<AnswerMessageResponse> submitAnswer(
+      @PathVariable String runId,
+      @Valid @RequestBody SubmitAnswerMessageRequest request) {
+    return Result.success(agentRunService.submitAnswer(runId, request));
   }
 
   @GetMapping("/api/agent/runs/{runId}/events")
