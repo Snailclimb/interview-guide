@@ -38,6 +38,9 @@ class AgentRunRepositoryTest {
   private AnswerMessageRepository answerMessageRepository;
 
   @Autowired
+  private AgentCheckpointRepository checkpointRepository;
+
+  @Autowired
   private Flyway flyway;
 
   @Test
@@ -75,14 +78,16 @@ class AgentRunRepositoryTest {
         run.getRunId(),
         1,
         AgentRunStatus.CREATED,
-        AgentRunStatus.PAUSED
+        AgentRunStatus.PAUSED,
+        null
     ));
 
     assertThatThrownBy(() -> stepRepository.saveAndFlush(AgentStepEntity.statusChanged(
         run.getRunId(),
         1,
         AgentRunStatus.PAUSED,
-        AgentRunStatus.CANCELLED
+        AgentRunStatus.CANCELLED,
+        null
     ))).isInstanceOf(DataIntegrityViolationException.class);
   }
 
@@ -173,6 +178,56 @@ class AgentRunRepositoryTest {
     assertThat(advancedRun.getCurrentQuestionId()).isNull();
   }
 
+  @Test
+  @DisplayName("Checkpoint 必须关联已存在的 Run")
+  void enforcesCheckpointRunForeignKey() {
+    assertThatThrownBy(() -> checkpointRepository.saveAndFlush(
+        createCheckpoint("missing-checkpoint-run", 1)
+    )).isInstanceOf(DataIntegrityViolationException.class);
+  }
+
+  @Test
+  @DisplayName("Checkpoint 游标必须关联同一 Run 的已提交 Step")
+  void enforcesCheckpointStepForeignKey() {
+    AgentRunEntity checkpointRun = repository.saveAndFlush(
+        createRun("checkpoint-step-fk-key", "checkpoint-step-fk-session")
+    );
+    AgentRunEntity otherRun = repository.saveAndFlush(
+        createRun("other-step-fk-key", "other-step-fk-session")
+    );
+    stepRepository.saveAndFlush(AgentStepEntity.statusChanged(
+        otherRun.getRunId(),
+        1,
+        AgentRunStatus.CREATED,
+        AgentRunStatus.PAUSED,
+        null
+    ));
+
+    assertThatThrownBy(() -> checkpointRepository.saveAndFlush(
+        createCheckpoint(checkpointRun.getRunId(), 1)
+    )).isInstanceOf(DataIntegrityViolationException.class);
+  }
+
+  @Test
+  @DisplayName("同一 Run 只能保留一个当前 Checkpoint")
+  void enforcesOneCurrentCheckpointPerRun() {
+    AgentRunEntity run = repository.saveAndFlush(
+        createRun("checkpoint-unique-key", "checkpoint-unique-session")
+    );
+    stepRepository.saveAndFlush(AgentStepEntity.statusChanged(
+        run.getRunId(),
+        1,
+        AgentRunStatus.CREATED,
+        AgentRunStatus.PAUSED,
+        null
+    ));
+    checkpointRepository.saveAndFlush(createCheckpoint(run.getRunId(), 1));
+
+    assertThatThrownBy(() -> checkpointRepository.saveAndFlush(
+        createCheckpoint(run.getRunId(), 1)
+    )).isInstanceOf(DataIntegrityViolationException.class);
+  }
+
   private AgentRunEntity createRun(String idempotencyKey, String businessSessionId) {
     return AgentRunEntity.create(
         AgentType.ADAPTIVE_INTERVIEWER,
@@ -199,6 +254,15 @@ class AgentRunRepositoryTest {
         "question-001",
         "候选人回答",
         "payload-fingerprint-" + messageId
+    );
+  }
+
+  private AgentCheckpointEntity createCheckpoint(String runId, long lastAppliedStepSequence) {
+    return AgentCheckpointEntity.create(
+        runId,
+        lastAppliedStepSequence,
+        "{\"schemaVersion\":1,\"lastAppliedStepSequence\":" + lastAppliedStepSequence
+            + ",\"status\":\"PAUSED\",\"currentQuestionId\":null}"
     );
   }
 

@@ -40,6 +40,7 @@ public class AgentRunService {
   private final AgentStepRepository agentStepRepository;
   private final InterviewSessionRepository interviewSessionRepository;
   private final AgentRunPersistenceService persistenceService;
+  private final AgentCheckpointService checkpointService;
   private final AgentProperties agentProperties;
 
   public AgentRunResponse create(String idempotencyKey, CreateAgentRunRequest request) {
@@ -148,7 +149,12 @@ public class AgentRunService {
         payloadFingerprint
     );
     answerMessageRepository.save(message);
-    persistStatusChange(runId, AgentRunStatus.WAITING_USER, AgentRunStatus.RUNNING);
+    persistStatusChange(
+        runId,
+        AgentRunStatus.WAITING_USER,
+        AgentRunStatus.RUNNING,
+        null
+    );
     return AnswerMessageResponse.accepted(message);
   }
 
@@ -240,22 +246,30 @@ public class AgentRunService {
   private void persistStatusChange(
       AgentRunEntity run,
       AgentRunStatus previousStatus) {
-    persistStatusChange(run.getRunId(), previousStatus, run.getStatus());
+    persistStatusChange(
+        run.getRunId(),
+        previousStatus,
+        run.getStatus(),
+        run.getCurrentQuestionId()
+    );
   }
 
   private void persistStatusChange(
       String runId,
       AgentRunStatus previousStatus,
-      AgentRunStatus status) {
+      AgentRunStatus status,
+      String currentQuestionId) {
     long nextSequence = agentStepRepository.findTopByRunIdOrderByStepSequenceDesc(runId)
         .map(AgentStepEntity::getStepSequence)
         .orElse(0L) + 1;
-    agentStepRepository.save(AgentStepEntity.statusChanged(
+    AgentStepEntity step = agentStepRepository.saveAndFlush(AgentStepEntity.statusChanged(
         runId,
         nextSequence,
         previousStatus,
-        status
+        status,
+        currentQuestionId
     ));
+    checkpointService.replaceCurrent(step);
   }
 
   private void ensureSessionCanAdvance(AgentRunEntity run) {

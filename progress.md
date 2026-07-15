@@ -31,7 +31,7 @@
 | #2 | G0 | 已关闭 | 无 | 迁移与 LEGACY 基线已验证 |
 | #3 | G2 基础 | 本地验收完成，待发布 | #2 | 远端关闭须在实现分支发布后进行 |
 | #4 | G2 基础 | 本地契约验收完成，待发布 | #3 | 数据/API 幂等契约已验证；端到端题目生产者依赖 #6 |
-| #5 | G2 恢复 | 未开始 | #4 | 等待 Answer Message 幂等契约 |
+| #5 | G2 恢复 | 实施中（基础切片已验证） | #4 | Checkpoint 持久化基础已入库；恢复、断序保护与启动恢复待续 |
 | #6 | G3 | 未开始 | #5 | 等待恢复基础 |
 | #7、#8 | G3 | 未开始 | #6 | 可在 #6 后按互不冲突边界并行审查/实现 |
 | #9 | G3 治理 | 未开始 | #7、#8 | 等待工具循环和预算基础 |
@@ -41,10 +41,10 @@
 
 ## 当前迭代
 
-- 阶段：G0 数据库迁移基础与 G1 Agent Run 创建已完成；G2 的 `#3` 本地验收完成
-- 状态：当前 HEAD 含 `#3` 实现提交 `80a5193` 和记录提交 `41e6c4d`；远端 Issue 将在分支发布后关闭
-- 当前 frontier：GitHub Issue `#4`——幂等 Answer Message 契约已本地验收，待发布后关闭；下一开发
-  依赖为 #5
+- 阶段：G0 数据库迁移基础、G1 Agent Run 创建及 G2 的 #3/#4 本地契约均已完成
+- 状态：当前 HEAD 含 #3 实现 `80a5193`、过程记录 `41e6c4d` 和 #4 实现 `d1cf656`；远端 Issue 将在
+  分支发布后关闭
+- 当前 frontier：GitHub Issue `#5`——从 Agent Step 重建 Checkpoint 并恢复原 Agent Run
 - 本轮审查基点：`063d5f725007ebd039e55fd7571884cd11337821`
 - 测试缝：版本化迁移启动、重复迁移、Agent Run API、LEGACY 全量回归
 
@@ -213,8 +213,81 @@
   发布/更新该指针。为保持纵向边界，#4 不新增隐藏的“设置当前题目”生产 API，也不提前实现模型出题
   或 Runtime 状态。
 - Red/Green 记录：已完成“接受当前问题回答”“幂等重放/冲突”“RUNNING 新消息拒绝”“过期问题
-  拒绝”“暂停/终态拒绝”和“并发胜者重读”六个 API 切片，并完成 H2 持久化约束补强；待全量回归和
-  Standards/Spec 双轴审查后标记本地验收完成。
+  拒绝”“暂停/终态拒绝”和“并发胜者重读”六个 API 切片，并完成 H2 持久化约束补强、全量回归和
+  Standards/Spec 双轴审查；已标记为本地契约验收完成，待发布。
+
+### #5 — 从 Agent Step 重建 Checkpoint 并恢复原 Agent Run（G2 恢复）
+
+- 状态：实施中；Checkpoint 持久化基础切片已实现并通过 API/H2 聚焦验证；本票的恢复、断序保护、
+  启动恢复和并发恢复验收尚未实现，不能误报为完成。本地 #4 契约与依赖已满足；远端 #3/#4 已随本次
+  发布检查点推送，但 Issue 关闭仍须在验收记录齐备后单独处理。
+- 需求：用户在应用重启或 Checkpoint 损坏后，继续原 Interview Session 与原 Agent Run；恢复只使用
+  已提交执行事实，不猜测缺失步骤，也不重复已完成结果。
+- 约束：
+  - 范围只覆盖 Checkpoint、Step 序列验证、遗留 `RUNNING -> PAUSED`、显式恢复 API 和必要状态 Step；
+    不提前实现 LLM、工具调用、预算、Session Resource Manifest、前端 Workspace 或 Agent 队列；
+  - Checkpoint 是从不可变 Agent Step 派生的可重建快照，而非第二个事实源；损坏快照必须丢弃并完整
+    重建，序列缺失/断裂必须保守暂停；
+  - Controller 只做路由、校验和委托，事务留在 Service；LLM/S3/HTTP 不得在事务中，也不得以启动恢复
+    为由触发外部调用；
+  - 恢复不能重放已完成结果；当前阶段的 Step 只有状态事实，不能伪造未来模型/工具/题目状态；
+  - 所有 GitHub 查询必须显式使用 `-R Belfast-byte/interview-guide`，默认 remote 存在同号无关 Issue。
+- 验收条件：
+  - Checkpoint 记录 `lastAppliedStepSequence`，并在 Turn 边界、等待或终态前保存；
+  - Checkpoint 损坏时可从完整 Agent Step 重建；
+  - Agent Step 序列缺失或断裂时 Run 进入 `PAUSED`；
+  - 应用启动时遗留 `RUNNING` Run 转为 `PAUSED`，用户恢复后继续原进度。
+- 预先确认的测试缝：主要外部契约为 `POST /api/agent/runs/{runId}/resume` 与 Run/事件查询；H2
+  Repository/恢复协调器测试补充证明 Checkpoint 重建、序列连续性和启动恢复。该选择遵循
+  `goal.md` 与技术规范“API 优先，Checkpoint 重建可使用持久化测试”的约束。
+- Agent 分工：设计审查 Agent 对齐 #5、技术规范和领域边界；代码盘点 Agent 识别现有持久化/启动点；
+  测试策略 Agent 确定 Red → Green 的公共缝；实现 Agent 只在设计结论后写单一纵向切片；协调 Agent
+  记录证据、审查和经验沉淀。
+- 设计结论：
+  - 依据 ADR-0006，Step 是唯一事实源，Checkpoint 是每个 Run 当前可替换的派生快照；Checkpoint
+    保存 `lastAppliedStepSequence` 和版本化恢复状态，不保存隐藏推理或外部结果正文。
+  - V4 为 Agent Step 增加“该 Step 之后的当前问题身份”，为 Checkpoint 增加 `runId`、游标、恢复状态
+    JSON 和时间戳。恢复状态 v1 仅含 schemaVersion、游标、Run 状态和当前问题身份；它可以从完整、
+    连续的 Step 账本重建。未来 #6 进入 `WAITING_USER` 时必须把问题身份写入同一状态 Step。
+  - 因 H2 2.4 不支持 `JSONB`/`JSON` 列且本 ticket 的快照不需要 SQL 内查询，恢复状态以版本化 JSON
+    文本跨库保存；生产 PostgreSQL 的 JSONB 专项迁移与 smoke 验收在出现 JSON 查询需求时再单独推进，
+    不能把 H2 兼容性伪装为 PostgreSQL 类型验证。
+  - 恢复先验证 Step 从 1 起连续，再校验最新 Checkpoint；快照解析或一致性失败时全量重建并替换快照。
+    Step 缺失、断裂或无法解释时保持/转为 `PAUSED`，不产生伪造 Checkpoint 或重新执行任何结果。
+  - `POST /resume` 只接受连续账本上的 `PAUSED` Run，以条件更新推进 `PAUSED -> RUNNING`，写一条状态
+    Step 和更新 Checkpoint 后返回同一 `runId`。这表示恢复基础已就绪；实际 ReAct 执行仍由 #6 负责，
+    #5 不调用模型、工具或外部服务。
+  - 启动恢复使用 `ApplicationRunner`，无论 Agent 功能开关是否关闭都将遗留 `RUNNING` 安全地转为
+    `PAUSED`；状态 Step 与有效 Checkpoint 在短事务内提交，发现断序只记录安全暂停事实而不捏造快照。
+- TDD 切片：
+  1. Red：暂停后的状态 Step 没有对应 Checkpoint；Green：V4、可替换 Checkpoint 和原子状态记录。
+  2. Red：有效 `PAUSED` Run 没有恢复路由；Green：`POST /resume` 保留同一 runId 并条件推进为
+     `RUNNING`。
+  3. Red：损坏 Checkpoint 使恢复失败；Green：从连续 Step 全量重建并替换派生快照。
+  4. Red：`1,3` 断序仍被恢复；Green：保持/转为 `PAUSED` 并返回明确业务错误，不写伪造快照。
+  5. Red：启动后遗留 `RUNNING` 仍保持执行；Green：ApplicationRunner 安全暂停并写审计 Step。
+  6. Red：两个恢复请求都推进；Green：条件更新只允许一个恢复成功，另一个显式拒绝。
+- 预防性踩坑：默认 GitHub remote 指向不同仓库且有无关同号 Issue；#5 的需求、验收与关闭状态一律以
+  `Belfast-byte/interview-guide#5` 为准。当前 Step 只有状态事实，不能为了“恢复成功”捏造未实现的
+  模型、工具或当前题目状态。
+- 实施检查点（2026-07-15）：
+  - V4 为 `agent_steps` 增加状态后的 `current_question_id`，并创建每个 Run 唯一的
+    `agent_checkpoints`；Checkpoint 游标通过 `(run_id, last_applied_step_sequence)` 复合外键指向
+    已提交的 Step。
+  - `AgentRunService` 在已有短事务内先 `saveAndFlush` 状态 Step，再由
+    `AgentCheckpointService` 替换当前 Checkpoint，保存 v1 JSON 状态（schemaVersion、游标、状态、当前问题身份）。
+  - 已验证：2026-07-15 执行
+    `./gradlew.bat :app:test --no-daemon --tests "interview.guide.modules.agentinterview.AgentRunApiContractTest" --tests "interview.guide.infrastructure.agent.persistence.AgentRunRepositoryTest"`，
+    `BUILD SUCCESSFUL`（15 秒）。覆盖暂停后 Step/Checkpoint 一致性，以及 H2 下 Run 外键、游标复合外键和单 Run 单 Checkpoint 约束。
+  - 完整回归：2026-07-15 执行 `./gradlew.bat :app:test --no-daemon --rerun-tasks`，
+    5 个任务实际执行、2 分 13 秒 `BUILD SUCCESSFUL`；仅有既有的 Voice 过时 API 与 Agent API 测试未检查操作警告。
+  - 尚未交付：Checkpoint 反序列化/全量重建、Step 连续性与状态链验证、`POST /resume`、
+    `PAUSED -> RUNNING` 并发竞争、启动遗留 `RUNNING -> PAUSED` 和 Standards/Spec 双轴审查。
+- 踩坑与处理：
+  - H2 2.4 不支持 JSONB/JSON；在不需要 SQL JSON 查询的当前切片中，使用版本化 JSON 文本，不能将
+    H2 兼容性误报为 PostgreSQL JSONB 验证。
+  - 基础切片的实现 Agent 在提交 Red/Green 日志前被中断；只记录了可复跑的 Green 验证，未补写不存在的
+    Red 结果。Linux 后续实现必须先运行新恢复场景的 Red 测试，再落地相应 Green 实现。
 
 ### #2 — 建立版本化数据库迁移并保护 LEGACY 基线（G0，回溯记录）
 

@@ -47,6 +47,9 @@ public class AgentStepEntity {
   @Column(nullable = false, updatable = false, length = 24)
   private AgentRunStatus status;
 
+  @Column(name = "current_question_id", updatable = false, length = 64)
+  private String currentQuestionId;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private LocalDateTime createdAt;
 
@@ -57,7 +60,8 @@ public class AgentStepEntity {
       String runId,
       long stepSequence,
       AgentRunStatus previousStatus,
-      AgentRunStatus status) {
+      AgentRunStatus status,
+      String currentQuestionId) {
     AgentStepEntity entity = new AgentStepEntity();
     entity.stepId = UUID.randomUUID().toString();
     entity.runId = runId;
@@ -65,6 +69,7 @@ public class AgentStepEntity {
     entity.stepType = AgentStepType.RUN_STATUS_CHANGED;
     entity.previousStatus = previousStatus;
     entity.status = status;
+    entity.currentQuestionId = currentQuestionId;
     entity.createdAt = LocalDateTime.now();
     return entity;
   }
@@ -91,6 +96,10 @@ public class AgentStepEntity {
 
   public AgentRunStatus getStatus() {
     return status;
+  }
+
+  public String getCurrentQuestionId() {
+    return currentQuestionId;
   }
 
   public LocalDateTime getCreatedAt() {

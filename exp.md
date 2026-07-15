@@ -53,3 +53,12 @@
   上下文。
 - 应用：为跨字段状态不变量建立 Flyway CHECK 和 H2 反例测试；每新增状态迁移都检查它是否需要清理
   指针。指针的生产者若属于后续 ticket，应明确记录依赖，而不是用测试专用生产 API 绕过纵向边界。
+
+## EXP-0007：Checkpoint 必须由已提交的 Step 游标锚定
+
+- 来源：GitHub Issue #5 的 Checkpoint 持久化基础切片。
+- 结论：Checkpoint 是可替换的派生快照，不能只靠应用层约定它指向哪条事实。为它建立
+  `(run_id, last_applied_step_sequence) -> agent_steps(run_id, step_sequence)` 复合外键，并在同一
+  Service 事务中先落盘并 flush Step、再替换 Checkpoint，才能避免快照领先于或脱离不可变账本。
+- 应用：后续的恢复、等待、终态、工具和模型 Step 都要先提交事实再推进快照；恢复代码仍必须验证
+  Step 的连续性，数据库外键只能证明游标存在，不能证明整个账本可重建。

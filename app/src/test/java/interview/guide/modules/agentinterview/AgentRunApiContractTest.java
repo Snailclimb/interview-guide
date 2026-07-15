@@ -8,11 +8,14 @@ import interview.guide.common.agent.runtime.AgentType;
 import interview.guide.common.exception.GlobalExceptionHandler;
 import interview.guide.infrastructure.agent.persistence.AnswerMessageEntity;
 import interview.guide.infrastructure.agent.persistence.AnswerMessageRepository;
+import interview.guide.infrastructure.agent.persistence.AgentCheckpointEntity;
+import interview.guide.infrastructure.agent.persistence.AgentCheckpointRepository;
 import interview.guide.infrastructure.agent.persistence.AgentRunEntity;
 import interview.guide.infrastructure.agent.persistence.AgentRunRepository;
 import interview.guide.infrastructure.agent.persistence.AgentStepEntity;
 import interview.guide.infrastructure.agent.persistence.AgentStepRepository;
 import interview.guide.modules.agentinterview.controller.AgentRunController;
+import interview.guide.modules.agentinterview.service.AgentCheckpointService;
 import interview.guide.modules.agentinterview.service.AgentRunService;
 import interview.guide.modules.agentinterview.service.AgentRunPersistenceService;
 import interview.guide.modules.interview.model.InterviewSessionEntity;
@@ -69,6 +72,9 @@ class AgentRunApiContractTest {
   private AgentStepRepository agentStepRepository;
 
   @Mock
+  private AgentCheckpointRepository agentCheckpointRepository;
+
+  @Mock
   private InterviewSessionRepository interviewSessionRepository;
 
   private MockMvc mockMvc;
@@ -76,11 +82,21 @@ class AgentRunApiContractTest {
   private AtomicReference<AgentRunEntity> savedRun;
   private List<AnswerMessageEntity> savedAnswerMessages;
   private List<AgentStepEntity> savedSteps;
+  private List<AgentCheckpointEntity> savedCheckpoints;
   private AgentProperties agentProperties;
 
   @BeforeEach
   void setUp() {
+    objectMapper = JsonMapper.builder().findAndAddModules().build();
+    savedRun = new AtomicReference<>();
+    savedAnswerMessages = new ArrayList<>();
+    savedSteps = new ArrayList<>();
+    savedCheckpoints = new ArrayList<>();
     AgentRunPersistenceService persistenceService = new AgentRunPersistenceService(agentRunRepository);
+    AgentCheckpointService checkpointService = new AgentCheckpointService(
+        agentCheckpointRepository,
+        objectMapper
+    );
     agentProperties = new AgentProperties();
     agentProperties.setEnabled(true);
     AgentRunService service = new AgentRunService(
@@ -89,16 +105,13 @@ class AgentRunApiContractTest {
         agentStepRepository,
         interviewSessionRepository,
         persistenceService,
+        checkpointService,
         agentProperties
     );
     AgentRunController controller = new AgentRunController(service);
     mockMvc = MockMvcBuilders.standaloneSetup(controller)
         .setControllerAdvice(new GlobalExceptionHandler())
         .build();
-    objectMapper = JsonMapper.builder().findAndAddModules().build();
-    savedRun = new AtomicReference<>();
-    savedAnswerMessages = new ArrayList<>();
-    savedSteps = new ArrayList<>();
 
     lenient().when(interviewSessionRepository.findBySessionId(BUSINESS_SESSION_ID))
         .thenReturn(Optional.of(new InterviewSessionEntity()));
@@ -153,6 +166,11 @@ class AgentRunApiContractTest {
       savedSteps.add(step);
       return step;
     });
+    lenient().when(agentStepRepository.saveAndFlush(any())).thenAnswer(invocation -> {
+      AgentStepEntity step = invocation.getArgument(0, AgentStepEntity.class);
+      savedSteps.add(step);
+      return step;
+    });
     lenient().when(agentStepRepository.findTopByRunIdOrderByStepSequenceDesc(any()))
         .thenAnswer(invocation -> savedSteps.stream()
             .filter(step -> step.getRunId().equals(invocation.getArgument(0, String.class)))
@@ -168,6 +186,18 @@ class AgentRunApiContractTest {
               .sorted((left, right) -> left.getStepSequence().compareTo(right.getStepSequence()))
               .toList();
         });
+    lenient().when(agentCheckpointRepository.findByRunId(any()))
+        .thenAnswer(invocation -> savedCheckpoints.stream()
+            .filter(checkpoint -> checkpoint.getRunId()
+                .equals(invocation.getArgument(0, String.class)))
+            .findFirst());
+    lenient().when(agentCheckpointRepository.save(any())).thenAnswer(invocation -> {
+      AgentCheckpointEntity checkpoint = invocation.getArgument(0, AgentCheckpointEntity.class);
+      if (!savedCheckpoints.contains(checkpoint)) {
+        savedCheckpoints.add(checkpoint);
+      }
+      return checkpoint;
+    });
   }
 
   @Test
@@ -461,6 +491,18 @@ class AgentRunApiContractTest {
     mockMvc.perform(get("/api/agent/runs/{runId}", runId))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("PAUSED"));
+
+    assertThat(savedSteps).hasSize(1);
+    assertThat(savedCheckpoints).hasSize(1);
+    assertThat(savedCheckpoints.getFirst().getRunId()).isEqualTo(runId);
+    assertThat(savedCheckpoints.getFirst().getLastAppliedStepSequence())
+        .isEqualTo(savedSteps.getFirst().getStepSequence());
+    var checkpointState = objectMapper.readTree(savedCheckpoints.getFirst().getRecoveryState());
+    assertThat(checkpointState.path("schemaVersion").asInt()).isEqualTo(1);
+    assertThat(checkpointState.path("lastAppliedStepSequence").asLong())
+        .isEqualTo(savedSteps.getFirst().getStepSequence());
+    assertThat(checkpointState.path("status").asText()).isEqualTo("PAUSED");
+    assertThat(checkpointState.path("currentQuestionId").isNull()).isTrue();
   }
 
   @Test
