@@ -114,6 +114,18 @@ class LlmProviderRegistryPathIntegrationTest {
   }
 
   @Test
+  @DisplayName("Atlas Cloud 风格 /v1 base-url 不重复追加版本段")
+  void atlasCloudBaseUrlWithV1_noDoubleVersion() {
+    LlmProviderRegistry registry = buildRegistryFor("http://127.0.0.1:" + port + "/v1");
+
+    ChatClient client = registry.getChatClient("probe");
+    client.prompt("hi").call().content();
+
+    assertThat(receivedPaths).hasSize(1);
+    assertThat(receivedPaths.get(0)).isEqualTo("/v1/chat/completions");
+  }
+
+  @Test
   @DisplayName("base-url 以 /api/v3（豆包 Ark 风格）结尾时不重复版本段")
   void baseUrlWithV3_noDoubleVersion() {
     LlmProviderRegistry registry = buildRegistryFor("http://127.0.0.1:" + port + "/api/v3");

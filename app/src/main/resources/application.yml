@@ -136,6 +136,12 @@ app:
         api-key: ${PROVIDER_DEEPSEEK_API_KEY:}
         model: ${PROVIDER_DEEPSEEK_MODEL:deepseek-v4-flash}
         supports-embedding: false
+      # Atlas Cloud（OpenAI 兼容） https://api.atlascloud.ai/
+      atlascloud:
+        base-url: ${PROVIDER_ATLASCLOUD_BASE_URL:${PROVIDER_ATLAS_CLOUD_BASE_URL:${ATLASCLOUD_BASE_URL:${ATLAS_CLOUD_BASE_URL:https://api.atlascloud.ai/v1}}}}
+        api-key: ${PROVIDER_ATLASCLOUD_API_KEY:${PROVIDER_ATLAS_CLOUD_API_KEY:${ATLASCLOUD_API_KEY:${ATLAS_CLOUD_API_KEY:}}}}
+        model: ${PROVIDER_ATLASCLOUD_MODEL:${PROVIDER_ATLAS_CLOUD_MODEL:${ATLASCLOUD_MODEL:${ATLAS_CLOUD_MODEL:deepseek-ai/deepseek-v4-pro}}}}
+        supports-embedding: false
       # 智谱 AI / GLM（OpenAI 兼容） https://open.bigmodel.cn/
       glm:
         base-url: https://open.bigmodel.cn/api/coding/paas/v4

@@ -20,11 +20,12 @@ class ApiPathResolverTest {
     }
 
     @Test
-    @DisplayName("以 /v1 结尾（Kimi / DeepSeek / SiliconFlow / DashScope 兼容模式）返回 true")
+    @DisplayName("以 /v1 结尾（Kimi / DeepSeek / SiliconFlow / DashScope / Atlas Cloud）返回 true")
     void trailingV1() {
       assertThat(ApiPathResolver.baseUrlContainsVersion("https://api.moonshot.cn/v1")).isTrue();
       assertThat(ApiPathResolver.baseUrlContainsVersion("https://api.deepseek.com/v1")).isTrue();
       assertThat(ApiPathResolver.baseUrlContainsVersion("https://api.siliconflow.cn/v1")).isTrue();
+      assertThat(ApiPathResolver.baseUrlContainsVersion("https://api.atlascloud.ai/v1")).isTrue();
       assertThat(ApiPathResolver.baseUrlContainsVersion(
           "https://dashscope.aliyuncs.com/compatible-mode/v1")).isTrue();
     }
@@ -115,6 +116,8 @@ class ApiPathResolverTest {
     void versionedBaseUrlStaysUnchanged() {
       assertThat(ApiPathResolver.resolveVersionedBaseUrl("https://api.moonshot.cn/v1/"))
           .isEqualTo("https://api.moonshot.cn/v1");
+      assertThat(ApiPathResolver.resolveVersionedBaseUrl("https://api.atlascloud.ai/v1/"))
+          .isEqualTo("https://api.atlascloud.ai/v1");
     }
 
     @Test

@@ -48,6 +48,15 @@ const PROVIDER_PRESETS: Record<string, {
     ],
     supportsEmbedding: false,
   },
+  atlascloud: {
+    baseUrl: 'https://api.atlascloud.ai/v1',
+    models: [
+      { value: 'deepseek-ai/deepseek-v4-pro', label: 'DeepSeek V4 Pro — Atlas Cloud' },
+      { value: 'deepseek-ai/deepseek-v4-flash', label: 'DeepSeek V4 Flash — Atlas Cloud' },
+      { value: 'qwen/qwen3.5-flash', label: 'Qwen3.5 Flash — Atlas Cloud' },
+    ],
+    supportsEmbedding: false,
+  },
   glm: {
     baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
     models: [
@@ -915,7 +924,7 @@ export default function SettingsPage() {
                         }
                       }}
                       disabled={!!editingProvider}
-                      placeholder="例如: dashscope, deepseek, glm, kimi"
+                      placeholder="例如: dashscope, atlascloud, deepseek, glm, kimi"
                       className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-600
                         bg-white dark:bg-slate-700 text-sm text-slate-900 dark:text-white
                         placeholder:text-slate-400 focus:outline-none focus:ring-2

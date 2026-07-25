@@ -133,6 +133,14 @@ class LlmProviderConfigServiceTest {
         }
 
         @Test
+        @DisplayName("Atlas Cloud base-url 测试连接不应重复拼接 /v1")
+        void buildConnectivityUrlsAvoidsDoubleVersionForAtlasCloud() throws Exception {
+            List<String> urls = invokeConnectivityUrls("https://api.atlascloud.ai/v1");
+
+            assertEquals(List.of("https://api.atlascloud.ai/v1/chat/completions"), urls);
+        }
+
+        @Test
         @DisplayName("测试连接请求体不再强制携带 temperature")
         void connectivityRequestBodyOmitsTemperature() throws Exception {
             Map<String, Object> body = invokeConnectivityRequestBody("kimi-latest");
