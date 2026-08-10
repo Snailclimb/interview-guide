@@ -63,6 +63,20 @@ public class ResumeEntity {
     // 分析错误信息（失败时记录）
     @Column(length = 500)
     private String analyzeError;
+
+    // 版本族ID：首版本为 NULL（以自身 id 为根），后续版本共享首版本 id
+    private Long versionGroupId;
+
+    // 版本号：族内从 1 递增
+    @Column(nullable = false)
+    private Integer versionNo = 1;
+
+    // 直接父版本ID（首版本为 NULL）
+    private Long parentId;
+
+    // 版本说明（如"根据建议优化了项目描述"）
+    @Column(length = 500)
+    private String versionNote;
     
     @PrePersist
     protected void onCreate() {
@@ -179,5 +193,44 @@ public class ResumeEntity {
 
     public void setAnalyzeError(String analyzeError) {
         this.analyzeError = analyzeError;
+    }
+
+    public Long getVersionGroupId() {
+        return versionGroupId;
+    }
+
+    public void setVersionGroupId(Long versionGroupId) {
+        this.versionGroupId = versionGroupId;
+    }
+
+    public Integer getVersionNo() {
+        return versionNo;
+    }
+
+    public void setVersionNo(Integer versionNo) {
+        this.versionNo = versionNo;
+    }
+
+    public Long getParentId() {
+        return parentId;
+    }
+
+    public void setParentId(Long parentId) {
+        this.parentId = parentId;
+    }
+
+    public String getVersionNote() {
+        return versionNote;
+    }
+
+    public void setVersionNote(String versionNote) {
+        this.versionNote = versionNote;
+    }
+
+    /**
+     * 获取版本族ID（首版本以自身 id 为根）
+     */
+    public Long resolveVersionGroupId() {
+        return versionGroupId != null ? versionGroupId : id;
     }
 }

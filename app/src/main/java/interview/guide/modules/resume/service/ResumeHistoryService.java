@@ -12,6 +12,7 @@ import interview.guide.modules.resume.model.ResumeAnalysisEntity;
 import interview.guide.modules.resume.model.ResumeDetailDTO;
 import interview.guide.modules.resume.model.ResumeEntity;
 import interview.guide.modules.resume.model.ResumeListItemDTO;
+import interview.guide.modules.resume.model.ResumeVersionDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -70,9 +71,49 @@ public class ResumeHistoryService {
                 lastAnalyzedAt,
                 interviewCount,
                 resume.getAnalyzeStatus(),
-                resume.getAnalyzeError()
+                resume.getAnalyzeError(),
+                resume.getVersionNo(),
+                resume.resolveVersionGroupId()
             );
         }).toList();
+    }
+
+    /**
+     * 获取简历所在版本族的版本链
+     */
+    public List<ResumeVersionDTO> getResumeVersions(Long id) {
+        Optional<ResumeEntity> resumeOpt = resumePersistenceService.findById(id);
+        if (resumeOpt.isEmpty()) {
+            throw new BusinessException(ErrorCode.RESUME_NOT_FOUND);
+        }
+        return resumePersistenceService.findVersionChain(resumeOpt.get()).stream()
+            .map(v -> toVersionDTO(v, id))
+            .toList();
+    }
+
+    /**
+     * 简历实体转版本摘要DTO
+     */
+    private ResumeVersionDTO toVersionDTO(ResumeEntity version, Long currentId) {
+        Integer latestScore = null;
+        LocalDateTime lastAnalyzedAt = null;
+        Optional<ResumeAnalysisEntity> analysisOpt = resumePersistenceService.getLatestAnalysis(version.getId());
+        if (analysisOpt.isPresent()) {
+            ResumeAnalysisEntity analysis = analysisOpt.get();
+            latestScore = analysis.getOverallScore();
+            lastAnalyzedAt = analysis.getAnalyzedAt();
+        }
+        return new ResumeVersionDTO(
+            version.getId(),
+            version.getVersionNo(),
+            version.getOriginalFilename(),
+            version.getUploadedAt(),
+            latestScore,
+            lastAnalyzedAt,
+            version.getAnalyzeStatus(),
+            version.getVersionNote(),
+            version.getId().equals(currentId)
+        );
     }
 
     /**
@@ -99,6 +140,11 @@ public class ResumeHistoryService {
             interviewPersistenceService.findByResumeId(id)
         );
 
+        // 版本链（当前版本标记 current）
+        List<ResumeVersionDTO> versions = resumePersistenceService.findVersionChain(resume).stream()
+            .map(v -> toVersionDTO(v, id))
+            .toList();
+
         return new ResumeDetailDTO(
             resume.getId(),
             resume.getOriginalFilename(),
@@ -110,6 +156,10 @@ public class ResumeHistoryService {
             resume.getResumeText(),
             resume.getAnalyzeStatus(),
             resume.getAnalyzeError(),
+            resume.getVersionNo(),
+            resume.resolveVersionGroupId(),
+            resume.getVersionNote(),
+            versions,
             analysisHistory,
             interviewHistory
         );

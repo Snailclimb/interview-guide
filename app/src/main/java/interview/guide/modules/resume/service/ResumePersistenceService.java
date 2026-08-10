@@ -62,11 +62,27 @@ public class ResumePersistenceService {
     }
     
     /**
-     * 保存新简历
+     * 保存新简历（首版本，versionNo=1，无父版本）
      */
     @Transactional(rollbackFor = Exception.class)
     public ResumeEntity saveResume(MultipartFile file, String resumeText,
                                    String storageKey, String storageUrl) {
+        return saveResume(file, resumeText, storageKey, storageUrl, null, null, null, null);
+    }
+
+    /**
+     * 保存新简历（支持版本迭代）
+     *
+     * @param versionGroupId 版本族ID；首版本传 null（以自身 id 为根），后续版本传父版本解析出的族ID
+     * @param versionNo      版本号；首版本为 1，后续版本为族内最大版本号 + 1
+     * @param parentId       直接父版本 id；首版本传 null
+     * @param versionNote    版本说明（可选）
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public ResumeEntity saveResume(MultipartFile file, String resumeText,
+                                   String storageKey, String storageUrl,
+                                   Long versionGroupId, Integer versionNo,
+                                   Long parentId, String versionNote) {
         try {
             String fileHash = fileHashService.calculateHash(file);
             
@@ -78,9 +94,13 @@ public class ResumePersistenceService {
             resume.setStorageKey(storageKey);
             resume.setStorageUrl(storageUrl);
             resume.setResumeText(resumeText);
+            resume.setVersionGroupId(versionGroupId);
+            resume.setVersionNo(versionNo != null ? versionNo : 1);
+            resume.setParentId(parentId);
+            resume.setVersionNote(versionNote);
             
             ResumeEntity saved = resumeRepository.save(resume);
-            log.info("简历已保存: id={}, hash={}", saved.getId(), fileHash);
+            log.info("简历已保存: id={}, hash={}, versionNo={}", saved.getId(), fileHash, saved.getVersionNo());
             
             return saved;
         } catch (Exception e) {
@@ -178,6 +198,28 @@ public class ResumePersistenceService {
      */
     public Optional<ResumeEntity> findById(Long id) {
         return resumeRepository.findById(id);
+    }
+
+    /**
+     * 加载简历所在版本族的完整版本链（按版本号升序）
+     * 首版本（versionGroupId 为 NULL）以自身 id 为根，后续版本共享根的 id。
+     *
+     * @param resume 任意一个版本
+     * @return 版本链，按 version_no 升序排列
+     */
+    public List<ResumeEntity> findVersionChain(ResumeEntity resume) {
+        Long groupId = resume.resolveVersionGroupId();
+        List<ResumeEntity> versions = new java.util.ArrayList<>();
+        if (resume.getVersionGroupId() == null) {
+            // 当前就是根版本
+            versions.add(resume);
+        } else {
+            resumeRepository.findById(groupId).ifPresent(versions::add);
+        }
+        versions.addAll(resumeRepository.findByVersionGroupIdOrderByVersionNoAsc(groupId));
+        return versions.stream()
+            .sorted(java.util.Comparator.comparingInt(ResumeEntity::getVersionNo))
+            .toList();
     }
     
     /**

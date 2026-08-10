@@ -40,7 +40,7 @@ public class ResumeUploadService {
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
     /**
-     * 上传并分析简历（异步）
+     * 上传并分析简历（异步，首版本）
      *
      * @param file 简历文件
      * @return 上传结果（分析将异步进行）
@@ -68,7 +68,87 @@ public class ResumeUploadService {
             return handleDuplicateResume(existingResume.get());
         }
 
-        // 4. 解析简历文本
+        // 4-8. 解析、存储、入库、触发异步分析
+        return doUpload(file, null, 1, null, null, startTime);
+    }
+
+    /**
+     * 上传优化后的简历新版本（异步分析）
+     * 新版本作为独立简历记录挂到同一版本族，旧版本与旧分析全部保留。
+     *
+     * @param parentId    父版本简历ID
+     * @param file        优化后的简历文件
+     * @param versionNote 版本说明（可选，如"根据建议优化了项目描述"）
+     * @return 上传结果（分析将异步进行）
+     */
+    public Map<String, Object> uploadVersion(Long parentId,
+                                             org.springframework.web.multipart.MultipartFile file,
+                                             String versionNote) {
+        long startTime = System.currentTimeMillis();
+
+        // 1. 验证文件
+        fileValidationService.validateFile(file, MAX_FILE_SIZE, "简历");
+
+        // 2. 校验父版本存在并解析版本族
+        ResumeEntity parent = resumeRepository.findById(parentId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "父版本简历不存在"));
+        Long versionGroupId = parent.resolveVersionGroupId();
+        int nextVersionNo = resolveNextVersionNo(parent, versionGroupId);
+
+        String fileName = file.getOriginalFilename();
+        long fileSize = file.getSize();
+        log.info("收到简历新版本上传请求: parentId={}, 版本族={}, 新版本号=v{}, 文件: {} ({} bytes)",
+            parentId, versionGroupId, nextVersionNo, fileName, fileSize);
+
+        // 3. 验证文件类型
+        String contentType = parseService.detectContentType(file);
+        validateContentType(contentType);
+
+        // 4. 去重：相同内容已在库中（含同族其他版本）则返回已有记录
+        Optional<ResumeEntity> existingResume = persistenceService.findExistingResume(file);
+        if (existingResume.isPresent()) {
+            ResumeEntity existing = existingResume.get();
+            log.info("简历新版本上传处理完成（内容重复）: 命中 v{} (resumeId={}) - 耗时: {}ms",
+                existing.getVersionNo(), existing.getId(), System.currentTimeMillis() - startTime);
+            return handleDuplicateResume(existing);
+        }
+
+        // 5-9. 解析、存储、入库（带版本信息）、触发异步分析
+        return doUpload(file, versionGroupId, nextVersionNo, parentId, versionNote, startTime);
+    }
+
+    /**
+     * 计算版本族内下一个版本号
+     * 首版本（根）的 versionGroupId 为 NULL，以自身 id 为根；后续版本共享根的 id。
+     */
+    private int resolveNextVersionNo(ResumeEntity parent, Long versionGroupId) {
+        if (parent.getVersionGroupId() == null) {
+            // 父版本是根：族内至少已有 v1
+            int maxNo = 1;
+            Optional<ResumeEntity> latestInGroup = resumeRepository
+                .findFirstByVersionGroupIdOrderByVersionNoDesc(parent.getId());
+            if (latestInGroup.isPresent()) {
+                maxNo = latestInGroup.get().getVersionNo();
+            }
+            return maxNo + 1;
+        }
+        Optional<ResumeEntity> latestInGroup = resumeRepository
+            .findFirstByVersionGroupIdOrderByVersionNoDesc(versionGroupId);
+        return latestInGroup.map(resume -> resume.getVersionNo() + 1).orElse(1);
+    }
+
+    /**
+     * 公共上传流程：解析文本 → 存储RustFS → 保存数据库 → 发送异步分析任务
+     */
+    private Map<String, Object> doUpload(org.springframework.web.multipart.MultipartFile file,
+                                         Long versionGroupId,
+                                         int versionNo,
+                                         Long parentId,
+                                         String versionNote,
+                                         long startTime) {
+        String fileName = file.getOriginalFilename();
+
+        // 5. 解析简历文本
         long parseStart = System.currentTimeMillis();
         String resumeText = parseService.parseResume(file);
         if (resumeText == null || resumeText.trim().isEmpty()) {
@@ -77,29 +157,31 @@ public class ResumeUploadService {
         log.info("简历文本解析完成: {} - 解析耗时: {}ms, 文本长度: {} 字符",
             fileName, System.currentTimeMillis() - parseStart, resumeText.length());
 
-        // 5. 保存简历到RustFS
+        // 6. 保存简历到RustFS
         long storageStart = System.currentTimeMillis();
         String fileKey = storageService.uploadResume(file);
         String fileUrl = storageService.getFileUrl(fileKey);
         log.info("简历已存储到RustFS: {} - 存储耗时: {}ms",
             fileKey, System.currentTimeMillis() - storageStart);
 
-        // 6. 保存简历到数据库（状态为 PENDING）
-        ResumeEntity savedResume = persistenceService.saveResume(file, resumeText, fileKey, fileUrl);
+        // 7. 保存简历到数据库（状态为 PENDING）
+        ResumeEntity savedResume = persistenceService.saveResume(
+            file, resumeText, fileKey, fileUrl, versionGroupId, versionNo, parentId, versionNote);
 
-        // 7. 发送分析任务到 Redis Stream（异步处理）
+        // 8. 发送分析任务到 Redis Stream（异步处理）
         analyzeStreamProducer.sendAnalyzeTask(savedResume.getId(), resumeText);
 
         long totalTime = System.currentTimeMillis() - startTime;
-        log.info("简历上传处理完成: {}, resumeId={} - 总耗时: {}ms (解析+存储+入库)",
-            fileName, savedResume.getId(), totalTime);
+        log.info("简历上传处理完成: {}, resumeId={}, v{} - 总耗时: {}ms (解析+存储+入库)",
+            fileName, savedResume.getId(), savedResume.getVersionNo(), totalTime);
 
-        // 8. 返回结果（状态为 PENDING，前端可轮询获取最新状态）
+        // 9. 返回结果（状态为 PENDING，前端可轮询获取最新状态）
         return Map.of(
             "resume", Map.of(
                 "id", savedResume.getId(),
                 "filename", savedResume.getOriginalFilename(),
-                "analyzeStatus", AsyncTaskStatus.PENDING.name()
+                "analyzeStatus", AsyncTaskStatus.PENDING.name(),
+                "versionNo", savedResume.getVersionNo()
             ),
             "storage", Map.of(
                 "fileKey", fileKey,

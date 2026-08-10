@@ -5,19 +5,16 @@ import interview.guide.common.model.AsyncTaskStatus;
 import java.time.LocalDateTime;
 
 /**
- * 简历列表项DTO
+ * 简历版本摘要DTO（版本链中每一项）
  */
-public record ResumeListItemDTO(
+public record ResumeVersionDTO(
     Long id,
+    Integer versionNo,
     String filename,
-    Long fileSize,
     LocalDateTime uploadedAt,
-    Integer accessCount,
     Integer latestScore,
     LocalDateTime lastAnalyzedAt,
-    Integer interviewCount,
     AsyncTaskStatus analyzeStatus,
-    String analyzeError,
-    Integer versionNo,
-    Long versionGroupId
+    String versionNote,
+    boolean current
 ) {}

@@ -26,6 +26,11 @@ public enum ErrorCode {
     RESUME_FILE_TYPE_NOT_SUPPORTED(2006, "不支持的文件类型"),
     RESUME_ANALYSIS_FAILED(2007, "简历分析失败"),
     RESUME_ANALYSIS_NOT_FOUND(2008, "简历分析结果不存在"),
+
+    // ========== JD匹配模块错误 12xxx ==========
+    JD_MATCH_NOT_FOUND(12001, "JD匹配分析不存在"),
+    JD_MATCH_FAILED(12002, "JD匹配分析失败"),
+    JD_TEXT_EMPTY(12003, "JD文本不能为空"),
     
     // ========== 面试模块错误 3xxx ==========
     INTERVIEW_SESSION_NOT_FOUND(3001, "面试会话不存在"),

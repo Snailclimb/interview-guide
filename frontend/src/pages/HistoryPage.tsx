@@ -219,7 +219,14 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
                                     strokeLinecap="round" strokeLinejoin="round"/>
                         </svg>
                       </div>
-                      <span className="font-medium text-slate-800 dark:text-white">{resume.filename}</span>
+                      <span className="font-medium text-slate-800 dark:text-white flex items-center gap-2">
+                        {resume.filename}
+                        {resume.versionNo !== undefined && resume.versionNo > 1 && (
+                          <span className="px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-300 rounded-md text-xs font-semibold shrink-0">
+                            v{resume.versionNo}
+                          </span>
+                        )}
+                      </span>
                     </div>
                   </td>
                   <td className="px-6 py-5 text-slate-500 dark:text-slate-400">{formatDateOnly(resume.uploadedAt)}</td>

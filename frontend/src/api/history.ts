@@ -15,6 +15,23 @@ export interface ResumeListItem {
   analyzeStatus?: AnalyzeStatus;
   analyzeError?: string;
   storageUrl?: string;
+  versionNo?: number;
+  versionGroupId?: number | null;
+}
+
+/**
+ * 简历版本摘要（版本链中的一项）
+ */
+export interface ResumeVersion {
+  id: number;
+  versionNo: number;
+  filename: string;
+  uploadedAt: string;
+  latestScore?: number | null;
+  lastAnalyzedAt?: string | null;
+  analyzeStatus?: AnalyzeStatus;
+  versionNote?: string | null;
+  current: boolean;
 }
 
 export interface ResumeStats {
@@ -77,6 +94,10 @@ export interface ResumeDetail {
   resumeText: string;
   analyzeStatus?: AnalyzeStatus;
   analyzeError?: string;
+  versionNo?: number;
+  versionGroupId?: number | null;
+  versionNote?: string | null;
+  versions?: ResumeVersion[];
   analyses: AnalysisItem[];
   interviews: InterviewItem[];
 }
@@ -149,5 +170,12 @@ export const historyApi = {
    */
   async reanalyze(id: number): Promise<void> {
     return request.post(`/api/resumes/${id}/reanalyze`);
+  },
+
+  /**
+   * 获取简历所在版本族的版本链
+   */
+  async getResumeVersions(id: number): Promise<ResumeVersion[]> {
+    return request.get<ResumeVersion[]>(`/api/resumes/${id}/versions`);
   },
 };

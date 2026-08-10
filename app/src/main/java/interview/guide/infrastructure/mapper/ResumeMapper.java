@@ -54,7 +54,9 @@ public interface ResumeMapper {
             lastAnalyzedAt,
             interviewCount,
             null,
-            null
+            null,
+            resume.getVersionNo(),
+            resume.resolveVersionGroupId()
         );
     }
 

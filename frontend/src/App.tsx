@@ -24,6 +24,7 @@ const VoiceInterviewPage = lazy(() => import('./pages/VoiceInterviewPage'));
 const VoiceInterviewEvaluationPage = lazy(() => import('./pages/VoiceInterviewEvaluationPage'));
 const InterviewSchedulePage = lazy(() => import('./pages/InterviewSchedulePage'));
 const InterviewHubPage = lazy(() => import('./pages/InterviewHubPage'));
+const JdMatchPage = lazy(() => import('./pages/JdMatchPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const InterviewDetailPanel = lazy(() => import('./components/InterviewDetailPanel'));
 
@@ -246,6 +247,9 @@ function App() {
 
             {/* 面试日程管理 */}
             <Route path="interview-schedule" element={<InterviewSchedulePage />} />
+
+            {/* JD 匹配分析 */}
+            <Route path="jd-match" element={<JdMatchPage />} />
 
             {/* 设置 */}
             <Route path="settings" element={<SettingsPage />} />

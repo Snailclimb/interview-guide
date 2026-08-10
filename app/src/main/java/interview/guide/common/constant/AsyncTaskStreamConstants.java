@@ -120,6 +120,38 @@ public final class AsyncTaskStreamConstants {
      */
     public static final String FIELD_SESSION_ID = "sessionId";
 
+    // ========== JD匹配分析 Stream 配置 ==========
+
+    /**
+     * JD匹配分析 Stream Key
+     */
+    public static final String JD_MATCH_STREAM_KEY = "jdmatch:stream";
+
+    /**
+     * JD匹配分析 Consumer Group 名称
+     */
+    public static final String JD_MATCH_GROUP_NAME = "jdmatch-group";
+
+    /**
+     * JD匹配分析 Consumer 名称前缀
+     */
+    public static final String JD_MATCH_CONSUMER_PREFIX = "jdmatch-consumer-";
+
+    /**
+     * JD匹配分析ID字段
+     */
+    public static final String FIELD_JD_MATCH_ID = "jdMatchId";
+
+    /**
+     * JD标题字段
+     */
+    public static final String FIELD_JD_TITLE = "jdTitle";
+
+    /**
+     * JD文本字段
+     */
+    public static final String FIELD_JD_TEXT = "jdText";
+
     // ========== 语音面试评估 Stream 配置 ==========
 
     /**

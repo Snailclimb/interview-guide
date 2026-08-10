@@ -4,6 +4,7 @@ import interview.guide.common.annotation.RateLimit;
 import interview.guide.common.result.Result;
 import interview.guide.modules.resume.model.ResumeDetailDTO;
 import interview.guide.modules.resume.model.ResumeListItemDTO;
+import interview.guide.modules.resume.model.ResumeVersionDTO;
 import interview.guide.modules.resume.service.ResumeDeleteService;
 import interview.guide.modules.resume.service.ResumeHistoryService;
 import interview.guide.modules.resume.service.ResumeUploadService;
@@ -65,6 +66,38 @@ public class ResumeController {
     public Result<List<ResumeListItemDTO>> getAllResumes() {
         List<ResumeListItemDTO> resumes = historyService.getAllResumes();
         return Result.success(resumes);
+    }
+
+    /**
+     * 上传优化后的简历新版本（异步分析）
+     * 新版本挂到父版本的版本族，旧版本与旧分析全部保留，可在详情页对比新旧评分。
+     *
+     * @param id   父版本简历ID
+     * @param file 优化后的简历文件（支持PDF、DOCX、DOC、TXT、MD等）
+     * @param note 版本说明（可选，如"根据建议优化了项目描述"）
+     * @return 上传结果，分析将异步进行
+     */
+    @PostMapping(value = "/api/resumes/{id}/versions", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 5)
+    @RateLimit(dimension = RateLimit.Dimension.IP, count = 5)
+    public Result<Map<String, Object>> uploadVersion(@PathVariable Long id,
+                                                     @RequestParam("file") MultipartFile file,
+                                                     @RequestParam(value = "note", required = false) String note) {
+        Map<String, Object> result = uploadService.uploadVersion(id, file, note);
+        boolean isDuplicate = (Boolean) result.get("duplicate");
+        if (isDuplicate) {
+            return Result.success("检测到相同简历，已返回历史分析结果", result);
+        }
+        return Result.success(result);
+    }
+
+    /**
+     * 获取简历所在版本族的版本链（含每个版本的评分摘要）
+     */
+    @GetMapping("/api/resumes/{id}/versions")
+    public Result<List<ResumeVersionDTO>> getResumeVersions(@PathVariable Long id) {
+        List<ResumeVersionDTO> versions = historyService.getResumeVersions(id);
+        return Result.success(versions);
     }
 
     /**

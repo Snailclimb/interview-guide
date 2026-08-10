@@ -43,3 +43,17 @@ export interface ApiError {
   detectedType?: string;
   allowedTypes?: string[];
 }
+
+// 简历列表项类型
+export interface ResumeListItem {
+  id: number;
+  filename: string;
+  fileSize: number | null;
+  uploadedAt: string;
+  accessCount: number;
+  latestScore: number | null;
+  lastAnalyzedAt: string | null;
+  interviewCount: number;
+  analyzeStatus: string;
+  analyzeError: string | null;
+}

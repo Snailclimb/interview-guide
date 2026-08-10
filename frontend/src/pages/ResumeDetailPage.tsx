@@ -1,12 +1,16 @@
 import {useCallback, useEffect, useState} from 'react';
-import {useLocation} from 'react-router-dom';
+import {useLocation, useNavigate} from 'react-router-dom';
 import {AnimatePresence, motion} from 'framer-motion';
 import {historyApi, InterviewDetail, ResumeDetail} from '../api/history';
+import {resumeApi} from '../api/resume';
+import {getErrorMessage} from '../api/request';
 import AnalysisPanel from '../components/AnalysisPanel';
 import InterviewPanel from '../components/InterviewPanel';
 import InterviewDetailPanel from '../components/InterviewDetailPanel';
+import VersionUploadModal from '../components/VersionUploadModal';
+import VersionCompareModal from '../components/VersionCompareModal';
 import {formatDateOnly} from '../utils/date';
-import {CheckSquare, ChevronLeft, Clock, Download, MessageSquare, Mic} from 'lucide-react';
+import {CheckSquare, ChevronLeft, Clock, Download, GitCompareArrows, MessageSquare, Mic, Upload} from 'lucide-react';
 
 interface ResumeDetailPageProps {
   resumeId: number;
@@ -19,6 +23,7 @@ type DetailViewType = 'list' | 'interviewDetail';
 
 export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }: ResumeDetailPageProps) {
   const location = useLocation();
+  const navigate = useNavigate();
   const [resume, setResume] = useState<ResumeDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>('analysis');
@@ -28,6 +33,11 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
   const [selectedInterview, setSelectedInterview] = useState<InterviewDetail | null>(null);
   const [loadingInterview, setLoadingInterview] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
+  // 版本迭代：上传新版本 + 版本对比
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const [compareOpen, setCompareOpen] = useState(false);
 
   // 静默加载数据（用于轮询）
   const loadResumeDetailSilent = useCallback(async () => {
@@ -84,6 +94,30 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
     } finally {
       setReanalyzing(false);
     }
+  };
+
+  // 上传优化后的新版本：成功后跳转到新版本详情页（分析在后台进行，详情页自动轮询）
+  const handleUploadVersion = async (file: File, note?: string) => {
+    setUploading(true);
+    setUploadError('');
+    try {
+      const data = await resumeApi.uploadVersion(resumeId, file, note);
+      if (!data.storage || !data.storage.resumeId) {
+        throw new Error('上传失败，请重试');
+      }
+      setUploadModalOpen(false);
+      navigate(`/history/${data.storage.resumeId}`, { replace: true });
+    } catch (err) {
+      setUploadError(getErrorMessage(err));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // 切换版本：跳转到对应版本的详情页
+  const handleSwitchVersion = (versionId: number) => {
+    if (versionId === resumeId) return;
+    navigate(`/history/${versionId}`);
   };
 
   // 检查是否需要自动打开面试详情
@@ -270,18 +304,72 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
             </motion.button>
           )}
           {detailView !== 'interviewDetail' && (
-            <motion.button
-              onClick={() => onStartInterview(resumeId)}
-              className="px-5 py-2.5 bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-xl font-medium shadow-lg shadow-primary-500/30 hover:shadow-xl transition-all flex items-center gap-2"
-              whileHover={{ scale: 1.02, y: -1 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              <Mic className="w-4 h-4" />
-              开始模拟面试
-            </motion.button>
+            <>
+              <motion.button
+                onClick={() => setUploadModalOpen(true)}
+                className="px-5 py-2.5 border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 rounded-xl text-slate-600 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-all flex items-center gap-2"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+              >
+                <Upload className="w-4 h-4" />
+                上传新版本
+              </motion.button>
+              <motion.button
+                onClick={() => onStartInterview(resumeId)}
+                className="px-5 py-2.5 bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-xl font-medium shadow-lg shadow-primary-500/30 hover:shadow-xl transition-all flex items-center gap-2"
+                whileHover={{ scale: 1.02, y: -1 }}
+                whileTap={{ scale: 0.98 }}
+              >
+                <Mic className="w-4 h-4" />
+                开始模拟面试
+              </motion.button>
+            </>
           )}
         </div>
       </div>
+
+      {/* 版本切换条 - 仅在非面试详情时显示 */}
+      {detailView !== 'interviewDetail' && (resume.versions?.length ?? 0) > 0 && (
+        <div className="flex items-center gap-3 mb-6 flex-wrap">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-2 flex items-center gap-1 flex-wrap">
+            {resume.versions!.map((v) => (
+              <motion.button
+                key={v.id}
+                onClick={() => handleSwitchVersion(v.id)}
+                className={`px-3.5 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-colors ${
+                  v.id === resumeId
+                    ? 'bg-primary-500 text-white shadow-md shadow-primary-500/30'
+                    : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'
+                }`}
+                whileHover={{ scale: v.id === resumeId ? 1 : 1.03 }}
+                whileTap={{ scale: 0.97 }}
+                title={v.versionNote || `v${v.versionNo} ${v.filename}`}
+              >
+                <span className="font-bold">v{v.versionNo}</span>
+                {v.latestScore !== null && v.latestScore !== undefined && (
+                  <span className={`text-xs ${v.id === resumeId ? 'text-white/80' : 'text-slate-400'}`}>
+                    {v.latestScore} 分
+                  </span>
+                )}
+                {v.id === resumeId && (
+                  <span className="px-1.5 py-0.5 bg-white/20 rounded text-[10px]">当前</span>
+                )}
+              </motion.button>
+            ))}
+          </div>
+          {(resume.versions?.length ?? 0) >= 2 && (
+            <motion.button
+              onClick={() => setCompareOpen(true)}
+              className="px-4 py-2.5 border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 rounded-xl text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-all flex items-center gap-2"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+            >
+              <GitCompareArrows className="w-4 h-4" />
+              对比版本
+            </motion.button>
+          )}
+        </div>
+      )}
 
       {/* 标签页切换 - 仅在非面试详情时显示 */}
       {detailView !== 'interviewDetail' && (
@@ -355,6 +443,25 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
           </AnimatePresence>
         )}
       </div>
+
+      {/* 上传新版本弹窗 */}
+      <VersionUploadModal
+        open={uploadModalOpen}
+        currentVersionNo={resume.versionNo}
+        currentFilename={resume.filename}
+        uploading={uploading}
+        error={uploadError}
+        onUpload={handleUploadVersion}
+        onCancel={() => setUploadModalOpen(false)}
+      />
+
+      {/* 版本对比弹窗 */}
+      <VersionCompareModal
+        open={compareOpen}
+        versions={resume.versions || []}
+        currentId={resumeId}
+        onClose={() => setCompareOpen(false)}
+      />
     </motion.div>
   );
 }
