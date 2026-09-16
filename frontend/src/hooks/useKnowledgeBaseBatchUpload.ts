@@ -1,95 +1,79 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { knowledgeBaseApi } from '../api/knowledgebase';
+import { getErrorMessage } from '../api/request';
 import {
-  getFileIdentity,
+  canRetryUpload,
   isVectorizationActive,
-  MAX_BATCH_FILES,
   MAX_CONCURRENT_UPLOADS,
-  runWithConcurrency,
+  RateLimitedUploadQueue,
+  selectKnowledgeBaseFiles,
   toBatchUploadStatus,
+  UPLOAD_RETRY_COOLDOWN_MS,
   UPLOAD_START_INTERVAL_MS,
-  validateKnowledgeBaseFile,
+  VECTOR_STATUS_POLL_INTERVAL_MS,
   type BatchUploadItem,
 } from '../pages/knowledgeBaseBatchUpload';
 
 export function useKnowledgeBaseBatchUpload() {
-  const uploadingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const itemsRef = useRef<BatchUploadItem[]>([]);
+  const queueRef = useRef<RateLimitedUploadQueue | null>(null);
+  const retryTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const revectorizingRef = useRef<number | null>(null);
   const [items, setItems] = useState<BatchUploadItem[]>([]);
-  const [batchUploading, setBatchUploading] = useState(false);
   const [selectionNotice, setSelectionNotice] = useState('');
   const [pollError, setPollError] = useState('');
   const [revectorizingId, setRevectorizingId] = useState<number | null>(null);
 
-  const hasUploading = batchUploading || items.some(item => item.status === 'UPLOADING');
-  const uploadCandidates = items.filter(
-    item => item.status === 'QUEUED' || item.status === 'UPLOAD_FAILED',
-  );
-  const trackedIdsKey = useMemo(
-    () => items
-      .filter(item => item.knowledgeBaseId && isVectorizationActive(item.status))
-      .map(item => item.knowledgeBaseId)
-      .sort((a, b) => (a ?? 0) - (b ?? 0))
-      .join(','),
-    [items],
-  );
+  const getQueue = useCallback(() => {
+    if (!queueRef.current) {
+      queueRef.current = new RateLimitedUploadQueue(
+        MAX_CONCURRENT_UPLOADS,
+        UPLOAD_START_INTERVAL_MS,
+      );
+    }
+    return queueRef.current;
+  }, []);
 
-  const updateItem = useCallback(
-    (clientId: string, updater: (item: BatchUploadItem) => BatchUploadItem) => {
-      setItems(current => current.map(item => (
-        item.clientId === clientId ? updater(item) : item
-      )));
+  const updateItems = useCallback(
+    (updater: (current: BatchUploadItem[]) => BatchUploadItem[]) => {
+      const next = updater(itemsRef.current);
+      itemsRef.current = next;
+      if (mountedRef.current) setItems(next);
+      return next;
     },
     [],
   );
 
-  const addFiles = useCallback((fileList: FileList | File[]) => {
-    if (hasUploading) return;
+  const updateItem = useCallback(
+    (clientId: string, updater: (item: BatchUploadItem) => BatchUploadItem) => {
+      updateItems(current => current.map(item => (
+        item.clientId === clientId ? updater(item) : item
+      )));
+    },
+    [updateItems],
+  );
 
-    const incoming = Array.from(fileList);
-    const existingIdentities = new Set(items.map(item => getFileIdentity(item.file)));
-    const accepted: BatchUploadItem[] = [];
-    const rejected: string[] = [];
-    let remainingSlots = Math.max(0, MAX_BATCH_FILES - items.length);
+  const scheduleRetryUnlock = useCallback((clientId: string) => {
+    const currentTimer = retryTimersRef.current.get(clientId);
+    if (currentTimer) clearTimeout(currentTimer);
 
-    incoming.forEach((file, index) => {
-      const identity = getFileIdentity(file);
-      const validationError = validateKnowledgeBaseFile(file);
+    const timer = setTimeout(() => {
+      retryTimersRef.current.delete(clientId);
+      updateItem(clientId, item => ({ ...item, retryAvailableAt: undefined }));
+    }, UPLOAD_RETRY_COOLDOWN_MS);
+    retryTimersRef.current.set(clientId, timer);
+  }, [updateItem]);
 
-      if (existingIdentities.has(identity)) {
-        rejected.push(`${file.name}（已在列表中）`);
-        return;
-      }
-      if (validationError) {
-        rejected.push(`${file.name}（${validationError}）`);
-        return;
-      }
-      if (remainingSlots === 0) {
-        rejected.push(`${file.name}（单批最多 ${MAX_BATCH_FILES} 个文件）`);
-        return;
-      }
-
-      existingIdentities.add(identity);
-      remainingSlots -= 1;
-      accepted.push({
-        clientId: `${Date.now()}-${index}-${identity}`,
-        file,
-        customName: '',
-        status: 'QUEUED',
-      });
-    });
-
-    if (accepted.length > 0) {
-      setItems(current => [...current, ...accepted]);
-    }
-    setSelectionNotice(rejected.length > 0 ? rejected.join('；') : '');
-  }, [hasUploading, items]);
-
-  const uploadItem = useCallback(async (item: BatchUploadItem) => {
+  const uploadItem = useCallback(async (
+    item: Pick<BatchUploadItem, 'clientId' | 'file' | 'customName'>,
+  ) => {
     updateItem(item.clientId, current => ({
       ...current,
       status: 'UPLOADING',
       error: undefined,
+      retryAvailableAt: undefined,
     }));
 
     try {
@@ -97,6 +81,7 @@ export function useKnowledgeBaseBatchUpload() {
         item.file,
         item.customName.trim() || undefined,
       );
+      if (!mountedRef.current) return;
       updateItem(item.clientId, current => ({
         ...current,
         knowledgeBaseId: result.knowledgeBase.id,
@@ -105,72 +90,86 @@ export function useKnowledgeBaseBatchUpload() {
         error: undefined,
       }));
     } catch (error: unknown) {
+      if (!mountedRef.current) return;
       updateItem(item.clientId, current => ({
         ...current,
         status: 'UPLOAD_FAILED',
-        error: error instanceof Error ? error.message : '上传失败，请重试',
+        error: getErrorMessage(error) || '上传失败，请重试',
+        retryAvailableAt: Date.now() + UPLOAD_RETRY_COOLDOWN_MS,
       }));
+      scheduleRetryUnlock(item.clientId);
     }
-  }, [updateItem]);
+  }, [scheduleRetryUnlock, updateItem]);
 
-  const uploadAll = async () => {
-    if (uploadCandidates.length === 0 || uploadingRef.current) return;
+  const enqueueItem = useCallback((clientId: string): boolean => {
+    const item = itemsRef.current.find(current => current.clientId === clientId);
+    if (!item || (item.status !== 'READY' && !canRetryUpload(item))) return false;
 
-    uploadingRef.current = true;
-    setBatchUploading(true);
-    setSelectionNotice('');
-    let nextStartAt = 0;
-
-    try {
-      await runWithConcurrency(
-        uploadCandidates,
-        MAX_CONCURRENT_UPLOADS,
-        async item => {
-          const scheduledAt = Math.max(Date.now(), nextStartAt);
-          nextStartAt = scheduledAt + UPLOAD_START_INTERVAL_MS;
-          const waitTime = scheduledAt - Date.now();
-          if (waitTime > 0) {
-            await new Promise(resolve => window.setTimeout(resolve, waitTime));
-          }
-          await uploadItem(item);
-        },
-      );
-    } finally {
-      uploadingRef.current = false;
-      setBatchUploading(false);
-    }
-  };
-
-  const retryUpload = async (item: BatchUploadItem) => {
-    if (uploadingRef.current) return;
-    uploadingRef.current = true;
-    try {
-      await uploadItem(item);
-    } finally {
-      uploadingRef.current = false;
-    }
-  };
-
-  const revectorize = async (item: BatchUploadItem) => {
-    if (!item.knowledgeBaseId || revectorizingId !== null) return;
-
-    setRevectorizingId(item.knowledgeBaseId);
-    try {
-      await knowledgeBaseApi.revectorize(item.knowledgeBaseId);
-      updateItem(item.clientId, current => ({
+    const accepted = getQueue().enqueue(clientId, () => uploadItem({
+      clientId,
+      file: item.file,
+      customName: item.customName,
+    }));
+    if (accepted) {
+      updateItem(clientId, current => ({
         ...current,
-        status: 'PENDING',
+        status: 'QUEUED',
         error: undefined,
+        retryAvailableAt: undefined,
       }));
+    }
+    return accepted;
+  }, [getQueue, updateItem, uploadItem]);
+
+  const addFiles = useCallback((fileList: FileList | File[]) => {
+    const selection = selectKnowledgeBaseFiles(itemsRef.current, fileList);
+    if (selection.accepted.length > 0) {
+      updateItems(current => [...current, ...selection.accepted]);
+    }
+    setSelectionNotice(selection.rejected.join('；'));
+  }, [updateItems]);
+
+  const enqueueReadyItems = useCallback(() => {
+    setSelectionNotice('');
+    itemsRef.current
+      .filter(item => item.status === 'READY')
+      .forEach(item => enqueueItem(item.clientId));
+  }, [enqueueItem]);
+
+  const retryUpload = useCallback((clientId: string) => {
+    enqueueItem(clientId);
+  }, [enqueueItem]);
+
+  const revectorize = useCallback(async (clientId: string) => {
+    const item = itemsRef.current.find(current => current.clientId === clientId);
+    if (!item?.knowledgeBaseId || revectorizingRef.current !== null) return;
+
+    const knowledgeBaseId = item.knowledgeBaseId;
+    revectorizingRef.current = knowledgeBaseId;
+    setRevectorizingId(knowledgeBaseId);
+    try {
+      await knowledgeBaseApi.revectorize(knowledgeBaseId);
+      updateItems(current => current.map(currentItem => (
+        currentItem.knowledgeBaseId === knowledgeBaseId
+          ? { ...currentItem, status: 'PENDING', error: undefined }
+          : currentItem
+      )));
     } catch (error: unknown) {
-      updateItem(item.clientId, current => ({
+      updateItem(clientId, current => ({
         ...current,
-        error: error instanceof Error ? error.message : '重新向量化失败，请重试',
+        error: getErrorMessage(error) || '重新向量化失败，请重试',
       }));
     } finally {
-      setRevectorizingId(null);
+      revectorizingRef.current = null;
+      if (mountedRef.current) setRevectorizingId(null);
     }
-  };
+  }, [updateItem, updateItems]);
+
+  const trackedIdsKey = useMemo(() => [...new Set(items
+    .filter(item => item.knowledgeBaseId && isVectorizationActive(item.status))
+    .map(item => item.knowledgeBaseId!))]
+    .sort((a, b) => a - b)
+    .join(','), [items]);
 
   useEffect(() => {
     if (!trackedIdsKey) {
@@ -178,73 +177,90 @@ export function useKnowledgeBaseBatchUpload() {
       return undefined;
     }
 
+    const ids = trackedIdsKey.split(',').map(Number);
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const refreshStatuses = async () => {
-      try {
-        const knowledgeBases = await knowledgeBaseApi.getAllKnowledgeBases();
-        if (cancelled) return;
+      const results = await Promise.allSettled(ids.map(id => knowledgeBaseApi.getKnowledgeBase(id)));
+      if (cancelled) return;
 
-        const statusById = new Map(knowledgeBases.map(kb => [kb.id, kb]));
-        setItems(current => current.map(item => {
-          if (!item.knowledgeBaseId || !isVectorizationActive(item.status)) {
-            return item;
-          }
-
-          const knowledgeBase = statusById.get(item.knowledgeBaseId);
-          if (!knowledgeBase) return item;
-
-          return {
-            ...item,
-            status: toBatchUploadStatus(knowledgeBase.vectorStatus),
-            error: knowledgeBase.vectorStatus === 'FAILED'
-              ? knowledgeBase.vectorError || '向量化失败，请重试'
-              : undefined,
-          };
-        }));
-        setPollError('');
-      } catch {
-        if (!cancelled) {
-          setPollError('暂时无法刷新向量化状态，将自动重试');
-        }
-      }
+      const statusById = new Map(results.flatMap(result => (
+        result.status === 'fulfilled' ? [[result.value.id, result.value] as const] : []
+      )));
+      updateItems(current => current.map(item => {
+        if (!item.knowledgeBaseId || !isVectorizationActive(item.status)) return item;
+        const knowledgeBase = statusById.get(item.knowledgeBaseId);
+        if (!knowledgeBase) return item;
+        return {
+          ...item,
+          status: toBatchUploadStatus(knowledgeBase.vectorStatus),
+          error: knowledgeBase.vectorStatus === 'FAILED'
+            ? knowledgeBase.vectorError || '向量化失败，请重试'
+            : undefined,
+        };
+      }));
+      setPollError(results.some(result => result.status === 'rejected')
+        ? '部分向量化状态暂时无法刷新，将自动重试'
+        : '');
+      if (!cancelled) timer = setTimeout(refreshStatuses, VECTOR_STATUS_POLL_INTERVAL_MS);
     };
 
     void refreshStatuses();
-    const timer = window.setInterval(refreshStatuses, 5000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer) clearTimeout(timer);
     };
-  }, [trackedIdsKey]);
+  }, [trackedIdsKey, updateItems]);
 
+  useEffect(() => {
+    mountedRef.current = true;
+    getQueue();
+    return () => {
+      mountedRef.current = false;
+      queueRef.current?.dispose();
+      queueRef.current = null;
+      retryTimersRef.current.forEach(timer => clearTimeout(timer));
+      retryTimersRef.current.clear();
+    };
+  }, [getQueue]);
+
+  const hasUploadActivity = items.some(item => ['QUEUED', 'UPLOADING'].includes(item.status));
   const clearItems = () => {
-    setItems([]);
+    if (hasUploadActivity) return;
+    retryTimersRef.current.forEach(timer => clearTimeout(timer));
+    retryTimersRef.current.clear();
+    updateItems(() => []);
     setSelectionNotice('');
     setPollError('');
   };
 
   return {
     items,
-    hasUploading,
+    hasUploadActivity,
     selectionNotice,
     pollError,
     revectorizingId,
-    uploadCandidatesCount: uploadCandidates.length,
+    readyCount: items.filter(item => item.status === 'READY').length,
     completedCount: items.filter(item => item.status === 'COMPLETED').length,
-    failedCount: items.filter(
-      item => item.status === 'UPLOAD_FAILED' || item.status === 'VECTOR_FAILED',
-    ).length,
+    failedCount: items.filter(item => ['UPLOAD_FAILED', 'VECTOR_FAILED'].includes(item.status)).length,
     addFiles,
     clearItems,
-    removeItem: (clientId: string) => setItems(current => (
-      current.filter(item => item.clientId !== clientId)
-    )),
-    updateCustomName: (clientId: string, customName: string) => updateItem(
-      clientId,
-      item => ({ ...item, customName }),
-    ),
-    uploadAll,
+    enqueueReadyItems,
     retryUpload,
     revectorize,
+    removeItem: (clientId: string) => {
+      const item = itemsRef.current.find(current => current.clientId === clientId);
+      if (!item || !['READY', 'UPLOAD_FAILED'].includes(item.status)) return;
+      const timer = retryTimersRef.current.get(clientId);
+      if (timer) clearTimeout(timer);
+      retryTimersRef.current.delete(clientId);
+      updateItems(current => current.filter(currentItem => currentItem.clientId !== clientId));
+    },
+    updateCustomName: (clientId: string, customName: string) => updateItem(
+      clientId,
+      item => ['READY', 'UPLOAD_FAILED'].includes(item.status)
+        ? { ...item, customName }
+        : item,
+    ),
   };
 }

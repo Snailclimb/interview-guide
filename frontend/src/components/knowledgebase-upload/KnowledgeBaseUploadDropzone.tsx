@@ -2,14 +2,12 @@ import { useState, type ChangeEvent, type DragEvent } from 'react';
 import { AlertCircle, Upload } from 'lucide-react';
 
 interface KnowledgeBaseUploadDropzoneProps {
-  disabled: boolean;
   full: boolean;
   notice: string;
   onFilesSelected: (files: FileList) => void;
 }
 
 export default function KnowledgeBaseUploadDropzone({
-  disabled,
   full,
   notice,
   onFilesSelected,
@@ -26,7 +24,7 @@ export default function KnowledgeBaseUploadDropzone({
   const handleDrop = (event: DragEvent<HTMLLabelElement>) => {
     event.preventDefault();
     setDragOver(false);
-    if (!disabled && !full) {
+    if (!full) {
       onFilesSelected(event.dataTransfer.files);
     }
   };
@@ -36,7 +34,7 @@ export default function KnowledgeBaseUploadDropzone({
       <label
         htmlFor="knowledge-base-files"
         className={`block rounded-2xl border-2 border-dashed p-10 text-center transition-colors ${
-          disabled || full
+          full
             ? 'cursor-not-allowed border-slate-200 bg-slate-50 opacity-70 dark:border-slate-700 dark:bg-slate-800/60'
             : dragOver
               ? 'cursor-pointer border-primary-500 bg-primary-50 dark:bg-primary-900/20'
@@ -44,7 +42,7 @@ export default function KnowledgeBaseUploadDropzone({
         }`}
         onDragOver={(event) => {
           event.preventDefault();
-          if (!disabled && !full) setDragOver(true);
+          if (!full) setDragOver(true);
         }}
         onDragLeave={(event) => {
           event.preventDefault();
@@ -58,7 +56,7 @@ export default function KnowledgeBaseUploadDropzone({
           type="file"
           accept=".pdf,.doc,.docx,.txt,.md"
           multiple
-          disabled={disabled || full}
+          disabled={full}
           onChange={handleFileChange}
         />
         <Upload className={`mx-auto mb-4 h-12 w-12 ${dragOver ? 'text-primary-500' : 'text-slate-400'}`} />
@@ -66,7 +64,7 @@ export default function KnowledgeBaseUploadDropzone({
           点击选择或拖拽多个文件到这里
         </p>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          支持 PDF、DOCX、DOC、TXT、MD，单个文件最大 50MB
+          支持 PDF、DOCX、DOC、TXT、MD，单个文件最大 50MB；上传期间仍可继续添加
         </p>
       </label>
 

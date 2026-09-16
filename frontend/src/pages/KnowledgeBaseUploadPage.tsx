@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowLeft, Loader2, Upload } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Upload } from 'lucide-react';
 
 import KnowledgeBaseUploadDropzone from '../components/knowledgebase-upload/KnowledgeBaseUploadDropzone';
 import KnowledgeBaseUploadList from '../components/knowledgebase-upload/KnowledgeBaseUploadList';
@@ -24,7 +24,6 @@ export default function KnowledgeBaseUploadPage({ onBack }: KnowledgeBaseUploadP
       </div>
 
       <KnowledgeBaseUploadDropzone
-        disabled={batchUpload.hasUploading}
         full={batchUpload.items.length >= MAX_BATCH_FILES}
         notice={batchUpload.selectionNotice}
         onFilesSelected={batchUpload.addFiles}
@@ -41,37 +40,33 @@ export default function KnowledgeBaseUploadPage({ onBack }: KnowledgeBaseUploadP
         items={batchUpload.items}
         completedCount={batchUpload.completedCount}
         failedCount={batchUpload.failedCount}
-        hasUploading={batchUpload.hasUploading}
+        hasUploadActivity={batchUpload.hasUploadActivity}
         revectorizingId={batchUpload.revectorizingId}
         onClear={batchUpload.clearItems}
         onNameChange={batchUpload.updateCustomName}
         onRemove={batchUpload.removeItem}
-        onRetryUpload={item => void batchUpload.retryUpload(item)}
-        onRevectorize={item => void batchUpload.revectorize(item)}
+        onRetryUpload={batchUpload.retryUpload}
+        onRevectorize={clientId => void batchUpload.revectorize(clientId)}
       />
 
       <div className="mt-8 flex flex-wrap justify-center gap-4">
         <button
           type="button"
           onClick={onBack}
-          disabled={batchUpload.hasUploading}
+          disabled={batchUpload.hasUploadActivity}
           className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-6 py-3 font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700"
         >
           <ArrowLeft className="h-4 w-4" />
           返回知识库
         </button>
-        {batchUpload.uploadCandidatesCount > 0 && (
+        {batchUpload.readyCount > 0 && (
           <button
             type="button"
-            onClick={() => void batchUpload.uploadAll()}
-            disabled={batchUpload.hasUploading}
+            onClick={batchUpload.enqueueReadyItems}
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 px-8 py-3 font-semibold text-white shadow-lg shadow-emerald-500/30 transition hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {batchUpload.hasUploading ? (
-              <><Loader2 className="h-5 w-5 animate-spin" />正在上传</>
-            ) : (
-              <><Upload className="h-5 w-5" />上传 {batchUpload.uploadCandidatesCount} 个文件</>
-            )}
+            <Upload className="h-5 w-5" />
+            加入上传队列 {batchUpload.readyCount} 个文件
           </button>
         )}
       </div>
