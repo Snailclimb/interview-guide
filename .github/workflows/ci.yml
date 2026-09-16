@@ -68,6 +68,7 @@ jobs:
           pnpm run test:question-generation
           pnpm run test:interview-capacity
           pnpm run test:interview-entry
+          pnpm run test:knowledge-base-upload
 
       - name: Build frontend
         run: pnpm run build
