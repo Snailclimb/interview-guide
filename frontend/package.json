@@ -11,7 +11,8 @@
     "test:interview-history": "node --test src/pages/interviewHistoryStats.test.ts",
     "test:question-generation": "node --test src/pages/questionGenerationStatus.test.ts",
     "test:interview-capacity": "node --test src/components/knowledgebaseInterview/interviewCapacity.test.ts",
-    "test:interview-entry": "node --test src/pages/interviewEntry.test.ts"
+    "test:interview-entry": "node --test src/pages/interviewEntry.test.ts",
+    "test:knowledge-base-upload": "node --test src/pages/knowledgeBaseBatchUpload.test.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.18",

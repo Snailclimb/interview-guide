@@ -2,7 +2,6 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useOu
 import Layout from './components/Layout';
 import { useEffect, useState, Suspense, lazy } from 'react';
 import { historyApi, type InterviewDetail } from './api/history';
-import type { UploadKnowledgeBaseResponse } from './api/knowledgebase';
 import type { Difficulty } from './components/UnifiedInterviewModal';
 import type { CategoryDTO } from './api/skill';
 import { Loader2 } from 'lucide-react';
@@ -426,16 +425,11 @@ function KnowledgeBaseQueryPageWrapper() {
 function KnowledgeBaseUploadPageWrapper() {
   const navigate = useNavigate();
 
-  const handleUploadComplete = (_result: UploadKnowledgeBaseResponse) => {
-    // 上传完成后返回管理页面
-    navigate('/knowledgebase');
-  };
-
   const handleBack = () => {
     navigate('/knowledgebase');
   };
 
-  return <KnowledgeBaseUploadPage onUploadComplete={handleUploadComplete} onBack={handleBack} />;
+  return <KnowledgeBaseUploadPage onBack={handleBack} />;
 }
 
 // 语音面试页面包装器

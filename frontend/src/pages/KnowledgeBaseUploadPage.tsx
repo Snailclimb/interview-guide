@@ -1,47 +1,80 @@
-import { useState } from 'react';
-import { knowledgeBaseApi } from '../api/knowledgebase';
-import type { UploadKnowledgeBaseResponse } from '../api/knowledgebase';
-import FileUploadCard from '../components/FileUploadCard';
+import { AlertCircle, ArrowLeft, Loader2, Upload } from 'lucide-react';
+
+import KnowledgeBaseUploadDropzone from '../components/knowledgebase-upload/KnowledgeBaseUploadDropzone';
+import KnowledgeBaseUploadList from '../components/knowledgebase-upload/KnowledgeBaseUploadList';
+import { useKnowledgeBaseBatchUpload } from '../hooks/useKnowledgeBaseBatchUpload';
+import { MAX_BATCH_FILES, MAX_CONCURRENT_UPLOADS } from './knowledgeBaseBatchUpload';
 
 interface KnowledgeBaseUploadPageProps {
-  onUploadComplete: (result: UploadKnowledgeBaseResponse) => void;
   onBack: () => void;
 }
 
-export default function KnowledgeBaseUploadPage({ onUploadComplete, onBack }: KnowledgeBaseUploadPageProps) {
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState('');
-
-  const handleUpload = async (file: File, name?: string) => {
-    setUploading(true);
-    setError('');
-
-    try {
-      const data = await knowledgeBaseApi.uploadKnowledgeBase(file, name);
-      onUploadComplete(data);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : '上传失败，请重试';
-      setError(errorMessage);
-      setUploading(false);
-    }
-  };
+export default function KnowledgeBaseUploadPage({ onBack }: KnowledgeBaseUploadPageProps) {
+  const batchUpload = useKnowledgeBaseBatchUpload();
 
   return (
-    <FileUploadCard
-      title="上传知识库"
-      subtitle="上传文档，AI 将基于知识库内容回答您的问题"
-      accept=".pdf,.doc,.docx,.txt,.md"
-      formatHint="支持 PDF、DOCX、DOC、TXT、MD"
-      maxSizeHint="最大 50MB"
-      uploading={uploading}
-      uploadButtonText="开始上传"
-      selectButtonText="选择文件"
-      showNameInput={true}
-      nameLabel="知识库名称（可选）"
-      namePlaceholder="留空则使用文件名"
-      error={error}
-      onUpload={handleUpload}
-      onBack={onBack}
-    />
+    <div className="mx-auto max-w-5xl pb-16 pt-10">
+      <div className="mb-8 text-center">
+        <h1 className="mb-3 text-4xl font-bold tracking-tight text-slate-900 dark:text-white">
+          批量上传知识库
+        </h1>
+        <p className="text-slate-500 dark:text-slate-400">
+          单批最多 {MAX_BATCH_FILES} 个文件，同时上传 {MAX_CONCURRENT_UPLOADS} 个，上传后自动异步向量化
+        </p>
+      </div>
+
+      <KnowledgeBaseUploadDropzone
+        disabled={batchUpload.hasUploading}
+        full={batchUpload.items.length >= MAX_BATCH_FILES}
+        notice={batchUpload.selectionNotice}
+        onFilesSelected={batchUpload.addFiles}
+      />
+
+      {batchUpload.pollError && (
+        <div className="mt-4 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+          <AlertCircle className="h-4 w-4" />
+          {batchUpload.pollError}
+        </div>
+      )}
+
+      <KnowledgeBaseUploadList
+        items={batchUpload.items}
+        completedCount={batchUpload.completedCount}
+        failedCount={batchUpload.failedCount}
+        hasUploading={batchUpload.hasUploading}
+        revectorizingId={batchUpload.revectorizingId}
+        onClear={batchUpload.clearItems}
+        onNameChange={batchUpload.updateCustomName}
+        onRemove={batchUpload.removeItem}
+        onRetryUpload={item => void batchUpload.retryUpload(item)}
+        onRevectorize={item => void batchUpload.revectorize(item)}
+      />
+
+      <div className="mt-8 flex flex-wrap justify-center gap-4">
+        <button
+          type="button"
+          onClick={onBack}
+          disabled={batchUpload.hasUploading}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-6 py-3 font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          返回知识库
+        </button>
+        {batchUpload.uploadCandidatesCount > 0 && (
+          <button
+            type="button"
+            onClick={() => void batchUpload.uploadAll()}
+            disabled={batchUpload.hasUploading}
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 px-8 py-3 font-semibold text-white shadow-lg shadow-emerald-500/30 transition hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {batchUpload.hasUploading ? (
+              <><Loader2 className="h-5 w-5 animate-spin" />正在上传</>
+            ) : (
+              <><Upload className="h-5 w-5" />上传 {batchUpload.uploadCandidatesCount} 个文件</>
+            )}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
