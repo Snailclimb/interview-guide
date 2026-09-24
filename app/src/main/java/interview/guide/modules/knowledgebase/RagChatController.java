@@ -137,6 +137,14 @@ public class RagChatController {
                 sessionService.completeStreamMessage(messageId, fullContent.toString());
                 log.info("RAG 聊天流式完成: sessionId={}, messageId={}", sessionId, messageId);
             })
+            .doOnCancel(() -> {
+                // 客户端中断时保存已生成的部分内容，并结束 AI 消息占位
+                String content = !fullContent.isEmpty()
+                    ? fullContent.toString()
+                    : "【已中断】回答生成已取消";
+                sessionService.completeStreamMessage(messageId, content);
+                log.info("RAG 聊天流式取消: sessionId={}, messageId={}", sessionId, messageId);
+            })
             .doOnError(e -> {
                 // 错误时也保存已接收的内容
                 String content = !fullContent.isEmpty()
