@@ -5,6 +5,7 @@ import interview.guide.common.exception.ErrorCode;
 import interview.guide.infrastructure.file.FileHashService;
 import interview.guide.infrastructure.file.FileStorageService;
 import interview.guide.infrastructure.file.FileValidationService;
+import interview.guide.infrastructure.file.KnowledgeBaseUploadLimiter;
 import interview.guide.modules.knowledgebase.listener.VectorizeStreamProducer;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
 import interview.guide.modules.knowledgebase.model.VectorStatus;
@@ -34,6 +35,7 @@ public class KnowledgeBaseUploadService {
     private final FileValidationService fileValidationService;
     private final FileHashService fileHashService;
     private final VectorizeStreamProducer vectorizeStreamProducer;
+    private final KnowledgeBaseUploadLimiter uploadLimiter;
 
     private static final long MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
     
@@ -46,6 +48,11 @@ public class KnowledgeBaseUploadService {
      * @return 上传结果和存储信息（包含duplicate字段，表示是否为重复上传）
      */
     public Map<String, Object> uploadKnowledgeBase(MultipartFile file, String name, String category) {
+        return uploadLimiter.execute(() -> doUploadKnowledgeBase(file, name, category));
+    }
+
+    private Map<String, Object> doUploadKnowledgeBase(
+        MultipartFile file, String name, String category) {
         // 1. 验证文件
         fileValidationService.validateFile(file, MAX_FILE_SIZE, "知识库");
 

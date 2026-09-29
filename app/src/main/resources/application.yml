@@ -206,6 +206,10 @@ app:
       - application/vnd.openxmlformats-officedocument.wordprocessingml.document
       - text/plain
 
+  # 单个应用实例中同步处理的知识库上传数，不替代请求频率限制
+  knowledge-base-upload:
+    max-concurrent: ${APP_KNOWLEDGE_BASE_UPLOAD_MAX_CONCURRENT:4}
+
   # RustFS (S3兼容) 存储配置
   storage:
     endpoint: ${APP_STORAGE_ENDPOINT:http://localhost:9000}

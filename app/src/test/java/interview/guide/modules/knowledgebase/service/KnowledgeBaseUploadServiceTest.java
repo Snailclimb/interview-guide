@@ -1,8 +1,10 @@
 package interview.guide.modules.knowledgebase.service;
 
+import interview.guide.common.config.KnowledgeBaseUploadProperties;
 import interview.guide.infrastructure.file.FileHashService;
 import interview.guide.infrastructure.file.FileStorageService;
 import interview.guide.infrastructure.file.FileValidationService;
+import interview.guide.infrastructure.file.KnowledgeBaseUploadLimiter;
 import interview.guide.modules.knowledgebase.listener.VectorizeStreamProducer;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
@@ -52,7 +54,8 @@ class KnowledgeBaseUploadServiceTest {
   @BeforeEach
   void setUp() {
     service = new KnowledgeBaseUploadService(parseService, persistenceService, storageService,
-        knowledgeBaseRepository, fileValidationService, fileHashService, vectorizeStreamProducer);
+        knowledgeBaseRepository, fileValidationService, fileHashService, vectorizeStreamProducer,
+        new KnowledgeBaseUploadLimiter(new KnowledgeBaseUploadProperties()));
   }
 
   @Test
