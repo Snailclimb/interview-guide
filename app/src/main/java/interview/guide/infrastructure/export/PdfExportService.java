@@ -2,15 +2,14 @@ package interview.guide.infrastructure.export;
 
 import com.itextpdf.io.font.PdfEncodings;
 import com.itextpdf.kernel.colors.DeviceRgb;
-import com.itextpdf.kernel.font.PdfFont;
-import com.itextpdf.kernel.font.PdfFontFactory;
-import com.itextpdf.kernel.font.PdfFontFactory.EmbeddingStrategy;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfWriter;
 import com.itextpdf.layout.Document;
 import com.itextpdf.layout.element.Cell;
 import com.itextpdf.layout.element.Paragraph;
 import com.itextpdf.layout.element.Table;
+import com.itextpdf.layout.font.FontProvider;
+import com.itextpdf.layout.font.selectorstrategy.BestMatchFontSelectorStrategy.BestMatchFontSelectorStrategyFactory;
 import com.itextpdf.layout.properties.TextAlignment;
 import com.itextpdf.layout.properties.UnitValue;
 import interview.guide.common.exception.BusinessException;
@@ -45,17 +44,29 @@ public class PdfExportService {
     private final ObjectMapper objectMapper;
     
     /**
-     * 创建支持中文的字体
+     * 使用中文字体，并为其缺少的带圈编号等字符提供内嵌回退字体。
      */
-    private PdfFont createChineseFont() {
-        try (var fontStream = getClass().getClassLoader().getResourceAsStream("fonts/ZhuqueFangsong-Regular.ttf")) {
+    private void configureFonts(Document document) {
+        FontProvider fontProvider = new FontProvider();
+        fontProvider.setFontSelectorStrategyFactory(new BestMatchFontSelectorStrategyFactory());
+        registerFont(fontProvider, "fonts/ZhuqueFangsong-Regular.ttf", "report-cjk");
+        registerFont(fontProvider, "fonts/NotoSansSymbols-Regular.ttf", "report-symbols");
+        document.setFontProvider(fontProvider);
+        document.setFontFamily("report-cjk", "report-symbols");
+    }
+
+    private void registerFont(FontProvider fontProvider, String resource, String alias) {
+        try (var fontStream = getClass().getClassLoader().getResourceAsStream(resource)) {
             if (fontStream != null) {
-                byte[] fontBytes = fontStream.readAllBytes();
-                log.debug("使用项目内嵌字体: fonts/ZhuqueFangsong-Regular.ttf");
-                return PdfFontFactory.createFont(fontBytes, PdfEncodings.IDENTITY_H, EmbeddingStrategy.FORCE_EMBEDDED);
+                if (!fontProvider.getFontSet().addFont(
+                        fontStream.readAllBytes(), PdfEncodings.IDENTITY_H, alias)) {
+                    throw new BusinessException(ErrorCode.EXPORT_PDF_FAILED, "字体文件无效，请联系管理员");
+                }
+                log.debug("使用项目内嵌字体: {}", resource);
+                return;
             }
 
-            log.error("未找到字体文件: fonts/ZhuqueFangsong-Regular.ttf");
+            log.error("未找到字体文件: {}", resource);
             throw new BusinessException(ErrorCode.EXPORT_PDF_FAILED, "字体文件缺失，请联系管理员");
             
         } catch (BusinessException e) {
@@ -85,8 +96,7 @@ public class PdfExportService {
         Document document = new Document(pdfDoc);
         
         // 使用支持中文的字体
-        PdfFont font = createChineseFont();
-        document.setFont(font);
+        configureFonts(document);
         
         // 标题
         Paragraph title = new Paragraph("简历分析报告")
@@ -170,8 +180,7 @@ public class PdfExportService {
         Document document = new Document(pdfDoc);
         
         // 使用支持中文的字体
-        PdfFont font = createChineseFont();
-        document.setFont(font);
+        configureFonts(document);
         
         // 标题
         Paragraph title = new Paragraph("模拟面试报告")
