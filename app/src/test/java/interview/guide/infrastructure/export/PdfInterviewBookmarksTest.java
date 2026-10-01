@@ -112,6 +112,30 @@ class PdfInterviewBookmarksTest {
   }
 
   @Test
+  @DisplayName("乱序答案的书签应按数值题号排列，并指向正确的跨页位置")
+  void shouldSortBookmarksWithUnorderedAnswers() throws IOException {
+    InterviewSessionEntity session = session();
+    session.setAnswers(List.of(
+        answer(11, "twelfth-question", "twelfth-answer"),
+        answer(2, "third-question", "third-answer"),
+        answer(5, "sixth-question", "sixth-answer"),
+        answer(0, "first-question", "first-answer\n".repeat(80))));
+
+    try (PdfDocument pdf = read(service.exportInterviewReport(session))) {
+      List<PdfOutline> children = bookmarks(pdf);
+      assertThat(children).extracting(PdfOutline::getTitle).containsExactly(
+          "问题 1：first-question", "问题 3：third-question",
+          "问题 6：sixth-question", "问题 12：twelfth-question");
+      assertDestinationAtHeading(pdf, children.get(0), "问题 1 [综合]");
+      assertDestinationAtHeading(pdf, children.get(1), "问题 3 [综合]");
+      assertDestinationAtHeading(pdf, children.get(2), "问题 6 [综合]");
+      assertDestinationAtHeading(pdf, children.get(3), "问题 12 [综合]");
+      assertThat(destinationPage(pdf, children.get(3)))
+          .isGreaterThan(destinationPage(pdf, children.get(0)));
+    }
+  }
+
+  @Test
   @DisplayName("重复问题应有独立书签和目标位置，不能互相覆盖")
   void shouldKeepSeparateDestinationsForRepeatedQuestions() throws IOException {
     InterviewSessionEntity session = session();

@@ -30,6 +30,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.io.ByteArrayOutputStream;
 import java.time.format.DateTimeFormatter;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -262,7 +263,8 @@ public class PdfExportService {
             document.add(createSectionTitle("问答详情").setDestination(QUESTIONS_DESTINATION));
             int bookmarkIndex = 0;
             
-            for (InterviewAnswerEntity answer : answers) {
+            for (InterviewAnswerEntity answer : answers.stream()
+                .sorted(Comparator.comparingInt(InterviewAnswerEntity::getQuestionIndex)).toList()) {
                 String destination = "interview-question-" + bookmarkIndex++;
                 questions.addOutline(questionBookmarkTitle(answer))
                     .addDestination(new PdfStringDestination(destination));
