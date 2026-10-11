@@ -578,6 +578,8 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 ## 贡献
 
+可选功能：[为支持工具调用的面试客户端启用联网搜索](docs/parallel-search.md)。默认关闭，无需 Parallel API Key。
+
 欢迎提交 Issue 和 Pull Request！
 
 ## 许可证

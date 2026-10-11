@@ -96,6 +96,8 @@ spring:
 # Application custom configuration
 app:
   ai:
+    parallel-search:
+      enabled: ${APP_AI_PARALLEL_SEARCH_ENABLED:false}
     default-provider: dashscope
     default-embedding-provider: dashscope
     embedding-dimensions: ${APP_AI_EMBEDDING_DIMENSIONS:1024}

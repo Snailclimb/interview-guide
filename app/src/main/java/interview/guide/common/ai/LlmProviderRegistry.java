@@ -28,6 +28,7 @@ import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.OpenAiEmbeddingModel;
 import org.springframework.ai.openai.OpenAiEmbeddingOptions;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
@@ -57,6 +58,7 @@ public class LlmProviderRegistry {
     private final ToolCallingManager toolCallingManager;
     private final ObservationRegistry observationRegistry;
     private final ToolCallback interviewSkillsToolCallback;
+    private final ToolCallbackProvider parallelSearchToolCallbackProvider;
 
     @Autowired
     public LlmProviderRegistry(
@@ -66,7 +68,8 @@ public class LlmProviderRegistry {
             ApiKeyEncryptionService encryptionService,
             @Autowired(required = false) ToolCallingManager toolCallingManager,
             @Autowired(required = false) ObservationRegistry observationRegistry,
-            @Autowired(required = false) @Qualifier("interviewSkillsToolCallback") ToolCallback interviewSkillsToolCallback) {
+            @Autowired(required = false) @Qualifier("interviewSkillsToolCallback") ToolCallback interviewSkillsToolCallback,
+            @Autowired(required = false) @Qualifier("parallelSearchToolCallbackProvider") ToolCallbackProvider parallelSearchToolCallbackProvider) {
         this.properties = properties;
         this.providerRepository = providerRepository;
         this.globalSettingRepository = globalSettingRepository;
@@ -74,6 +77,19 @@ public class LlmProviderRegistry {
         this.toolCallingManager = toolCallingManager;
         this.observationRegistry = observationRegistry;
         this.interviewSkillsToolCallback = interviewSkillsToolCallback;
+        this.parallelSearchToolCallbackProvider = parallelSearchToolCallbackProvider;
+    }
+
+    public LlmProviderRegistry(
+            LlmProviderProperties properties,
+            LlmProviderRepository providerRepository,
+            LlmGlobalSettingRepository globalSettingRepository,
+            ApiKeyEncryptionService encryptionService,
+            ToolCallingManager toolCallingManager,
+            ObservationRegistry observationRegistry,
+            ToolCallback interviewSkillsToolCallback) {
+        this(properties, providerRepository, globalSettingRepository, encryptionService,
+            toolCallingManager, observationRegistry, interviewSkillsToolCallback, null);
     }
 
     public LlmProviderRegistry(
@@ -176,6 +192,9 @@ public class LlmProviderRegistry {
         if (interviewSkillsToolCallback != null) {
             builder.defaultTools(interviewSkillsToolCallback);
         }
+        if (parallelSearchToolCallbackProvider != null) {
+            builder.defaultTools(parallelSearchToolCallbackProvider);
+        }
         List<Advisor> advisors = buildDefaultAdvisors(providerId);
         if (!advisors.isEmpty()) {
             builder.defaultAdvisors(advisors);
@@ -199,6 +218,9 @@ public class LlmProviderRegistry {
         ChatClient.Builder builder = ChatClient.builder(chatModel);
         if (interviewSkillsToolCallback != null) {
             builder.defaultTools(interviewSkillsToolCallback);
+        }
+        if (parallelSearchToolCallbackProvider != null) {
+            builder.defaultTools(parallelSearchToolCallbackProvider);
         }
         List<Advisor> advisors = new ArrayList<>();
         if (toolCallingManager != null) {
