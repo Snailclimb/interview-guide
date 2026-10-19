@@ -1,6 +1,7 @@
 package interview.guide.modules.resume.listener;
 
 import interview.guide.common.exception.BusinessException;
+import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.transaction.TransactionalExecutor;
 import interview.guide.infrastructure.redis.RedisService;
 import interview.guide.modules.interview.model.ResumeAnalysisResponse;
@@ -128,6 +129,24 @@ class AnalyzeStreamTest {
       verify(persistenceService).saveAnalysisIfOwned(
           org.mockito.ArgumentMatchers.eq(5L), org.mockito.ArgumentMatchers.eq("attempt-1"),
           any(ResumeAnalysisResponse.class));
+    }
+
+    @Test
+    @DisplayName("分析失败时向上抛出，且不落库占位报告")
+    void shouldPropagateGradingFailureAndNotPersist() {
+      when(resumeRepository.findById(5L))
+          .thenReturn(Optional.of(resume("数据库中的简历正文", "resume/5", "a.pdf")));
+      // 分析在 LLM 调用处失败，尚未走到心跳，因此不需要 stub 心跳返回
+      when(gradingService.analyzeResume("数据库中的简历正文"))
+          .thenThrow(new BusinessException(ErrorCode.RESUME_ANALYSIS_FAILED, "简历分析失败"));
+
+      // 失败必须抛给基类触发重试；若在此处吞掉并落库，状态会被误标为 COMPLETED
+      assertThatThrownBy(() -> consumer.processBusiness(payload()))
+          .isInstanceOf(BusinessException.class)
+          .hasMessageContaining("简历分析失败");
+
+      verify(persistenceService, never()).saveAnalysisIfOwned(
+          anyLong(), anyString(), any(ResumeAnalysisResponse.class));
     }
 
     @Test

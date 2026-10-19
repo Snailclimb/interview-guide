@@ -4,7 +4,6 @@ import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.ai.StructuredOutputInvoker;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
-import interview.guide.common.log.ErrorLogSanitizer;
 import interview.guide.modules.interview.model.ResumeAnalysisResponse;
 import interview.guide.modules.interview.model.ResumeAnalysisResponse.ScoreDetail;
 import interview.guide.modules.interview.model.ResumeAnalysisResponse.Suggestion;
@@ -81,57 +80,51 @@ public class ResumeGradingService {
     
     /**
      * 分析简历并返回评分和建议
-     * 
+     *
+     * <p>失败时直接向上抛出 {@link BusinessException}（{@code RESUME_ANALYSIS_FAILED}），
+     * 不再降级成 0 分的占位结果：占位结果会让
+     * {@link interview.guide.modules.resume.listener.AnalyzeStreamConsumer} 把任务记为
+     * COMPLETED，Stream 重试（{@code retryMessage}）与恢复调度
+     * （{@code ResumeAnalysisRecoveryScheduler}）因此永远不会触发，
+     * 用户看到的却是一份虚假的 0 分报告。
+     *
      * @param resumeText 简历文本内容
      * @return 分析结果
      */
     public ResumeAnalysisResponse analyzeResume(String resumeText) {
         log.info("开始分析简历，文本长度: {} 字符", resumeText.length());
         
-        try {
-            // 加载系统提示词
-            String systemPrompt = systemPromptTemplate.render();
-            
-            // 加载用户提示词并填充变量
-            Map<String, Object> variables = new HashMap<>();
-            variables.put("resumeText", resumeText);
-            String userPrompt = userPromptTemplate.render(variables);
-            
-            // 添加格式指令到系统提示词
-            String systemPromptWithFormat = systemPrompt + "\n\n" + outputConverter.getFormat();
-            
-            // 调用AI
-            ResumeAnalysisResponseDTO dto;
-            try {
-                ChatClient chatClient = llmProviderRegistry.getDefaultChatClient();
-                dto = structuredOutputInvoker.invoke(
-                    chatClient,
-                    systemPromptWithFormat,
-                    userPrompt,
-                    outputConverter,
-                    ErrorCode.RESUME_ANALYSIS_FAILED,
-                    "简历分析失败：",
-                    "简历分析",
-                    log
-                );
-                log.debug("AI响应解析成功: overallScore={}", dto.overallScore());
-            } catch (Exception e) {
-                log.error("简历分析AI调用失败: {}", ErrorLogSanitizer.summarize(e),
-                    ErrorLogSanitizer.forLogging(e));
-                throw new BusinessException(ErrorCode.RESUME_ANALYSIS_FAILED, "简历分析失败");
-            }
-            
-            // 转换为业务对象
-            ResumeAnalysisResponse result = convertToResponse(dto, resumeText);
-            log.info("简历分析完成，总分: {}", result.overallScore());
-            
-            return result;
-            
-        } catch (Exception e) {
-            log.error("简历分析失败: {}", ErrorLogSanitizer.summarize(e),
-                ErrorLogSanitizer.forLogging(e));
-            return createErrorResponse(resumeText, e.getClass().getSimpleName());
-        }
+        // 加载系统提示词
+        String systemPrompt = systemPromptTemplate.render();
+        
+        // 加载用户提示词并填充变量
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("resumeText", resumeText);
+        String userPrompt = userPromptTemplate.render(variables);
+        
+        // 添加格式指令到系统提示词
+        String systemPromptWithFormat = systemPrompt + "\n\n" + outputConverter.getFormat();
+        
+        // 调用AI：StructuredOutputInvoker 内部已按配置重试，重试耗尽后会抛出携带
+        // RESUME_ANALYSIS_FAILED 的 BusinessException，这里不再包裹一层无意义的 catch
+        ChatClient chatClient = llmProviderRegistry.getDefaultChatClient();
+        ResumeAnalysisResponseDTO dto = structuredOutputInvoker.invoke(
+            chatClient,
+            systemPromptWithFormat,
+            userPrompt,
+            outputConverter,
+            ErrorCode.RESUME_ANALYSIS_FAILED,
+            "简历分析失败：",
+            "简历分析",
+            log
+        );
+        log.debug("AI响应解析成功: overallScore={}", dto.overallScore());
+        
+        // 转换为业务对象
+        ResumeAnalysisResponse result = convertToResponse(dto, resumeText);
+        log.info("简历分析完成，总分: {}", result.overallScore());
+        
+        return result;
     }
     
     /**
@@ -156,25 +149,6 @@ public class ResumeGradingService {
             dto.summary(),
             dto.strengths(),
             suggestions,
-            originalText
-        );
-    }
-    
-    /**
-     * 创建错误响应
-     */
-    private ResumeAnalysisResponse createErrorResponse(String originalText, String errorMessage) {
-        return new ResumeAnalysisResponse(
-            0,
-            new ScoreDetail(0, 0, 0, 0, 0),
-            "分析过程中出现错误: " + errorMessage,
-            List.of(),
-            List.of(new Suggestion(
-                "系统",
-                "高",
-                "AI分析服务暂时不可用",
-                "请稍后重试，或检查AI服务是否正常运行"
-            )),
             originalText
         );
     }
