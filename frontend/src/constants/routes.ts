@@ -5,6 +5,7 @@ export const ROUTES = {
   resumeUpload: '/upload',
   resumeHistory: '/history',
   knowledgebaseUpload: '/knowledgebase/upload',
+  agent: '/agent',
 } as const;
 
 export const ROUTE_PATTERNS = {

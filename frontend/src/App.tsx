@@ -4,7 +4,7 @@ import { useEffect, useState, Suspense, lazy } from 'react';
 import { historyApi, type InterviewDetail } from './api/history';
 import type { Difficulty } from './components/UnifiedInterviewModal';
 import type { CategoryDTO } from './api/skill';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Sparkles } from 'lucide-react';
 import { ROUTE_PATTERNS, ROUTES } from './constants/routes';
 
 // Lazy load components
@@ -25,6 +25,7 @@ const InterviewSchedulePage = lazy(() => import('./pages/InterviewSchedulePage')
 const InterviewHubPage = lazy(() => import('./pages/InterviewHubPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const InterviewDetailPanel = lazy(() => import('./components/InterviewDetailPanel'));
+const AgentPage = lazy(() => import('./pages/AgentPage'));
 
 // Loading component
 const Loading = () => (
@@ -201,6 +202,9 @@ function App() {
             {/* 面试中心 */}
             <Route path="interview-hub" element={<InterviewHubPage />} />
 
+            {/* AI 面试教练 */}
+            <Route path="agent" element={<AgentPage />} />
+
             {/* 面试记录列表 */}
             <Route path="interviews" element={<InterviewHistoryWrapper />} />
 
@@ -376,6 +380,13 @@ function InterviewDetailPageWrapper() {
         <h1 className="text-xl font-bold text-slate-900 dark:text-white">
           面试详情 #{sessionId!.slice(-8)}
         </h1>
+         <button
+           onClick={() => navigate(`${ROUTES.agent}?sessionId=${encodeURIComponent(sessionId!)}`)}
+           className="btn-primary inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm ml-auto"
+         >
+           <Sparkles className="w-4 h-4" />
+           AI 复盘
+         </button>
       </div>
       <InterviewDetailPanel interview={interview} />
     </div>
