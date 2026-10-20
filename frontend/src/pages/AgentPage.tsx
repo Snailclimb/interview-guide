@@ -21,10 +21,10 @@ import {
   UserRound,
   XCircle,
 } from 'lucide-react';
+import { agentApi } from '../api/agent';
 import { historyApi, type InterviewDetail } from '../api/history';
 import { getErrorMessage } from '../api/request';
-
-type AgentGoal = 'review' | 'practice' | 'plan';
+import type { AgentGoal, AgentHistoryMessage, AgentStreamEvent } from '../types/agent';
 type RunStatus = 'idle' | 'running' | 'completed' | 'error';
 type StepStatus = 'pending' | 'running' | 'completed';
 
@@ -76,6 +76,7 @@ export default function AgentPage() {
   const [loadingContext, setLoadingContext] = useState(Boolean(sessionId));
   const [contextError, setContextError] = useState('');
   const [runStatus, setRunStatus] = useState<RunStatus>('idle');
+  const [runError, setRunError] = useState('');
   const [steps, setSteps] = useState<AgentStep[]>(createInitialSteps);
   const [messages, setMessages] = useState<AgentMessage[]>([
     {
@@ -85,7 +86,7 @@ export default function AgentPage() {
     },
   ]);
   const [input, setInput] = useState('');
-  const timersRef = useRef<number[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!sessionId) {
@@ -113,7 +114,7 @@ export default function AgentPage() {
   }, [sessionId]);
 
   useEffect(() => () => {
-    timersRef.current.forEach((timer) => window.clearTimeout(timer));
+    abortRef.current?.abort();
   }, []);
 
   const selectedGoal = useMemo(
@@ -121,62 +122,90 @@ export default function AgentPage() {
     [goal],
   );
 
-  const clearTimers = () => {
-    timersRef.current.forEach((timer) => window.clearTimeout(timer));
-    timersRef.current = [];
-  };
-
-  const buildCompletionMessage = () => {
-    const scoreText = interview?.overallScore == null ? '本场暂时没有可用总分' : `本场总分为 ${interview.overallScore} 分`;
-    const improvement = interview?.improvements?.[0] ?? '建议优先练习回答结构，并为每个结论补充具体例子。';
-    return `${scoreText}。我已经完成一轮前端交互预览：${selectedGoal.title}。下一步可以围绕“${improvement}”继续追问和训练。`;
-  };
-
-  const startRun = () => {
-    clearTimers();
-    setRunStatus('running');
-    setSteps(createInitialSteps());
-    setMessages((current) => [
-      ...current,
-      { id: Date.now(), role: 'user', content: `开始${selectedGoal.title}` },
-      { id: Date.now() + 1, role: 'assistant', content: `收到，我会先${selectedGoal.description}。当前是前端交互预览，流程完成后即可接入真实 Agent API。` },
-    ]);
-
-    createInitialSteps().forEach((_, index) => {
-      const timer = window.setTimeout(() => {
-        setSteps((current) => current.map((item, itemIndex) => ({
-          ...item,
-          status: itemIndex < index ? 'completed' : itemIndex === index ? 'running' : 'pending',
-        })));
-      }, index * 850);
-      timersRef.current.push(timer);
+  const updateStep = (event: AgentStreamEvent) => {
+    if (event.type !== 'step' || !event.step || !event.status) return;
+    setSteps((current) => {
+      const stepIndex = current.findIndex((step) => step.id === event.step);
+      if (stepIndex < 0) return current;
+      return current.map((step, index) => ({
+        ...step,
+        status: event.status === 'running'
+          ? index < stepIndex ? 'completed' : index === stepIndex ? 'running' : 'pending'
+          : index === stepIndex ? event.status! : step.status,
+      }));
     });
-
-    const finishTimer = window.setTimeout(() => {
-      setSteps((current) => current.map((item) => ({ ...item, status: 'completed' })));
-      setRunStatus('completed');
-      setMessages((current) => [
-        ...current,
-        { id: Date.now(), role: 'assistant', content: buildCompletionMessage() },
-      ]);
-    }, 3 * 850 + 500);
-    timersRef.current.push(finishTimer);
   };
 
-  const sendMessage = () => {
-    const content = input.trim();
-    if (!content || runStatus === 'running') return;
+  const streamAgentMessage = (content: string) => {
+    if (!sessionId || !interview || !content || runStatus === 'running') {
+      if (!sessionId || !interview) setRunError('请先从面试详情页进入，并加载一份面试报告');
+      return;
+    }
+
+    const history: AgentHistoryMessage[] = messages.map(({ role, content: messageContent }) => ({
+      role,
+      content: messageContent,
+    }));
+    const userMessageId = Date.now();
+    const assistantMessageId = userMessageId + 1;
+    const controller = new AbortController();
+    abortRef.current?.abort();
+    abortRef.current = controller;
+
     setInput('');
+    setRunError('');
+    setRunStatus('running');
+    setSteps(createInitialSteps().map((step, index) => ({
+      ...step,
+      status: index === 0 ? 'running' : 'pending',
+    })));
     setMessages((current) => [
       ...current,
-      { id: Date.now(), role: 'user', content },
-      {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: '已记录这个问题。当前页面先展示 Agent 的交互骨架；接入后端模型后，这里会根据面试上下文返回实时回答。',
-      },
+      { id: userMessageId, role: 'user', content },
+      { id: assistantMessageId, role: 'assistant', content: '' },
     ]);
+
+    void agentApi.streamMessage(
+      sessionId,
+      { goal, message: content, history },
+      {
+        onEvent: (event) => {
+          updateStep(event);
+          if (event.type === 'delta' && event.content) {
+            setMessages((current) => current.map((message) => message.id === assistantMessageId
+              ? { ...message, content: message.content + event.content }
+              : message));
+          }
+          if (event.type === 'error') {
+            const message = event.message || 'Agent 执行失败，请稍后重试';
+            setRunError(message);
+            setRunStatus('error');
+            setMessages((current) => current.map((item) => item.id === assistantMessageId
+              ? { ...item, content: message }
+              : item));
+          }
+          if (event.type === 'done') {
+            setRunStatus((current) => current === 'running' ? 'completed' : current);
+          }
+        },
+        onComplete: () => setRunStatus((current) => current === 'running' ? 'completed' : current),
+        onError: (error) => {
+          if (controller.signal.aborted) return;
+          const message = getErrorMessage(error) || 'Agent 执行失败，请稍后重试';
+          setRunError(message);
+          setRunStatus('error');
+          setMessages((current) => current.map((item) => item.id === assistantMessageId
+            ? { ...item, content: message }
+            : item));
+        },
+      },
+      controller.signal,
+    );
   };
+
+  const startRun = () => streamAgentMessage(`开始${selectedGoal.title}`);
+
+  const sendMessage = () => streamAgentMessage(input.trim());
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -203,7 +232,7 @@ export default function AgentPage() {
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold text-slate-900 dark:text-white">AI 面试教练</h1>
               <span className="status-badge bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-300 border-primary-100 dark:border-primary-800/50">
-                前端交互预览
+                Agent 已接入
               </span>
             </div>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">把面试报告转成可执行的复盘和训练动作</p>
@@ -314,7 +343,7 @@ export default function AgentPage() {
               <div>
                 <p className="text-xs font-semibold text-primary-500 uppercase tracking-wider mb-1">Workflow</p>
                 <h2 className="text-lg font-semibold dark-text">Agent 工作流</h2>
-                <p className="text-sm dark-text-muted mt-1">先把任务拆成可观察的步骤，再接入真实模型执行。</p>
+                <p className="text-sm dark-text-muted mt-1">工作流状态和模型回答由后端 Agent 实时推送。</p>
               </div>
               <Sparkles className="w-5 h-5 text-primary-500" />
             </div>
@@ -342,14 +371,14 @@ export default function AgentPage() {
             <div className="flex flex-wrap items-center gap-3 pt-2">
               <button
                 onClick={startRun}
-                disabled={runStatus === 'running'}
+                disabled={!sessionId || !interview || runStatus === 'running'}
                 className="btn-primary inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {runStatus === 'running' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                {runStatus === 'running' ? 'Agent 执行中' : runStatus === 'completed' ? '再次运行' : '开始执行'}
+                {runStatus === 'running' ? 'Agent 执行中' : runStatus === 'completed' ? '再次运行' : runStatus === 'error' ? '重试执行' : '开始执行'}
               </button>
-              {runStatus === 'completed' && (
-                <button onClick={() => { clearTimers(); setRunStatus('idle'); setSteps(createInitialSteps()); }} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm">
+              {(runStatus === 'completed' || runStatus === 'error') && (
+                <button onClick={() => { setRunStatus('idle'); setRunError(''); setSteps(createInitialSteps()); }} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm">
                   <RotateCcw className="w-4 h-4" />
                   清空流程
                 </button>
@@ -359,6 +388,7 @@ export default function AgentPage() {
                 预计 1 分钟内完成
               </span>
             </div>
+            {runError && <p className="text-sm text-rose-500 dark:text-rose-300 mt-3">{runError}</p>}
           </section>
         </div>
 
@@ -425,14 +455,14 @@ export default function AgentPage() {
               />
               <button
                 onClick={sendMessage}
-                disabled={!input.trim() || runStatus === 'running'}
+                disabled={!input.trim() || !sessionId || !interview || runStatus === 'running'}
                 className="absolute right-3 bottom-3 p-2 rounded-lg text-primary-600 dark:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 aria-label="发送消息"
               >
                 <Send className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-2">Enter 发送，Shift + Enter 换行 · 当前为前端交互预览</p>
+            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-2">Enter 发送，Shift + Enter 换行 · 回答使用系统默认模型</p>
           </div>
         </section>
       </div>
