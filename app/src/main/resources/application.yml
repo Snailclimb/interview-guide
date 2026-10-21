@@ -96,8 +96,8 @@ spring:
 # Application custom configuration
 app:
   ai:
-    default-provider: dashscope
-    default-embedding-provider: dashscope
+    default-provider: ${APP_AI_DEFAULT_PROVIDER:dashscope}
+    default-embedding-provider: ${APP_AI_DEFAULT_EMBEDDING_PROVIDER:dashscope}
     embedding-dimensions: ${APP_AI_EMBEDDING_DIMENSIONS:1024}
     security:
       api-key-encryption-key: ${APP_AI_CONFIG_ENCRYPTION_KEY:}
@@ -110,6 +110,20 @@ app:
     agent-utils:
       skills-root: ${APP_AI_AGENT_UTILS_SKILLS_ROOT:classpath:skills}
     providers:
+      # Pixel API OpenAI 兼容聊天 Provider（API Key 只通过环境变量注入）
+      pixel:
+        base-url: ${PROVIDER_PIXEL_BASE_URL:https://ai-pixel.online/v1}
+        api-key: ${PROVIDER_PIXEL_API_KEY:}
+        model: ${PROVIDER_PIXEL_MODEL:gpt-5.6-luna}
+        supports-embedding: false
+      # 阿里云百炼 Embedding Provider（1024 维，匹配 pgvector 表结构）
+      qwen-embedding:
+        base-url: ${PROVIDER_QWEN_EMBEDDING_BASE_URL:https://ws-d2aznuotm7u105va.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
+        api-key: ${PROVIDER_QWEN_EMBEDDING_API_KEY:}
+        model: ${PROVIDER_QWEN_EMBEDDING_MODEL:qwen3.7-text-embedding-flash}
+        embedding-model: ${PROVIDER_QWEN_EMBEDDING_MODEL:qwen3.7-text-embedding-flash}
+        embedding-dimensions: 1024
+        supports-embedding: true
       dashscope:
         base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
         api-key: ${AI_BAILIAN_API_KEY}

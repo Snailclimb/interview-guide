@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   ArrowLeft,
   Bot,
@@ -24,6 +26,7 @@ import {
 import { agentApi } from '../api/agent';
 import { historyApi, type InterviewDetail } from '../api/history';
 import { getErrorMessage } from '../api/request';
+import CodeBlock from '../components/CodeBlock';
 import type { AgentGoal, AgentHistoryMessage, AgentSource, AgentStreamEvent } from '../types/agent';
 type RunStatus = 'idle' | 'running' | 'completed' | 'error';
 type StepStatus = 'pending' | 'running' | 'completed';
@@ -40,6 +43,9 @@ interface AgentMessage {
   role: 'assistant' | 'user';
   content: string;
 }
+
+const MAX_HISTORY_MESSAGES = 8;
+const MAX_HISTORY_MESSAGE_CHARS = 2_800;
 
 const goalOptions: Array<{ id: AgentGoal; title: string; description: string }> = [
   { id: 'review', title: '复盘本场面试', description: '分析表现，提炼优势和改进点' },
@@ -66,6 +72,48 @@ function getScoreTone(score: number | null | undefined) {
   if (score >= 80) return 'text-emerald-500';
   if (score >= 60) return 'text-amber-500';
   return 'text-rose-500';
+}
+
+function buildAgentHistory(messages: AgentMessage[]): AgentHistoryMessage[] {
+  return messages
+    .filter((message) => message.content.trim().length > 0)
+    .slice(-MAX_HISTORY_MESSAGES)
+    .map(({ role, content }) => ({
+      role,
+      content: content.length <= MAX_HISTORY_MESSAGE_CHARS
+        ? content
+        : `${content.slice(0, MAX_HISTORY_MESSAGE_CHARS - 12)}\n[历史回答已截断]`,
+    }));
+}
+
+function AgentMarkdown({ content }: { content: string }) {
+  return (
+    <div className="prose prose-slate dark:prose-invert prose-sm max-w-none">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          code: ({ className, children }) => {
+            const match = /language-(\w+)/.exec(className || '');
+            if (!match) {
+              return (
+                <code className="bg-slate-200/80 dark:bg-slate-600 text-primary-600 dark:text-primary-300 px-1.5 py-0.5 rounded-md text-sm font-normal">
+                  {children}
+                </code>
+              );
+            }
+            return (
+              <CodeBlock language={match[1]}>
+                {String(children).replace(/\n$/, '')}
+              </CodeBlock>
+            );
+          },
+          pre: ({ children }) => <>{children}</>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 export default function AgentPage() {
@@ -144,10 +192,7 @@ export default function AgentPage() {
       return;
     }
 
-    const history: AgentHistoryMessage[] = messages.map(({ role, content: messageContent }) => ({
-      role,
-      content: messageContent,
-    }));
+    const history = buildAgentHistory(messages);
     const userMessageId = Date.now();
     const assistantMessageId = userMessageId + 1;
     const controller = new AbortController();
@@ -442,7 +487,11 @@ export default function AgentPage() {
                     ? 'bg-slate-100 dark:bg-slate-700/80 text-slate-700 dark:text-slate-200 rounded-tl-md'
                     : 'bg-primary-600 text-white rounded-tr-md'
                     }`}>
-                    {message.content}
+                    {message.role === 'assistant' ? (
+                      <AgentMarkdown content={message.content} />
+                    ) : (
+                      <p className="whitespace-pre-wrap">{message.content}</p>
+                    )}
                   </div>
                   {message.role === 'user' && (
                     <div className="w-8 h-8 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 flex items-center justify-center shrink-0">
