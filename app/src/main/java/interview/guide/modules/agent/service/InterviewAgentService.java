@@ -87,73 +87,78 @@ public class InterviewAgentService {
             }
             Sinks.One<Void> cancellationSignal = Sinks.one();
             cancellationSignals.put(sessionId, cancellationSignal);
+            Long preparedAssistantMessageId = null;
             try {
                 AgentContextService.AgentContext context = agentContextService.build(sessionId, request);
-            String message = promptSanitizer.sanitize(request.message());
-            List<AgentHistoryMessage> persistedHistory = agentConversationService.loadHistory(sessionId);
-            List<AgentHistoryMessage> historyMessages = AgentHistoryPolicy.normalize(
-                persistedHistory.isEmpty() ? request.history() : persistedHistory
-            );
+                String message = promptSanitizer.sanitize(request.message());
+                List<AgentHistoryMessage> persistedHistory = agentConversationService.loadHistory(sessionId);
+                List<AgentHistoryMessage> historyMessages = AgentHistoryPolicy.normalize(
+                    persistedHistory.isEmpty() ? request.history() : persistedHistory
+                );
 
-            AgentConversationService.PreparedMessage preparedMessage = agentConversationService.prepareMessage(
-                sessionId,
-                promptSanitizer.sanitize(request.goal()),
-                request.providerId(),
-                message
-            );
+                AgentConversationService.PreparedMessage preparedMessage = agentConversationService.prepareMessage(
+                    sessionId,
+                    promptSanitizer.sanitize(request.goal()),
+                    request.providerId(),
+                    message
+                );
+                preparedAssistantMessageId = preparedMessage.assistantMessageId();
 
-            Map<String, Object> fixedContextVariables = Map.of(
-                "context", promptSanitizer.wrapWithStableDelimiters(
-                    "interview-report", context.interviewReport()),
-                "skill", promptSanitizer.wrapWithStableDelimiters(
-                    "skill-reference", context.skillReference())
-            );
-            Map<String, Object> variables = Map.of(
-                "goal", promptSanitizer.sanitize(request.goal()),
-                "question", promptSanitizer.wrapWithDelimiters("user-message", message),
-                "rag", promptSanitizer.wrapWithDelimiters("rag-context", context.ragContext())
-            );
+                Map<String, Object> fixedContextVariables = Map.of(
+                    "context", promptSanitizer.wrapWithStableDelimiters(
+                        "interview-report", context.interviewReport()),
+                    "skill", promptSanitizer.wrapWithStableDelimiters(
+                        "skill-reference", context.skillReference())
+                );
+                Map<String, Object> variables = Map.of(
+                    "goal", promptSanitizer.sanitize(request.goal()),
+                    "question", promptSanitizer.wrapWithDelimiters("user-message", message),
+                    "rag", promptSanitizer.wrapWithDelimiters("rag-context", context.ragContext())
+                );
 
-            String systemPrompt = systemPromptTemplate.render()
-                + PromptSecurityConstants.ANTI_INJECTION_INSTRUCTION
-                + "\n\n"
-                + fixedContextPromptTemplate.render(fixedContextVariables);
-            String userPrompt = userPromptTemplate.render(variables);
-            List<Message> history = buildModelHistory(historyMessages);
-            Flux<AgentStreamEvent> response = streamModelWithRetry(
-                providerId -> {
-                    ChatClient chatClient = llmProviderRegistry.getAgentChatClient(providerId);
-                    return () -> {
-                        var promptSpec = chatClient.prompt().system(systemPrompt);
-                        if (!history.isEmpty()) {
-                            promptSpec = promptSpec.messages(history);
-                        }
-                        return promptSpec.user(userPrompt).stream().content();
-                    };
-                },
-                request.providerId(),
-                sessionId,
-                preparedMessage.assistantMessageId(),
-                context.sources()
-            );
+                String systemPrompt = systemPromptTemplate.render()
+                    + PromptSecurityConstants.ANTI_INJECTION_INSTRUCTION
+                    + "\n\n"
+                    + fixedContextPromptTemplate.render(fixedContextVariables);
+                String userPrompt = userPromptTemplate.render(variables);
+                List<Message> history = buildModelHistory(historyMessages);
+                Flux<AgentStreamEvent> response = streamModelWithRetry(
+                    providerId -> {
+                        ChatClient chatClient = llmProviderRegistry.getAgentChatClient(providerId);
+                        return () -> {
+                            var promptSpec = chatClient.prompt().system(systemPrompt);
+                            if (!history.isEmpty()) {
+                                promptSpec = promptSpec.messages(history);
+                            }
+                            return promptSpec.user(userPrompt).stream().content();
+                        };
+                    },
+                    request.providerId(),
+                    sessionId,
+                    preparedMessage.assistantMessageId(),
+                    context.sources()
+                );
 
-            return Flux.concat(
-                Flux.just(
-                    AgentStreamEvent.step("context", "completed"),
-                    AgentStreamEvent.step("insight", "running"),
-                    AgentStreamEvent.step("retrieval", "running"),
-                    AgentStreamEvent.step("retrieval", "completed"),
-                    AgentStreamEvent.sources(context.sources()),
-                    AgentStreamEvent.step("action", "running")
-                ),
-                response
-            )
-                .takeUntilOther(cancellationSignal.asMono())
-                .doFinally(signal -> {
-                    activeSessions.remove(sessionId);
-                    cancellationSignals.remove(sessionId, cancellationSignal);
-                });
+                return Flux.concat(
+                    Flux.just(
+                        AgentStreamEvent.step("context", "completed"),
+                        AgentStreamEvent.step("insight", "running"),
+                        AgentStreamEvent.step("retrieval", "running"),
+                        AgentStreamEvent.step("retrieval", "completed"),
+                        AgentStreamEvent.sources(context.sources()),
+                        AgentStreamEvent.step("action", "running")
+                    ),
+                    response
+                )
+                    .takeUntilOther(cancellationSignal.asMono())
+                    .doFinally(signal -> {
+                        activeSessions.remove(sessionId);
+                        cancellationSignals.remove(sessionId, cancellationSignal);
+                    });
             } catch (Throwable error) {
+                if (preparedAssistantMessageId != null) {
+                    failPreparedMessage(preparedAssistantMessageId, error);
+                }
                 activeSessions.remove(sessionId);
                 cancellationSignals.remove(sessionId, cancellationSignal);
                 return Flux.error(error);
@@ -173,6 +178,14 @@ public class InterviewAgentService {
     public boolean cancel(String sessionId) {
         Sinks.One<Void> signal = cancellationSignals.get(sessionId);
         return signal != null && signal.tryEmitEmpty().isSuccess();
+    }
+
+    private void failPreparedMessage(Long messageId, Throwable error) {
+        try {
+            agentConversationService.failMessage(messageId, "", toAgentErrorMessage(error));
+        } catch (Throwable persistenceError) {
+            log.warn("Agent 任务失败状态持久化失败: messageId={}", messageId, persistenceError);
+        }
     }
 
     private Flux<AgentStreamEvent> streamModelWithRetry(

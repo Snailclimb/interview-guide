@@ -175,6 +175,45 @@ class InterviewAgentServiceTest {
         subscription.dispose();
     }
 
+    @Test
+    @DisplayName("模型流组装阶段异常时也关闭已创建的 Agent 任务")
+    void failsPreparedMessageWhenModelStreamAssemblyFails() throws Exception {
+        when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {
+            String path = invocation.getArgument(0);
+            String template = path.contains("system")
+                ? "系统规则"
+                : path.contains("context")
+                    ? "固定上下文 {context} {skill}"
+                    : "目标 {goal}，资料 {rag}，问题 {question}";
+            return new ByteArrayResource(template.getBytes(StandardCharsets.UTF_8));
+        });
+        when(promptSanitizer.sanitize(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(promptSanitizer.wrapWithStableDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(contextService.build(anyString(), any())).thenReturn(new AgentContextService.AgentContext(
+            "报告", "skill", "skill", "无资料", "问题", List.of()
+        ));
+        when(conversationService.loadHistory(anyString())).thenReturn(List.of());
+        when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
+            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
+        when(providerRegistry.resolveChatProviderCandidates("primary"))
+            .thenThrow(new IllegalStateException("provider registry unavailable"));
+
+        InterviewAgentService service = new InterviewAgentService(
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader
+        );
+
+        List<AgentStreamEvent> events = service.stream(
+            "assembly-failure-session", new AgentMessageRequest("review", "请复盘", List.of(), "primary")
+        ).collectList().block();
+
+        assertThat(events).isNotNull();
+        assertThat(events).anySatisfy(event -> assertThat(event.type()).isEqualTo("error"));
+        verify(conversationService).failMessage(10L, "", "AI 面试教练暂时不可用，请稍后重试");
+    }
+
     private ChatClient mockStreamClient(Flux<String> content) {
         ChatClient client = mock(ChatClient.class);
         ChatClient.ChatClientRequestSpec requestSpec = mock(ChatClient.ChatClientRequestSpec.class);
