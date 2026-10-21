@@ -122,7 +122,8 @@ public class InterviewAgentService {
                 },
                 request.providerId(),
                 sessionId,
-                preparedMessage.assistantMessageId()
+                preparedMessage.assistantMessageId(),
+                context.sources()
             );
 
             return Flux.concat(
@@ -149,7 +150,8 @@ public class InterviewAgentService {
         java.util.function.Function<String, Supplier<Flux<String>>> modelStreamFactory,
         String providerId,
         String sessionId,
-        Long assistantMessageId
+        Long assistantMessageId,
+        List<interview.guide.modules.agent.model.AgentSource> sources
     ) {
         AtomicBoolean modelOutputStarted = new AtomicBoolean();
         AtomicReference<StringBuilder> output = new AtomicReference<>(new StringBuilder());
@@ -166,6 +168,14 @@ public class InterviewAgentService {
             output
         );
         return providerStream
+            .concatWith(Flux.defer(() -> {
+                String notice = AgentAnswerGroundingPolicy.buildNotice(output.get().toString(), sources);
+                if (notice.isBlank()) {
+                    return Flux.empty();
+                }
+                output.get().append(notice);
+                return Flux.just(AgentStreamEvent.delta(notice));
+            }))
             .concatWith(Flux.just(
                 AgentStreamEvent.step("insight", "completed"),
                 AgentStreamEvent.step("action", "completed"),
