@@ -49,6 +49,14 @@ public class AgentController {
         return Result.success(conversationService.getConversation(sessionId));
     }
 
+    @PostMapping("/api/agent/interview-sessions/{sessionId}/cancel")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
+    public Result<AgentConversationResponse> cancelRun(@PathVariable String sessionId) {
+        agentService.cancel(sessionId);
+        conversationService.cancelRun(sessionId);
+        return Result.success(conversationService.getConversation(sessionId));
+    }
+
     /**
      * 基于指定面试报告执行一次 Agent 任务，并流式返回工作流事件和模型回答。
      */

@@ -2,6 +2,8 @@ package interview.guide.modules.agent.model;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -40,6 +42,26 @@ public class AgentChatSessionEntity {
 
     @Column(name = "provider_id", length = 64)
     private String providerId;
+
+    @Column(name = "run_id", length = 36)
+    private String runId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "run_status", nullable = false, length = 16)
+    @Builder.Default
+    private AgentRunStatus runStatus = AgentRunStatus.IDLE;
+
+    @Column(name = "active_message_id")
+    private Long activeMessageId;
+
+    @Column(name = "run_started_at")
+    private LocalDateTime runStartedAt;
+
+    @Column(name = "run_finished_at")
+    private LocalDateTime runFinishedAt;
+
+    @Column(name = "run_error", length = 500)
+    private String runError;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

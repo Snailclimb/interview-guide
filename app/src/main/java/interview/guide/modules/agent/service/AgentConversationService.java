@@ -4,11 +4,14 @@ import interview.guide.modules.agent.model.AgentChatMessageEntity;
 import interview.guide.modules.agent.model.AgentChatSessionEntity;
 import interview.guide.modules.agent.model.AgentConversationResponse;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
+import interview.guide.modules.agent.model.AgentRunStatus;
 import interview.guide.modules.agent.repository.AgentChatMessageRepository;
 import interview.guide.modules.agent.repository.AgentChatSessionRepository;
 import jakarta.transaction.Transactional;
 import java.util.ArrayList;
 import java.util.List;
+import java.time.LocalDateTime;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -26,6 +29,7 @@ import org.springframework.stereotype.Service;
 public class AgentConversationService {
 
     private static final int MAX_PERSISTED_HISTORY_MESSAGES = 64;
+    private static final int STALE_RUN_MINUTES = 15;
 
     private final AgentChatSessionRepository sessionRepository;
     private final AgentChatMessageRepository messageRepository;
@@ -42,10 +46,21 @@ public class AgentConversationService {
                 .orElseGet(() -> AgentChatSessionEntity.builder()
                     .interviewSessionId(interviewSessionId)
                     .build()));
+        recoverStaleRun(session);
+        if (session.getRunStatus() == AgentRunStatus.RUNNING) {
+            throw new AgentTaskBusyException();
+        }
+
+        String runId = UUID.randomUUID().toString();
         session.setGoal(goal);
         if (providerId != null && !providerId.isBlank()) {
             session.setProviderId(providerId);
         }
+        session.setRunId(runId);
+        session.setRunStatus(AgentRunStatus.RUNNING);
+        session.setRunStartedAt(LocalDateTime.now());
+        session.setRunFinishedAt(null);
+        session.setRunError(null);
         session = sessionRepository.save(session);
 
         int nextSequence = messageRepository.findTopBySessionIdOrderBySequenceNumDesc(session.getId())
@@ -68,37 +83,70 @@ public class AgentConversationService {
             .completed(false)
             .build();
         assistantMessage = messageRepository.save(assistantMessage);
-        return new PreparedMessage(assistantMessage.getId(), session.getId());
+        session.setActiveMessageId(assistantMessage.getId());
+        sessionRepository.save(session);
+        return new PreparedMessage(assistantMessage.getId(), session.getId(), runId);
     }
 
     @Transactional
     public void completeMessage(Long messageId, String content) {
         messageRepository.findById(messageId).ifPresent(message -> {
+            if (!isActiveMessage(message)) {
+                log.info("忽略已失效 Agent 完成事件: messageId={}", messageId);
+                return;
+            }
             message.setContent(content == null ? "" : content);
             message.setCompleted(true);
             message.setErrorMessage(null);
             messageRepository.save(message);
+            markRunFinished(message, AgentRunStatus.COMPLETED, null);
         });
     }
 
     @Transactional
     public void failMessage(Long messageId, String partialContent, String errorMessage) {
         messageRepository.findById(messageId).ifPresent(message -> {
+            if (!isActiveMessage(message)) {
+                log.info("忽略已失效 Agent 失败事件: messageId={}", messageId);
+                return;
+            }
             message.setContent(partialContent == null ? "" : partialContent);
             message.setCompleted(false);
             message.setErrorMessage(truncate(errorMessage, 500));
             messageRepository.save(message);
+            markRunFinished(message, AgentRunStatus.FAILED, errorMessage);
         });
     }
 
     @Transactional
     public void cancelMessage(Long messageId, String partialContent) {
         messageRepository.findById(messageId).ifPresent(message -> {
+            if (!isActiveMessage(message)) {
+                log.info("忽略已失效 Agent 取消事件: messageId={}", messageId);
+                return;
+            }
             message.setContent(partialContent == null ? "" : partialContent);
             message.setCompleted(false);
             message.setErrorMessage("客户端中断了本次回答");
             messageRepository.save(message);
+            markRunFinished(message, AgentRunStatus.CANCELLED, "客户端中断了本次回答");
         });
+    }
+
+    @Transactional
+    public boolean cancelRun(String interviewSessionId) {
+        AgentChatSessionEntity session = sessionRepository
+            .findByInterviewSessionIdForUpdate(interviewSessionId)
+            .orElse(null);
+        if (session == null || session.getRunStatus() != AgentRunStatus.RUNNING) {
+            return false;
+        }
+        if (session.getActiveMessageId() != null) {
+            cancelMessage(session.getActiveMessageId(), "用户请求取消本次回答");
+        } else {
+            markRunFinished(session, AgentRunStatus.CANCELLED, "用户请求取消本次回答");
+        }
+        return true;
     }
 
     @Transactional
@@ -106,7 +154,15 @@ public class AgentConversationService {
         AgentChatSessionEntity session = sessionRepository.findByInterviewSessionId(interviewSessionId)
             .orElse(null);
         if (session == null) {
-            return new AgentConversationResponse(interviewSessionId, null, null, List.of());
+            return new AgentConversationResponse(
+                interviewSessionId, null, null, null, AgentRunStatus.IDLE,
+                null, null, null, List.of()
+            );
+        }
+        if (isStaleRun(session)) {
+            session = sessionRepository.findByInterviewSessionIdForUpdate(interviewSessionId)
+                .orElse(session);
+            recoverStaleRun(session);
         }
 
         List<AgentChatMessageEntity> recentMessages = messageRepository
@@ -125,6 +181,11 @@ public class AgentConversationService {
             interviewSessionId,
             session.getGoal(),
             session.getProviderId(),
+            session.getRunId(),
+            session.getRunStatus(),
+            session.getRunStartedAt(),
+            session.getRunFinishedAt(),
+            session.getRunError(),
             normalized
         );
     }
@@ -140,6 +201,51 @@ public class AgentConversationService {
         return value.substring(0, maxLength);
     }
 
-    public record PreparedMessage(Long assistantMessageId, Long sessionId) {
+    private void markRunFinished(AgentChatMessageEntity message, AgentRunStatus status, String error) {
+        AgentChatSessionEntity session = message.getSession();
+        if (session == null) {
+            return;
+        }
+        markRunFinished(session, status, error);
+    }
+
+    private void markRunFinished(AgentChatSessionEntity session, AgentRunStatus status, String error) {
+        session.setRunStatus(status);
+        session.setRunFinishedAt(LocalDateTime.now());
+        session.setActiveMessageId(null);
+        session.setRunError(truncate(error, 500));
+        sessionRepository.save(session);
+    }
+
+    private boolean isActiveMessage(AgentChatMessageEntity message) {
+        AgentChatSessionEntity session = message.getSession();
+        return session != null
+            && message.getId() != null
+            && message.getId().equals(session.getActiveMessageId())
+            && session.getRunStatus() == AgentRunStatus.RUNNING;
+    }
+
+    private void recoverStaleRun(AgentChatSessionEntity session) {
+        if (!isStaleRun(session)) {
+            return;
+        }
+        if (session.getActiveMessageId() != null) {
+            messageRepository.findById(session.getActiveMessageId()).ifPresent(message -> {
+                message.setCompleted(false);
+                message.setErrorMessage("Agent 任务超过最大执行时间，已自动回收");
+                messageRepository.save(message);
+            });
+        }
+        markRunFinished(session, AgentRunStatus.FAILED, "Agent 任务超过最大执行时间，已自动回收");
+    }
+
+    private boolean isStaleRun(AgentChatSessionEntity session) {
+        return session != null
+            && session.getRunStatus() == AgentRunStatus.RUNNING
+            && session.getRunStartedAt() != null
+            && !session.getRunStartedAt().isAfter(LocalDateTime.now().minusMinutes(STALE_RUN_MINUTES));
+    }
+
+    public record PreparedMessage(Long assistantMessageId, Long sessionId, String runId) {
     }
 }

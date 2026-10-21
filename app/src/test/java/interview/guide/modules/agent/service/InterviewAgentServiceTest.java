@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -65,7 +66,7 @@ class InterviewAgentServiceTest {
         when(contextService.build(anyString(), any())).thenReturn(context);
         when(conversationService.loadHistory("session-1")).thenReturn(List.of());
         when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
-            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L));
+            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
         when(providerRegistry.resolveChatProviderCandidates("primary"))
             .thenReturn(List.of("primary", "backup"));
 
@@ -113,7 +114,7 @@ class InterviewAgentServiceTest {
         ));
         when(conversationService.loadHistory(anyString())).thenReturn(List.of());
         when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
-            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L));
+            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
         when(providerRegistry.resolveChatProviderCandidates("primary"))
             .thenReturn(List.of("primary"));
         ChatClient longRunningClient = mockStreamClient(Flux.never());
@@ -130,6 +131,48 @@ class InterviewAgentServiceTest {
         assertThat(second).anySatisfy(event -> assertThat(event.message())
             .contains("已有一个 Agent 任务正在执行"));
         firstSubscription.dispose();
+    }
+
+    @Test
+    @DisplayName("取消 Agent 任务时终止模型流并持久化取消状态")
+    void cancelsActiveModelStream() throws Exception {
+        when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {
+            String path = invocation.getArgument(0);
+            String template = path.contains("system")
+                ? "系统规则"
+                : path.contains("context")
+                    ? "固定上下文 {context} {skill}"
+                    : "目标 {goal}，资料 {rag}，问题 {question}";
+            return new ByteArrayResource(template.getBytes(StandardCharsets.UTF_8));
+        });
+        when(promptSanitizer.sanitize(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(promptSanitizer.wrapWithStableDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(contextService.build(anyString(), any())).thenReturn(new AgentContextService.AgentContext(
+            "报告", "skill", "skill", "无资料", "问题", List.of()
+        ));
+        when(conversationService.loadHistory(anyString())).thenReturn(List.of());
+        when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
+            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
+        when(providerRegistry.resolveChatProviderCandidates("primary"))
+            .thenReturn(List.of("primary"));
+        ChatClient longRunningClient = mockStreamClient(Flux.never());
+        when(providerRegistry.getAgentChatClient("primary")).thenReturn(longRunningClient);
+
+        InterviewAgentService service = new InterviewAgentService(
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader
+        );
+
+        reactor.core.Disposable subscription = service.stream(
+            "cancel-session", new AgentMessageRequest("review", "请复盘", List.of(), "primary")
+        ).subscribe();
+
+        assertThat(service.cancel("cancel-session")).isTrue();
+        verify(conversationService, timeout(1000))
+            .cancelMessage(10L, "");
+        subscription.dispose();
     }
 
     private ChatClient mockStreamClient(Flux<String> content) {

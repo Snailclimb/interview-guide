@@ -35,7 +35,7 @@ import type {
   AgentStreamEvent,
 } from '../types/agent';
 import type { ProviderItem } from '../types/llmProvider';
-type RunStatus = 'idle' | 'running' | 'completed' | 'error';
+type RunStatus = 'idle' | 'running' | 'completed' | 'error' | 'cancelled';
 type StepStatus = 'pending' | 'running' | 'waiting' | 'completed';
 
 interface AgentStep {
@@ -259,6 +259,13 @@ export default function AgentPage() {
         if (conversation.providerId) {
           setProviderId(conversation.providerId);
         }
+        if (conversation.runStatus === 'RUNNING') {
+          setRunStatus('running');
+          setRunNotice('服务端仍有一个 Agent 任务正在执行，可等待完成或取消任务。');
+        }
+        if (conversation.runStatus === 'FAILED' && conversation.runError) {
+          setRunError(conversation.runError);
+        }
         if (conversation.messages.length === 0) return;
 
         const restoredMessages: AgentMessage[] = [
@@ -384,6 +391,21 @@ export default function AgentPage() {
   };
 
   const startRun = () => streamAgentMessage(`开始${selectedGoal.title}`);
+
+  const cancelRun = () => {
+    if (!sessionId || runStatus !== 'running') return;
+    abortRef.current?.abort();
+    setRunNotice('正在取消 Agent 任务...');
+    void agentApi.cancelRun(sessionId)
+      .then(() => {
+        setRunStatus('cancelled');
+        setRunNotice('本次 Agent 任务已取消，可以重新执行。');
+      })
+      .catch((error: unknown) => {
+        setRunError(getErrorMessage(error) || '取消 Agent 任务失败');
+        setRunStatus('error');
+      });
+  };
 
   const sendMessage = () => streamAgentMessage(input.trim());
 
@@ -578,6 +600,15 @@ export default function AgentPage() {
                 {runStatus === 'running' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                 {runStatus === 'running' ? 'Agent 执行中' : runStatus === 'completed' ? '再次运行' : runStatus === 'error' ? '重试执行' : '开始执行'}
               </button>
+              {runStatus === 'running' && (
+                <button
+                  onClick={cancelRun}
+                  className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm text-rose-600 dark:text-rose-300"
+                >
+                  <XCircle className="w-4 h-4" />
+                  取消执行
+                </button>
+              )}
               {(runStatus === 'completed' || runStatus === 'error') && (
                 <button onClick={() => { setRunStatus('idle'); setRunError(''); setRunNotice(''); setSources([]); setSteps(createInitialSteps()); }} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm">
                   <RotateCcw className="w-4 h-4" />

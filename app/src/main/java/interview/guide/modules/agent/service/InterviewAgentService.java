@@ -17,6 +17,7 @@ import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -50,6 +51,7 @@ public class InterviewAgentService {
     private final PromptTemplate fixedContextPromptTemplate;
     private final PromptTemplate userPromptTemplate;
     private final Set<String> activeSessions = ConcurrentHashMap.newKeySet();
+    private final Map<String, Sinks.One<Void>> cancellationSignals = new ConcurrentHashMap<>();
 
     public InterviewAgentService(
         AgentContextService agentContextService,
@@ -83,6 +85,8 @@ public class InterviewAgentService {
             if (!activeSessions.add(sessionId)) {
                 return Flux.just(AgentStreamEvent.error("当前面试已有一个 Agent 任务正在执行，请等待完成后再试"));
             }
+            Sinks.One<Void> cancellationSignal = Sinks.one();
+            cancellationSignals.put(sessionId, cancellationSignal);
             try {
                 AgentContextService.AgentContext context = agentContextService.build(sessionId, request);
             String message = promptSanitizer.sanitize(request.message());
@@ -143,18 +147,32 @@ public class InterviewAgentService {
                     AgentStreamEvent.step("action", "running")
                 ),
                 response
-            ).doFinally(signal -> activeSessions.remove(sessionId));
+            )
+                .takeUntilOther(cancellationSignal.asMono())
+                .doFinally(signal -> {
+                    activeSessions.remove(sessionId);
+                    cancellationSignals.remove(sessionId, cancellationSignal);
+                });
             } catch (Throwable error) {
                 activeSessions.remove(sessionId);
+                cancellationSignals.remove(sessionId, cancellationSignal);
                 return Flux.error(error);
             }
         })
-        ).onErrorResume(BusinessException.class, error -> Flux.just(
+        ).onErrorResume(AgentTaskBusyException.class, error -> Flux.just(
+            AgentStreamEvent.error(error.getMessage())
+        )).onErrorResume(BusinessException.class, error -> Flux.just(
             AgentStreamEvent.error(error.getMessage())
         )).onErrorResume(Exception.class, error -> {
             log.error("面试教练 Agent 执行失败: sessionId={}", sessionId, error);
             return Flux.just(AgentStreamEvent.error(toAgentErrorMessage(error)));
         });
+    }
+
+    /** 发出服务端取消信号；如果任务不在当前实例，数据库取消仍由会话服务负责。 */
+    public boolean cancel(String sessionId) {
+        Sinks.One<Void> signal = cancellationSignals.get(sessionId);
+        return signal != null && signal.tryEmitEmpty().isSuccess();
     }
 
     private Flux<AgentStreamEvent> streamModelWithRetry(
