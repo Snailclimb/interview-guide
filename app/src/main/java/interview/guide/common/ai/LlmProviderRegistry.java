@@ -280,6 +280,15 @@ public class LlmProviderRegistry {
     }
 
     /**
+     * 获取 Agent 专用 ChatClient：SkillsTool + ToolCallingAdvisor，不启用会话记忆。
+     * Agent 的历史由 AgentConversationService 持久化和裁剪，避免共享内存造成会话串扰。
+     */
+    public ChatClient getAgentChatClient(String providerId) {
+        String id = resolveProviderId(providerId);
+        return clientCache.computeIfAbsent(id + ":agent", key -> createAgentChatClient(id));
+    }
+
+    /**
      * 清空缓存，重新加载所有 provider。
      */
     public void reload() {
@@ -342,6 +351,24 @@ public class LlmProviderRegistry {
             builder.defaultAdvisors(advisors);
         }
         log.info("[LlmProviderRegistry] Created voice ChatClient (SkillsTool + streaming ToolCall) for {}", providerId);
+        return builder.build();
+    }
+
+    private ChatClient createAgentChatClient(String providerId) {
+        OpenAiChatModel chatModel = getChatModel(providerId);
+        ChatClient.Builder builder = ChatClient.builder(chatModel);
+        if (interviewSkillsToolCallback != null) {
+            builder.defaultTools(interviewSkillsToolCallback);
+        }
+        List<Advisor> advisors = new ArrayList<>();
+        if (toolCallingManager != null && interviewSkillsToolCallback != null) {
+            advisors.add(buildToolCallAdvisor(false));
+        }
+        buildSafeGuardAdvisor().ifPresent(advisors::add);
+        if (!advisors.isEmpty()) {
+            builder.defaultAdvisors(advisors);
+        }
+        log.info("[LlmProviderRegistry] Created agent ChatClient (SkillsTool + ToolCall, no memory) for {}", providerId);
         return builder.build();
     }
 

@@ -105,12 +105,15 @@ class LlmProviderRegistryTest {
         ChatClient defaultClient = registry.getChatClient(providerId);
         ChatClient plainClient = registry.getPlainChatClient(providerId);
         ChatClient voiceClient = registry.getVoiceChatClient(providerId);
+        ChatClient agentClient = registry.getAgentChatClient(providerId);
 
         assertNotNull(defaultClient);
         assertNotNull(plainClient);
         assertNotNull(voiceClient);
         assertNotSame(defaultClient, plainClient, "Default and plain clients should keep advisor recipes isolated");
         assertNotSame(defaultClient, voiceClient, "Default and voice clients should keep advisor recipes isolated");
+        assertNotSame(defaultClient, agentClient, "Default and agent clients should keep advisor recipes isolated");
+        assertNotSame(plainClient, agentClient, "Plain and agent clients should keep tool recipes isolated");
         verify(properties, times(1)).getProviders();
     }
 

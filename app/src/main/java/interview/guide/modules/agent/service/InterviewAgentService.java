@@ -111,7 +111,7 @@ public class InterviewAgentService {
             List<Message> history = buildModelHistory(historyMessages);
             Flux<AgentStreamEvent> response = streamModelWithRetry(
                 providerId -> {
-                    ChatClient chatClient = llmProviderRegistry.getPlainChatClient(providerId);
+                    ChatClient chatClient = llmProviderRegistry.getAgentChatClient(providerId);
                     return () -> {
                         var promptSpec = chatClient.prompt().system(systemPrompt);
                         if (!history.isEmpty()) {
