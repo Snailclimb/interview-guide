@@ -1,5 +1,7 @@
 import { streamSse } from './stream';
+import request from './request';
 import type { AgentMessageRequest, AgentStreamEvent } from '../types/agent';
+import type { AgentConversationResponse } from '../types/agent';
 
 interface AgentStreamHandlers {
   onEvent: (event: AgentStreamEvent) => void;
@@ -8,6 +10,12 @@ interface AgentStreamHandlers {
 }
 
 export const agentApi = {
+  getConversation(sessionId: string): Promise<AgentConversationResponse> {
+    return request.get<AgentConversationResponse>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversation`,
+    );
+  },
+
   streamMessage(
     sessionId: string,
     request: AgentMessageRequest,

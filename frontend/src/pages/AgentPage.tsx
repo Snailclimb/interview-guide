@@ -25,9 +25,16 @@ import {
 } from 'lucide-react';
 import { agentApi } from '../api/agent';
 import { historyApi, type InterviewDetail } from '../api/history';
+import { llmProviderApi } from '../api/llmProvider';
 import { getErrorMessage } from '../api/request';
 import CodeBlock from '../components/CodeBlock';
-import type { AgentGoal, AgentHistoryMessage, AgentSource, AgentStreamEvent } from '../types/agent';
+import type {
+  AgentGoal,
+  AgentHistoryMessage,
+  AgentSource,
+  AgentStreamEvent,
+} from '../types/agent';
+import type { ProviderItem } from '../types/llmProvider';
 type RunStatus = 'idle' | 'running' | 'completed' | 'error';
 type StepStatus = 'pending' | 'running' | 'waiting' | 'completed';
 
@@ -171,6 +178,8 @@ export default function AgentPage() {
   const [searchParams] = useSearchParams();
   const sessionId = searchParams.get('sessionId');
   const [goal, setGoal] = useState<AgentGoal>('review');
+  const [providerId, setProviderId] = useState('');
+  const [providers, setProviders] = useState<ProviderItem[]>([]);
   const [interview, setInterview] = useState<InterviewDetail | null>(null);
   const [loadingContext, setLoadingContext] = useState(Boolean(sessionId));
   const [contextError, setContextError] = useState('');
@@ -207,6 +216,65 @@ export default function AgentPage() {
       })
       .finally(() => {
         if (!cancelled) setLoadingContext(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([llmProviderApi.list(), llmProviderApi.getDefaultProvider()])
+      .then(([providerList, defaultProvider]) => {
+        if (cancelled) return;
+        const chatProviders = providerList.filter((provider) => {
+          if (!provider.model.trim()) return false;
+          return !provider.embeddingModel
+            || provider.model.trim().toLowerCase() !== provider.embeddingModel.trim().toLowerCase();
+        });
+        setProviders(chatProviders);
+        setProviderId((current) => current || defaultProvider.defaultProvider || chatProviders[0]?.id || '');
+      })
+      .catch(() => {
+        // Agent 仍可使用后端默认 Provider，不让设置页暂时不可用阻断对话。
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionId) return;
+
+    let cancelled = false;
+    agentApi.getConversation(sessionId)
+      .then((conversation) => {
+        if (cancelled || conversation.messages.length === 0) return;
+
+        const restoredMessages: AgentMessage[] = [
+          {
+            id: 1,
+            role: 'assistant',
+            content: '你好，我是你的 AI 面试教练。选择一个目标后，我会基于当前面试上下文帮你整理下一步。',
+          },
+          ...conversation.messages.map((message, index) => ({
+            id: index + 2,
+            role: message.role,
+            content: message.content,
+          })),
+        ];
+        setMessages(restoredMessages);
+        if (conversation.goal === 'review' || conversation.goal === 'practice' || conversation.goal === 'plan') {
+          setGoal(conversation.goal);
+        }
+        if (conversation.providerId) {
+          setProviderId(conversation.providerId);
+        }
+      })
+      .catch(() => {
+        // 会话恢复失败不阻塞当前 Agent，仍允许用户从空白上下文开始。
       });
 
     return () => {
@@ -267,7 +335,7 @@ export default function AgentPage() {
 
     void agentApi.streamMessage(
       sessionId,
-      { goal, message: content, history },
+      { goal, message: content, history, providerId: providerId || undefined },
       {
         onEvent: (event) => {
           updateStep(event);
@@ -348,10 +416,29 @@ export default function AgentPage() {
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">把面试报告转成可执行的复盘和训练动作</p>
           </div>
         </div>
-        <button onClick={() => navigate('/settings')} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm">
-          <Settings2 className="w-4 h-4" />
-          模型设置
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
+            <span className="text-xs dark-text-muted whitespace-nowrap">首选模型</span>
+            <select
+              value={providerId}
+              onChange={(event) => setProviderId(event.target.value)}
+              disabled={providers.length === 0 || runStatus === 'running'}
+              className="max-w-[190px] bg-transparent text-sm font-medium dark-text outline-none disabled:opacity-60"
+              aria-label="选择 Agent 首选模型"
+            >
+              {providers.length === 0 ? <option value="">使用默认模型</option> : null}
+              {providers.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.id} · {provider.model}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button onClick={() => navigate('/settings')} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm">
+            <Settings2 className="w-4 h-4" />
+            模型设置
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)] gap-6 items-start">

@@ -12,6 +12,13 @@ export interface AgentMessageRequest {
   providerId?: string;
 }
 
+export interface AgentConversationResponse {
+  interviewSessionId: string;
+  goal?: AgentGoal | string | null;
+  providerId?: string | null;
+  messages: AgentHistoryMessage[];
+}
+
 export type AgentStepStatus = 'pending' | 'running' | 'waiting' | 'completed';
 
 export interface AgentSource {

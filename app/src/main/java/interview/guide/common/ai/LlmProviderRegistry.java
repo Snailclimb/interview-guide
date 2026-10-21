@@ -33,10 +33,13 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.time.Duration;
+import java.time.Instant;
 
 /**
  * Registry for managing and caching LLM providers.
@@ -50,6 +53,8 @@ public class LlmProviderRegistry {
     private final Map<String, ChatClient> clientCache = new ConcurrentHashMap<>();
     private final Map<String, OpenAiChatModel> chatModelCache = new ConcurrentHashMap<>();
     private final Map<String, EmbeddingModel> embeddingModelCache = new ConcurrentHashMap<>();
+    private static final Duration CHAT_PROVIDER_COOLDOWN = Duration.ofMinutes(2);
+    private final Map<String, Instant> chatProviderCircuitOpenUntil = new ConcurrentHashMap<>();
     private final LlmProviderRepository providerRepository;
     private final LlmGlobalSettingRepository globalSettingRepository;
     private final ApiKeyEncryptionService encryptionService;
@@ -139,6 +144,133 @@ public class LlmProviderRegistry {
     }
 
     /**
+     * 返回 Agent 可尝试的聊天 Provider 顺序：显式 Provider、默认 Provider、其余已启用 Provider。
+     *
+     * <p>这里只返回配置候选，不提前创建 ChatClient，避免一次请求为所有备用模型建立连接。
+     * Agent 只有在当前模型不可用时才会按顺序懒加载下一个 Provider。</p>
+     */
+    public List<String> resolveChatProviderCandidates(String requestedProviderId) {
+        LinkedHashSet<String> candidates = new LinkedHashSet<>();
+        String requested = resolveProviderId(requestedProviderId);
+        if (!isBlank(requested) && isAvailableChatProvider(requested)) {
+            candidates.add(requested);
+        }
+        String defaultProvider = resolveDefaultChatProviderId();
+        if (!isBlank(defaultProvider) && isAvailableChatProvider(defaultProvider)) {
+            candidates.add(defaultProvider);
+        }
+
+        if (providerRepository != null) {
+            providerRepository.findByEnabledTrueOrderByIdAsc().stream()
+                .filter(this::isAvailableChatProvider)
+                .map(LlmProviderEntity::getId)
+                .forEach(candidates::add);
+        } else if (properties.getProviders() != null) {
+            properties.getProviders().entrySet().stream()
+                .filter(entry -> isAvailableChatProvider(entry.getKey(), entry.getValue()))
+                .map(Map.Entry::getKey)
+                .sorted()
+                .forEach(candidates::add);
+        }
+        return List.copyOf(candidates);
+    }
+
+    /** Agent 请求成功后清除 Provider 的短期熔断状态。 */
+    public void markChatProviderSuccess(String providerId) {
+        if (!isBlank(providerId)) {
+            chatProviderCircuitOpenUntil.remove(providerId);
+        }
+    }
+
+    /** Agent 请求失败后打开短期熔断，避免失效账号被每个请求重复等待。 */
+    public void markChatProviderFailure(String providerId) {
+        if (!isBlank(providerId)) {
+            chatProviderCircuitOpenUntil.put(
+                providerId,
+                Instant.now().plus(CHAT_PROVIDER_COOLDOWN)
+            );
+        }
+    }
+
+    public boolean isChatProviderCircuitOpen(String providerId) {
+        if (isBlank(providerId)) {
+            return false;
+        }
+        Instant openUntil = chatProviderCircuitOpenUntil.get(providerId);
+        if (openUntil == null) {
+            return false;
+        }
+        if (openUntil.isAfter(Instant.now())) {
+            return true;
+        }
+        chatProviderCircuitOpenUntil.remove(providerId, openUntil);
+        return false;
+    }
+
+    private boolean isChatCapableProvider(String providerId) {
+        if (providerRepository != null) {
+            return providerRepository.findById(providerId)
+                .filter(LlmProviderEntity::isEnabled)
+                .map(this::isChatCapableProvider)
+                .orElse(false);
+        }
+        if (properties.getProviders() == null) {
+            return false;
+        }
+        return isChatCapableProvider(providerId, properties.getProviders().get(providerId));
+    }
+
+    private boolean isAvailableChatProvider(String providerId) {
+        return !isChatProviderCircuitOpen(providerId) && isChatCapableProvider(providerId);
+    }
+
+    private boolean isAvailableChatProvider(String providerId, ProviderConfig config) {
+        return !isChatProviderCircuitOpen(providerId) && isChatCapableProvider(providerId, config);
+    }
+
+    private boolean isAvailableChatProvider(LlmProviderEntity provider) {
+        return provider != null
+            && !isChatProviderCircuitOpen(provider.getId())
+            && isChatCapableProvider(provider);
+    }
+
+    private boolean isChatCapableProvider(LlmProviderEntity provider) {
+        return isChatCapableProvider(
+            provider.getId(),
+            provider.getModel(),
+            provider.getEmbeddingModel(),
+            provider.isSupportsEmbedding()
+        );
+    }
+
+    private boolean isChatCapableProvider(String providerId, ProviderConfig config) {
+        if (config == null) {
+            return false;
+        }
+        return isChatCapableProvider(
+            providerId,
+            config.getModel(),
+            config.getEmbeddingModel(),
+            Boolean.TRUE.equals(config.getSupportsEmbedding())
+        );
+    }
+
+    private boolean isChatCapableProvider(
+        String providerId,
+        String model,
+        String embeddingModel,
+        boolean supportsEmbedding
+    ) {
+        if (isBlank(providerId) || isBlank(model)) {
+            return false;
+        }
+        // 只有 model 与 embeddingModel 相同的 Provider 才视为纯向量服务。
+        return !supportsEmbedding
+            || isBlank(embeddingModel)
+            || !model.trim().equalsIgnoreCase(embeddingModel.trim());
+    }
+
+    /**
      * 获取语音面试专用 ChatClient：SkillsTool + ToolCallAdvisor（流式）。
      * 不加 Memory Advisor（语音面试手动管理对话历史）。
      */
@@ -155,6 +287,7 @@ public class LlmProviderRegistry {
         clientCache.clear();
         chatModelCache.clear();
         embeddingModelCache.clear();
+        chatProviderCircuitOpenUntil.clear();
         log.info("[LlmProviderRegistry] Cache cleared ({} entries). Next access will re-create clients.", size);
     }
 

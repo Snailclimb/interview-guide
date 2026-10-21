@@ -24,6 +24,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
@@ -31,7 +32,7 @@ import java.util.function.Supplier;
  * 面试教练 Agent 编排服务。
  *
  * <p>当前采用可观察的确定性工作流：读取面试上下文 -> 组织分析任务 -> 流式生成建议。
- * 这条链路先复用现有面试报告和模型注册中心，后续可在本模块内增加工具调用和记忆。</p>
+ * 对话记录由独立的 Agent 会话服务持久化，不改变既有面试和 RAG 会话。</p>
  */
 @Slf4j
 @Service
@@ -40,6 +41,7 @@ public class InterviewAgentService {
     private static final int MODEL_RETRY_ATTEMPTS = 6;
 
     private final AgentContextService agentContextService;
+    private final AgentConversationService agentConversationService;
     private final LlmProviderRegistry llmProviderRegistry;
     private final PromptSanitizer promptSanitizer;
     private final PromptTemplate systemPromptTemplate;
@@ -48,11 +50,13 @@ public class InterviewAgentService {
 
     public InterviewAgentService(
         AgentContextService agentContextService,
+        AgentConversationService agentConversationService,
         LlmProviderRegistry llmProviderRegistry,
         PromptSanitizer promptSanitizer,
         ResourceLoader resourceLoader
     ) throws IOException {
         this.agentContextService = agentContextService;
+        this.agentConversationService = agentConversationService;
         this.llmProviderRegistry = llmProviderRegistry;
         this.promptSanitizer = promptSanitizer;
         this.systemPromptTemplate = new PromptTemplate(resourceLoader
@@ -74,8 +78,18 @@ public class InterviewAgentService {
             Flux.just(AgentStreamEvent.step("context", "running")),
             Flux.defer(() -> {
             AgentContextService.AgentContext context = agentContextService.build(sessionId, request);
-            List<AgentHistoryMessage> historyMessages = AgentHistoryPolicy.normalize(request.history());
             String message = promptSanitizer.sanitize(request.message());
+            List<AgentHistoryMessage> persistedHistory = agentConversationService.loadHistory(sessionId);
+            List<AgentHistoryMessage> historyMessages = AgentHistoryPolicy.normalize(
+                persistedHistory.isEmpty() ? request.history() : persistedHistory
+            );
+
+            AgentConversationService.PreparedMessage preparedMessage = agentConversationService.prepareMessage(
+                sessionId,
+                promptSanitizer.sanitize(request.goal()),
+                request.providerId(),
+                message
+            );
 
             Map<String, Object> fixedContextVariables = Map.of(
                 "context", promptSanitizer.wrapWithStableDelimiters(
@@ -95,17 +109,20 @@ public class InterviewAgentService {
                 + fixedContextPromptTemplate.render(fixedContextVariables);
             String userPrompt = userPromptTemplate.render(variables);
             List<Message> history = buildModelHistory(historyMessages);
-            ChatClient chatClient = llmProviderRegistry.getPlainChatClient(request.providerId());
-
-            Supplier<Flux<String>> modelStream = () -> {
-                var promptSpec = chatClient.prompt().system(systemPrompt);
-                if (!history.isEmpty()) {
-                    promptSpec = promptSpec.messages(history);
-                }
-                return promptSpec.user(userPrompt).stream().content();
-            };
             Flux<AgentStreamEvent> response = streamModelWithRetry(
-                modelStream, request.providerId(), sessionId
+                providerId -> {
+                    ChatClient chatClient = llmProviderRegistry.getPlainChatClient(providerId);
+                    return () -> {
+                        var promptSpec = chatClient.prompt().system(systemPrompt);
+                        if (!history.isEmpty()) {
+                            promptSpec = promptSpec.messages(history);
+                        }
+                        return promptSpec.user(userPrompt).stream().content();
+                    };
+                },
+                request.providerId(),
+                sessionId,
+                preparedMessage.assistantMessageId()
             );
 
             return Flux.concat(
@@ -129,17 +146,92 @@ public class InterviewAgentService {
     }
 
     private Flux<AgentStreamEvent> streamModelWithRetry(
-        Supplier<Flux<String>> modelStream,
+        java.util.function.Function<String, Supplier<Flux<String>>> modelStreamFactory,
         String providerId,
-        String sessionId
+        String sessionId,
+        Long assistantMessageId
     ) {
         AtomicBoolean modelOutputStarted = new AtomicBoolean();
-        return streamModelAttempt(modelStream, providerId, sessionId, modelOutputStarted, 0)
+        AtomicReference<StringBuilder> output = new AtomicReference<>(new StringBuilder());
+        List<String> providers = llmProviderRegistry.resolveChatProviderCandidates(providerId);
+        Flux<AgentStreamEvent> providerStream = providers.isEmpty()
+            ? Flux.error(new IllegalStateException("未配置可用的聊天模型 Provider"))
+            : streamProviderAttempt(
+            modelStreamFactory,
+            providers,
+            0,
+            sessionId,
+            assistantMessageId,
+            modelOutputStarted,
+            output
+        );
+        return providerStream
             .concatWith(Flux.just(
                 AgentStreamEvent.step("insight", "completed"),
                 AgentStreamEvent.step("action", "completed"),
                 AgentStreamEvent.done()
+            ))
+            .doOnComplete(() -> agentConversationService.completeMessage(
+                assistantMessageId,
+                output.get().toString()
+            ))
+            .doOnError(error -> agentConversationService.failMessage(
+                assistantMessageId,
+                output.get().toString(),
+                toAgentErrorMessage(error)
+            ))
+            .doOnCancel(() -> agentConversationService.cancelMessage(
+                assistantMessageId,
+                output.get().toString()
             ));
+    }
+
+    private Flux<AgentStreamEvent> streamProviderAttempt(
+        java.util.function.Function<String, Supplier<Flux<String>>> modelStreamFactory,
+        List<String> providers,
+        int providerIndex,
+        String sessionId,
+        Long assistantMessageId,
+        AtomicBoolean modelOutputStarted,
+        AtomicReference<StringBuilder> output
+    ) {
+        String currentProvider = providers.get(providerIndex);
+        return Flux.defer(() -> streamModelAttempt(
+                modelStreamFactory.apply(currentProvider),
+                currentProvider,
+                sessionId,
+                modelOutputStarted,
+                output,
+                0
+            )).onErrorResume(error -> {
+            if (!modelOutputStarted.get()
+                && isProviderSwitchableError(error)
+                && providerIndex < providers.size() - 1) {
+                String nextProvider = providers.get(providerIndex + 1);
+                log.warn(
+                    "Agent 当前 Provider 不可用，切换备用 Provider: current={}, next={}, sessionId={}",
+                    currentProvider,
+                    nextProvider,
+                    sessionId
+                );
+                return Flux.concat(
+                    Flux.just(AgentStreamEvent.waiting(
+                        "insight",
+                        "当前模型暂时不可用，正在切换备用模型（" + nextProvider + "）"
+                    )),
+                    streamProviderAttempt(
+                        modelStreamFactory,
+                        providers,
+                        providerIndex + 1,
+                        sessionId,
+                        assistantMessageId,
+                        modelOutputStarted,
+                        output
+                    )
+                );
+            }
+            return Flux.error(error);
+        });
     }
 
     private Flux<AgentStreamEvent> streamModelAttempt(
@@ -147,12 +239,22 @@ public class InterviewAgentService {
         String providerId,
         String sessionId,
         AtomicBoolean modelOutputStarted,
+        AtomicReference<StringBuilder> output,
         int attempt
     ) {
         return Flux.defer(modelStream)
-            .doOnNext(content -> modelOutputStarted.set(true))
+            .doOnNext(content -> {
+                modelOutputStarted.set(true);
+                llmProviderRegistry.markChatProviderSuccess(providerId);
+                if (content != null) {
+                    output.get().append(content);
+                }
+            })
             .map(AgentStreamEvent::delta)
             .onErrorResume(error -> {
+                if (isProviderSwitchableError(error)) {
+                    llmProviderRegistry.markChatProviderFailure(providerId);
+                }
                 if (!modelOutputStarted.get()
                     && isTransientModelError(error)
                     && attempt < MODEL_RETRY_ATTEMPTS) {
@@ -171,7 +273,7 @@ public class InterviewAgentService {
                         Mono.delay(delay).thenMany(Flux.concat(
                             Flux.just(AgentStreamEvent.step("insight", "running")),
                             streamModelAttempt(
-                                modelStream, providerId, sessionId, modelOutputStarted, retryNumber
+                                modelStream, providerId, sessionId, modelOutputStarted, output, retryNumber
                             )
                         ))
                     );
@@ -209,6 +311,28 @@ public class InterviewAgentService {
                 || normalized.contains("rate limit")
                 || normalized.contains("too many requests")
                 || normalized.contains("429")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isProviderSwitchableError(Throwable error) {
+        if (isTransientModelError(error) || isProviderAccountUnavailable(error)) {
+            return true;
+        }
+        for (Throwable current = error; current != null; current = current.getCause()) {
+            String message = current.getMessage();
+            if (message == null) {
+                continue;
+            }
+            String normalized = message.toLowerCase(java.util.Locale.ROOT);
+            if (normalized.contains("unknown llm provider")
+                || normalized.contains("unauthorized")
+                || normalized.contains("invalid api key")
+                || normalized.contains("invalid_api_key")
+                || normalized.contains("401")
+                || normalized.contains("403")) {
                 return true;
             }
         }

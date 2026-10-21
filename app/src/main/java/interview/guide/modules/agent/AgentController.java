@@ -2,8 +2,11 @@ package interview.guide.modules.agent;
 
 import interview.guide.common.annotation.RateLimit;
 import interview.guide.modules.agent.model.AgentMessageRequest;
+import interview.guide.modules.agent.model.AgentConversationResponse;
 import interview.guide.modules.agent.model.AgentStreamEvent;
+import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.InterviewAgentService;
+import interview.guide.common.result.Result;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -16,6 +19,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -36,7 +40,14 @@ import java.util.stream.Collectors;
 @Tag(name = "AI 面试教练", description = "基于面试报告的 Agent 复盘与训练对话")
 public class AgentController {
     private final InterviewAgentService agentService;
+    private final AgentConversationService conversationService;
     private final ObjectMapper objectMapper;
+
+    @GetMapping("/api/agent/interview-sessions/{sessionId}/conversation")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
+    public Result<AgentConversationResponse> getConversation(@PathVariable String sessionId) {
+        return Result.success(conversationService.getConversation(sessionId));
+    }
 
     /**
      * 基于指定面试报告执行一次 Agent 任务，并流式返回工作流事件和模型回答。

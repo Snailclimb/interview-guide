@@ -171,6 +171,61 @@ class LlmProviderRegistryTest {
         assertNotSame(client1, client2, "After reload, new client should be created");
     }
 
+    @Test
+    @DisplayName("Agent 备用 Provider 排除纯 Embedding 配置并保持请求 Provider 优先")
+    void resolveChatProviderCandidatesFiltersEmbeddingOnlyProviders() {
+        ProviderConfig requested = new ProviderConfig();
+        requested.setBaseUrl("http://requested/v1");
+        requested.setApiKey("requested-key");
+        requested.setModel("requested-chat");
+
+        ProviderConfig embeddingOnly = new ProviderConfig();
+        embeddingOnly.setBaseUrl("http://embedding/v1");
+        embeddingOnly.setApiKey("embedding-key");
+        embeddingOnly.setModel("qwen3.7-text-embedding-flash");
+        embeddingOnly.setEmbeddingModel("qwen3.7-text-embedding-flash");
+        embeddingOnly.setSupportsEmbedding(true);
+
+        ProviderConfig dualPurpose = new ProviderConfig();
+        dualPurpose.setBaseUrl("http://dual/v1");
+        dualPurpose.setApiKey("dual-key");
+        dualPurpose.setModel("qwen3.5-flash");
+        dualPurpose.setEmbeddingModel("text-embedding-v3");
+        dualPurpose.setSupportsEmbedding(true);
+
+        Map<String, ProviderConfig> providers = new java.util.LinkedHashMap<>();
+        providers.put("requested", requested);
+        providers.put("embedding-only", embeddingOnly);
+        providers.put("dual-purpose", dualPurpose);
+        when(properties.getProviders()).thenReturn(providers);
+        when(properties.getDefaultProvider()).thenReturn("dual-purpose");
+
+        assertEquals(
+            java.util.List.of("requested", "dual-purpose"),
+            registry.resolveChatProviderCandidates("requested")
+        );
+    }
+
+    @Test
+    @DisplayName("Agent Provider 失败后进入短期熔断，成功后恢复")
+    void failedChatProviderIsTemporarilySkipped() {
+        ProviderConfig config = new ProviderConfig();
+        config.setBaseUrl("http://requested/v1");
+        config.setApiKey("requested-key");
+        config.setModel("requested-chat");
+        when(properties.getProviders()).thenReturn(Map.of("requested", config));
+        when(properties.getDefaultProvider()).thenReturn("requested");
+
+        registry.markChatProviderFailure("requested");
+        assertTrue(registry.isChatProviderCircuitOpen("requested"));
+        assertTrue(registry.resolveChatProviderCandidates("requested").isEmpty());
+
+        registry.markChatProviderSuccess("requested");
+        assertFalse(registry.isChatProviderCircuitOpen("requested"));
+        assertEquals(java.util.List.of("requested"),
+            registry.resolveChatProviderCandidates("requested"));
+    }
+
     @Nested
     @DisplayName("getChatClientOrDefault 回退逻辑")
     class GetChatClientOrDefault {
