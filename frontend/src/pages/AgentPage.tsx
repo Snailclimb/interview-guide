@@ -46,6 +46,26 @@ interface AgentMessage {
 
 const MAX_HISTORY_MESSAGES = 128;
 
+const INLINE_HEADING_TITLES = [
+  '本场面试复盘结论',
+  '本场面试考察重点',
+  '目前无法确认的关键问题',
+  '表现概览',
+  '关键优势',
+  '最重要的改进点',
+  '下一步练习',
+  '薄弱点判断',
+  '答题要点',
+  '自测标准',
+  '短期目标',
+  '分步任务',
+  '完成标准',
+  '复盘周期',
+  '行动建议',
+  '改进建议',
+  '训练计划',
+];
+
 const goalOptions: Array<{ id: AgentGoal; title: string; description: string }> = [
   { id: 'review', title: '复盘本场面试', description: '分析表现，提炼优势和改进点' },
   { id: 'practice', title: '针对性训练', description: '围绕薄弱知识点生成练习题' },
@@ -80,12 +100,48 @@ function buildAgentHistory(messages: AgentMessage[]): AgentHistoryMessage[] {
     .map(({ role, content }) => ({ role, content }));
 }
 
+/**
+ * 模型流式输出偶尔会把标题、列表项和正文压缩到同一行。
+ * 只处理普通 Markdown 文本，代码围栏内部保持原样，避免破坏代码内容。
+ */
+function normalizeAgentMarkdown(content: string) {
+  const headingTitles = INLINE_HEADING_TITLES.join('|');
+  const inlineHeadingPattern = new RegExp(
+    `^(#{1,6}\\s+(?:${headingTitles}))[ \\t]+(?=\\S)`,
+    'gm',
+  );
+
+  return content
+    .replace(/\r\n?/g, '\n')
+    .split(/(```[\s\S]*?```)/g)
+    .map((part, index) => {
+      if (index % 2 === 1) return part;
+      return part
+        .replace(inlineHeadingPattern, '$1\n\n')
+        .replace(/^(\s*(?:[-*+]|\d+\.)\s+\*\*[^*\n]+\*\*)\s*[-：:]\s*/gm, '$1\n   - ')
+        .replace(/[ \t]+(?=#{1,6}\s)/g, '\n\n')
+        .replace(/([^\n])(?=#{1,6}\s)/g, '$1\n\n')
+        .replace(/[ \t]+(?=(?:[-*+] )(?:(?:\*\*)|(?:`)|[A-Za-z\u4e00-\u9fff]))/g, '\n')
+        .replace(/[ \t]+(?=\d{1,2}\. (?:(?:\*\*)|(?:`)|[A-Za-z\u4e00-\u9fff]))/g, '\n');
+    })
+    .join('');
+}
+
 function AgentMarkdown({ content }: { content: string }) {
   return (
-    <div className="prose prose-slate dark:prose-invert prose-sm max-w-none">
+    <div className="agent-markdown prose prose-slate dark:prose-invert prose-sm max-w-none break-words [overflow-wrap:anywhere]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          h1: ({ children }) => <h3 className="!mt-0 !mb-3 !text-lg !font-bold !leading-snug text-slate-900 dark:text-white">{children}</h3>,
+          h2: ({ children }) => <h3 className="!mt-4 !mb-2 !text-base !font-bold !leading-snug text-slate-900 dark:text-white">{children}</h3>,
+          h3: ({ children }) => <h4 className="!mt-4 !mb-2 !text-sm !font-bold !leading-snug text-primary-700 dark:text-primary-300">{children}</h4>,
+          p: ({ children }) => <p className="!my-2 leading-7">{children}</p>,
+          ul: ({ children }) => <ul className="!my-2 !pl-5 space-y-1">{children}</ul>,
+          ol: ({ children }) => <ol className="!my-2 !pl-5 space-y-1">{children}</ol>,
+          li: ({ children }) => <li className="leading-7 [&>p]:!my-0">{children}</li>,
+          blockquote: ({ children }) => <blockquote className="!my-3 border-l-4 border-primary-300 dark:border-primary-600 bg-primary-50/70 dark:bg-primary-900/20 px-3 py-2 text-slate-600 dark:text-slate-300">{children}</blockquote>,
+          hr: () => <hr className="!my-4 border-slate-200 dark:border-slate-600" />,
           code: ({ className, children }) => {
             const match = /language-(\w+)/.exec(className || '');
             if (!match) {
@@ -104,7 +160,7 @@ function AgentMarkdown({ content }: { content: string }) {
           pre: ({ children }) => <>{children}</>,
         }}
       >
-        {content}
+        {normalizeAgentMarkdown(content)}
       </ReactMarkdown>
     </div>
   );
