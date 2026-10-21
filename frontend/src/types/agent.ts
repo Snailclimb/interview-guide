@@ -12,7 +12,7 @@ export interface AgentMessageRequest {
   providerId?: string;
 }
 
-export type AgentStepStatus = 'pending' | 'running' | 'completed';
+export type AgentStepStatus = 'pending' | 'running' | 'waiting' | 'completed';
 
 export interface AgentSource {
   kind: 'skill' | 'rag';

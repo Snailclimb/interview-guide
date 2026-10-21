@@ -16,7 +16,7 @@ import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
-import reactor.util.retry.Retry;
+import reactor.core.publisher.Mono;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 /**
  * 面试教练 Agent 编排服务。
@@ -35,7 +36,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Slf4j
 @Service
 public class InterviewAgentService {
-    private static final int MODEL_RETRY_ATTEMPTS = 2;
+    /** 最多等待并重试 6 次；退避时间合计约 90 秒，并通过 SSE 持续告知前端。 */
+    private static final int MODEL_RETRY_ATTEMPTS = 6;
 
     private final AgentContextService agentContextService;
     private final LlmProviderRegistry llmProviderRegistry;
@@ -95,31 +97,16 @@ public class InterviewAgentService {
             List<Message> history = buildModelHistory(historyMessages);
             ChatClient chatClient = llmProviderRegistry.getPlainChatClient(request.providerId());
 
-            var promptSpec = chatClient.prompt().system(systemPrompt);
-            if (!history.isEmpty()) {
-                promptSpec = promptSpec.messages(history);
-            }
-
-            AtomicBoolean modelOutputStarted = new AtomicBoolean();
-            Flux<AgentStreamEvent> response = promptSpec
-                .user(userPrompt)
-                .stream()
-                .content()
-                .doOnNext(content -> modelOutputStarted.set(true))
-                .map(AgentStreamEvent::delta)
-                .retryWhen(Retry.backoff(MODEL_RETRY_ATTEMPTS, Duration.ofSeconds(1))
-                    .maxBackoff(Duration.ofSeconds(4))
-                    .jitter(0.2)
-                    .filter(error -> !modelOutputStarted.get() && isTransientModelError(error))
-                    .doBeforeRetry(signal -> log.warn(
-                        "Agent 模型服务暂时繁忙，将进行第 {} 次重试: providerId={}",
-                        signal.totalRetries() + 1,
-                        request.providerId())))
-                .concatWith(Flux.just(
-                    AgentStreamEvent.step("insight", "completed"),
-                    AgentStreamEvent.step("action", "completed"),
-                    AgentStreamEvent.done()
-                ));
+            Supplier<Flux<String>> modelStream = () -> {
+                var promptSpec = chatClient.prompt().system(systemPrompt);
+                if (!history.isEmpty()) {
+                    promptSpec = promptSpec.messages(history);
+                }
+                return promptSpec.user(userPrompt).stream().content();
+            };
+            Flux<AgentStreamEvent> response = streamModelWithRetry(
+                modelStream, request.providerId(), sessionId
+            );
 
             return Flux.concat(
                 Flux.just(
@@ -139,6 +126,62 @@ public class InterviewAgentService {
             log.error("面试教练 Agent 执行失败: sessionId={}", sessionId, error);
             return Flux.just(AgentStreamEvent.error(toAgentErrorMessage(error)));
         });
+    }
+
+    private Flux<AgentStreamEvent> streamModelWithRetry(
+        Supplier<Flux<String>> modelStream,
+        String providerId,
+        String sessionId
+    ) {
+        AtomicBoolean modelOutputStarted = new AtomicBoolean();
+        return streamModelAttempt(modelStream, providerId, sessionId, modelOutputStarted, 0)
+            .concatWith(Flux.just(
+                AgentStreamEvent.step("insight", "completed"),
+                AgentStreamEvent.step("action", "completed"),
+                AgentStreamEvent.done()
+            ));
+    }
+
+    private Flux<AgentStreamEvent> streamModelAttempt(
+        Supplier<Flux<String>> modelStream,
+        String providerId,
+        String sessionId,
+        AtomicBoolean modelOutputStarted,
+        int attempt
+    ) {
+        return Flux.defer(modelStream)
+            .doOnNext(content -> modelOutputStarted.set(true))
+            .map(AgentStreamEvent::delta)
+            .onErrorResume(error -> {
+                if (!modelOutputStarted.get()
+                    && isTransientModelError(error)
+                    && attempt < MODEL_RETRY_ATTEMPTS) {
+                    Duration delay = retryDelay(attempt);
+                    int retryNumber = attempt + 1;
+                    log.warn(
+                        "Agent 模型服务暂时繁忙，将在 {} 秒后进行第 {} 次重试: providerId={}, sessionId={}",
+                        delay.toSeconds(), retryNumber, providerId, sessionId
+                    );
+                    return Flux.concat(
+                        Flux.just(AgentStreamEvent.waiting(
+                            "insight",
+                            "模型服务暂时繁忙，正在等待资源（第 " + retryNumber + "/"
+                                + MODEL_RETRY_ATTEMPTS + " 次重试）"
+                        )),
+                        Mono.delay(delay).thenMany(Flux.concat(
+                            Flux.just(AgentStreamEvent.step("insight", "running")),
+                            streamModelAttempt(
+                                modelStream, providerId, sessionId, modelOutputStarted, retryNumber
+                            )
+                        ))
+                    );
+                }
+                return Flux.error(error);
+            });
+    }
+
+    private Duration retryDelay(int attempt) {
+        return Duration.ofSeconds(Math.min(30, 2L << attempt));
     }
 
     private String toAgentErrorMessage(Throwable error) {

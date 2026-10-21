@@ -29,7 +29,7 @@ import { getErrorMessage } from '../api/request';
 import CodeBlock from '../components/CodeBlock';
 import type { AgentGoal, AgentHistoryMessage, AgentSource, AgentStreamEvent } from '../types/agent';
 type RunStatus = 'idle' | 'running' | 'completed' | 'error';
-type StepStatus = 'pending' | 'running' | 'completed';
+type StepStatus = 'pending' | 'running' | 'waiting' | 'completed';
 
 interface AgentStep {
   id: string;
@@ -178,6 +178,7 @@ export default function AgentPage() {
   const [runError, setRunError] = useState('');
   const [steps, setSteps] = useState<AgentStep[]>(createInitialSteps);
   const [sources, setSources] = useState<AgentSource[]>([]);
+  const [runNotice, setRunNotice] = useState('');
   const [messages, setMessages] = useState<AgentMessage[]>([
     {
       id: 1,
@@ -251,6 +252,7 @@ export default function AgentPage() {
 
     setInput('');
     setRunError('');
+    setRunNotice('');
     setSources([]);
     setRunStatus('running');
     setSteps(createInitialSteps().map((step, index) => ({
@@ -269,6 +271,11 @@ export default function AgentPage() {
       {
         onEvent: (event) => {
           updateStep(event);
+          if (event.type === 'step' && event.status === 'waiting') {
+            setRunNotice(event.message || '模型服务繁忙，正在等待资源后重试...');
+          } else if (event.type === 'step' && event.status === 'running') {
+            setRunNotice('');
+          }
           if (event.type === 'sources') {
             setSources(event.sources ?? []);
           }
@@ -279,6 +286,7 @@ export default function AgentPage() {
           }
           if (event.type === 'error') {
             const message = event.message || 'Agent 执行失败，请稍后重试';
+            setRunNotice('');
             setRunError(message);
             setRunStatus('error');
             setMessages((current) => current.map((item) => item.id === assistantMessageId
@@ -286,6 +294,7 @@ export default function AgentPage() {
               : item));
           }
           if (event.type === 'done') {
+            setRunNotice('');
             setRunStatus((current) => current === 'running' ? 'completed' : current);
           }
         },
@@ -456,9 +465,11 @@ export default function AgentPage() {
                       ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-300'
                       : step.status === 'running'
                         ? 'bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-300'
+                        : step.status === 'waiting'
+                          ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300'
                         : 'bg-slate-100 dark:bg-slate-700 text-slate-400'
                       }`}>
-                      {step.status === 'completed' ? <CheckCircle2 className="w-4 h-4" /> : step.status === 'running' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Circle className="w-4 h-4" />}
+                      {step.status === 'completed' ? <CheckCircle2 className="w-4 h-4" /> : step.status === 'running' ? <Loader2 className="w-4 h-4 animate-spin" /> : step.status === 'waiting' ? <Clock3 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
                     </div>
                     {index < steps.length - 1 && <div className="w-px flex-1 bg-slate-200 dark:bg-slate-700 my-1" />}
                   </div>
@@ -479,7 +490,7 @@ export default function AgentPage() {
                 {runStatus === 'running' ? 'Agent 执行中' : runStatus === 'completed' ? '再次运行' : runStatus === 'error' ? '重试执行' : '开始执行'}
               </button>
               {(runStatus === 'completed' || runStatus === 'error') && (
-                <button onClick={() => { setRunStatus('idle'); setRunError(''); setSources([]); setSteps(createInitialSteps()); }} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm">
+                <button onClick={() => { setRunStatus('idle'); setRunError(''); setRunNotice(''); setSources([]); setSteps(createInitialSteps()); }} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm">
                   <RotateCcw className="w-4 h-4" />
                   清空流程
                 </button>
@@ -489,6 +500,7 @@ export default function AgentPage() {
                 预计 1 分钟内完成
               </span>
             </div>
+            {runNotice && <p className="text-sm text-amber-600 dark:text-amber-300 mt-3">{runNotice}</p>}
             {runError && <p className="text-sm text-rose-500 dark:text-rose-300 mt-3">{runError}</p>}
             {sources.length > 0 && (
               <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
