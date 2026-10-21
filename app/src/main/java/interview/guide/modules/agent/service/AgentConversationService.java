@@ -34,10 +34,11 @@ public class AgentConversationService {
         String providerId,
         String userContent
     ) {
-        AgentChatSessionEntity session = sessionRepository.findByInterviewSessionId(interviewSessionId)
-            .orElseGet(() -> AgentChatSessionEntity.builder()
-                .interviewSessionId(interviewSessionId)
-                .build());
+        AgentChatSessionEntity session = sessionRepository.findByInterviewSessionIdForUpdate(interviewSessionId)
+            .orElseGet(() -> sessionRepository.findByInterviewSessionId(interviewSessionId)
+                .orElseGet(() -> AgentChatSessionEntity.builder()
+                    .interviewSessionId(interviewSessionId)
+                    .build()));
         session.setGoal(goal);
         if (providerId != null && !providerId.isBlank()) {
             session.setProviderId(providerId);

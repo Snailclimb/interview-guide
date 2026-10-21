@@ -36,6 +36,8 @@ class AgentConversationServiceTest {
     @Test
     @DisplayName("准备 Agent 消息时创建独立会话、用户消息和助手占位消息")
     void prepareMessageCreatesSessionAndMessagePair() {
+        when(sessionRepository.findByInterviewSessionIdForUpdate("interview-1"))
+            .thenReturn(Optional.empty());
         when(sessionRepository.findByInterviewSessionId("interview-1"))
             .thenReturn(Optional.empty());
         when(sessionRepository.save(any(AgentChatSessionEntity.class)))
