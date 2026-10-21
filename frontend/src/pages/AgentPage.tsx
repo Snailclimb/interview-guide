@@ -251,7 +251,15 @@ export default function AgentPage() {
     let cancelled = false;
     agentApi.getConversation(sessionId)
       .then((conversation) => {
-        if (cancelled || conversation.messages.length === 0) return;
+        if (cancelled) return;
+
+        if (conversation.goal === 'review' || conversation.goal === 'practice' || conversation.goal === 'plan') {
+          setGoal(conversation.goal);
+        }
+        if (conversation.providerId) {
+          setProviderId(conversation.providerId);
+        }
+        if (conversation.messages.length === 0) return;
 
         const restoredMessages: AgentMessage[] = [
           {
@@ -266,12 +274,6 @@ export default function AgentPage() {
           })),
         ];
         setMessages(restoredMessages);
-        if (conversation.goal === 'review' || conversation.goal === 'practice' || conversation.goal === 'plan') {
-          setGoal(conversation.goal);
-        }
-        if (conversation.providerId) {
-          setProviderId(conversation.providerId);
-        }
       })
       .catch(() => {
         // 会话恢复失败不阻塞当前 Agent，仍允许用户从空白上下文开始。

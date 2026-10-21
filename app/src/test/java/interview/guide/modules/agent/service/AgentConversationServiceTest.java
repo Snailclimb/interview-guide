@@ -7,6 +7,7 @@ import interview.guide.modules.agent.repository.AgentChatMessageRepository;
 import interview.guide.modules.agent.repository.AgentChatSessionRepository;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -107,8 +108,10 @@ class AgentConversationServiceTest {
             .build();
         when(sessionRepository.findByInterviewSessionId("interview-1"))
             .thenReturn(Optional.of(session));
-        when(messageRepository.findBySessionIdAndCompletedTrueOrderBySequenceNumAsc(11L))
-            .thenReturn(List.of(user, assistant));
+        when(messageRepository.findBySessionIdAndCompletedTrueOrderBySequenceNumDesc(
+            org.mockito.ArgumentMatchers.eq(11L), any(Pageable.class)
+        ))
+            .thenReturn(List.of(assistant, user));
 
         AgentConversationResponse response = service.getConversation("interview-1");
 

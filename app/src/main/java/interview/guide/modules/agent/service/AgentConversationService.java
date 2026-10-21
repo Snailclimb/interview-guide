@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 /**
@@ -23,6 +24,8 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class AgentConversationService {
+
+    private static final int MAX_PERSISTED_HISTORY_MESSAGES = 64;
 
     private final AgentChatSessionRepository sessionRepository;
     private final AgentChatMessageRepository messageRepository;
@@ -106,9 +109,12 @@ public class AgentConversationService {
             return new AgentConversationResponse(interviewSessionId, null, null, List.of());
         }
 
+        List<AgentChatMessageEntity> recentMessages = messageRepository
+            .findBySessionIdAndCompletedTrueOrderBySequenceNumDesc(
+                session.getId(), PageRequest.of(0, MAX_PERSISTED_HISTORY_MESSAGES)
+            );
         List<AgentHistoryMessage> messages = new ArrayList<>();
-        for (AgentChatMessageEntity message : messageRepository
-            .findBySessionIdAndCompletedTrueOrderBySequenceNumAsc(session.getId())) {
+        for (AgentChatMessageEntity message : recentMessages.reversed()) {
             if (message.getContent() == null || message.getContent().isBlank()) {
                 continue;
             }
