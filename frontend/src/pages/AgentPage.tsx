@@ -44,8 +44,7 @@ interface AgentMessage {
   content: string;
 }
 
-const MAX_HISTORY_MESSAGES = 8;
-const MAX_HISTORY_MESSAGE_CHARS = 2_800;
+const MAX_HISTORY_MESSAGES = 128;
 
 const goalOptions: Array<{ id: AgentGoal; title: string; description: string }> = [
   { id: 'review', title: '复盘本场面试', description: '分析表现，提炼优势和改进点' },
@@ -78,12 +77,7 @@ function buildAgentHistory(messages: AgentMessage[]): AgentHistoryMessage[] {
   return messages
     .filter((message) => message.content.trim().length > 0)
     .slice(-MAX_HISTORY_MESSAGES)
-    .map(({ role, content }) => ({
-      role,
-      content: content.length <= MAX_HISTORY_MESSAGE_CHARS
-        ? content
-        : `${content.slice(0, MAX_HISTORY_MESSAGE_CHARS - 12)}\n[历史回答已截断]`,
-    }));
+    .map(({ role, content }) => ({ role, content }));
 }
 
 function AgentMarkdown({ content }: { content: string }) {

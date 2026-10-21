@@ -106,6 +106,23 @@ public class PromptSanitizer {
     }
 
     /**
+     * 用固定分隔符包裹会话级固定资料。
+     *
+     * <p>固定资料位于 Prompt 前缀中，不能使用 {@link #wrapWithDelimiters(String, String)}
+     * 的随机 UUID，否则同一会话每次请求都会产生不同的前缀，降低模型提供商前缀缓存命中率。
+     * 文本仍会经过净化，避免资料内容伪造边界标签或角色指令。</p>
+     */
+    public String wrapWithStableDelimiters(String label, String text) {
+        String safeLabel = label == null || label.isBlank()
+            ? "data"
+            : label.replaceAll("[^a-zA-Z0-9_-]", "-");
+        String safeText = sanitize(text);
+        String openTag = "<data-boundary-" + safeLabel + ">";
+        String closeTag = "</data-boundary-" + safeLabel + ">";
+        return openTag + "\n" + (safeText == null ? "" : safeText) + "\n" + closeTag;
+    }
+
+    /**
      * 检测注入尝试（仅日志告警，不阻断）。
      */
     public boolean detectInjectionAttempt(String text) {

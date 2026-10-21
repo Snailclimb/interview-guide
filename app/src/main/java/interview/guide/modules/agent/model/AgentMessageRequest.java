@@ -16,7 +16,6 @@ public record AgentMessageRequest(
     @NotBlank
     @Size(max = 4000)
     String message,
-    @Size(max = 12)
     List<@Valid AgentHistoryMessage> history,
     @Size(max = 64)
     String providerId

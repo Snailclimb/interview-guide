@@ -20,7 +20,6 @@ import reactor.core.publisher.Flux;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -33,13 +32,11 @@ import java.util.Map;
 @Slf4j
 @Service
 public class InterviewAgentService {
-    private static final int MAX_HISTORY_MESSAGES = 8;
-    private static final int MAX_HISTORY_CHARS = 6_000;
-
     private final AgentContextService agentContextService;
     private final LlmProviderRegistry llmProviderRegistry;
     private final PromptSanitizer promptSanitizer;
     private final PromptTemplate systemPromptTemplate;
+    private final PromptTemplate fixedContextPromptTemplate;
     private final PromptTemplate userPromptTemplate;
 
     public InterviewAgentService(
@@ -54,6 +51,9 @@ public class InterviewAgentService {
         this.systemPromptTemplate = new PromptTemplate(resourceLoader
             .getResource("classpath:prompts/agent-interview-coach-system.st")
             .getContentAsString(StandardCharsets.UTF_8));
+        this.fixedContextPromptTemplate = new PromptTemplate(resourceLoader
+            .getResource("classpath:prompts/agent-interview-coach-context.st")
+            .getContentAsString(StandardCharsets.UTF_8));
         this.userPromptTemplate = new PromptTemplate(resourceLoader
             .getResource("classpath:prompts/agent-interview-coach-user.st")
             .getContentAsString(StandardCharsets.UTF_8));
@@ -67,21 +67,27 @@ public class InterviewAgentService {
             Flux.just(AgentStreamEvent.step("context", "running")),
             Flux.defer(() -> {
             AgentContextService.AgentContext context = agentContextService.build(sessionId, request);
-            String historyText = buildHistoryText(request.history());
+            List<AgentHistoryMessage> historyMessages = AgentHistoryPolicy.normalize(request.history());
             String message = promptSanitizer.sanitize(request.message());
 
-            Map<String, Object> variables = new HashMap<>();
-            variables.put("goal", promptSanitizer.sanitize(request.goal()));
-            variables.put("question", promptSanitizer.wrapWithDelimiters("user-message", message));
-            variables.put("context", promptSanitizer.wrapWithDelimiters("interview-report", context.interviewReport()));
-            variables.put("skill", promptSanitizer.wrapWithDelimiters("skill-reference", context.skillReference()));
-            variables.put("rag", promptSanitizer.wrapWithDelimiters("rag-context", context.ragContext()));
-            variables.put("history", promptSanitizer.wrapWithDelimiters("conversation-history", historyText));
+            Map<String, Object> fixedContextVariables = Map.of(
+                "context", promptSanitizer.wrapWithStableDelimiters(
+                    "interview-report", context.interviewReport()),
+                "skill", promptSanitizer.wrapWithStableDelimiters(
+                    "skill-reference", context.skillReference())
+            );
+            Map<String, Object> variables = Map.of(
+                "goal", promptSanitizer.sanitize(request.goal()),
+                "question", promptSanitizer.wrapWithDelimiters("user-message", message),
+                "rag", promptSanitizer.wrapWithDelimiters("rag-context", context.ragContext())
+            );
 
             String systemPrompt = systemPromptTemplate.render()
-                + PromptSecurityConstants.ANTI_INJECTION_INSTRUCTION;
+                + PromptSecurityConstants.ANTI_INJECTION_INSTRUCTION
+                + "\n\n"
+                + fixedContextPromptTemplate.render(fixedContextVariables);
             String userPrompt = userPromptTemplate.render(variables);
-            List<Message> history = buildModelHistory(request.history());
+            List<Message> history = buildModelHistory(historyMessages);
             ChatClient chatClient = llmProviderRegistry.getPlainChatClient(request.providerId());
 
             var promptSpec = chatClient.prompt().system(systemPrompt);
@@ -120,33 +126,13 @@ public class InterviewAgentService {
         });
     }
 
-    private String buildHistoryText(List<AgentHistoryMessage> messages) {
-        if (messages == null || messages.isEmpty()) {
-            return "暂无历史对话";
-        }
-        StringBuilder result = new StringBuilder();
-        int start = Math.max(0, messages.size() - MAX_HISTORY_MESSAGES);
-        for (int index = start; index < messages.size(); index++) {
-            AgentHistoryMessage message = messages.get(index);
-            result.append(message.role()).append(": ")
-                .append(truncate(promptSanitizer.sanitize(message.content()), 1_000))
-                .append('\n');
-            if (result.length() >= MAX_HISTORY_CHARS) {
-                break;
-            }
-        }
-        return truncate(result.toString(), MAX_HISTORY_CHARS);
-    }
-
     private List<Message> buildModelHistory(List<AgentHistoryMessage> messages) {
         if (messages == null || messages.isEmpty()) {
             return List.of();
         }
         List<Message> result = new ArrayList<>();
-        int start = Math.max(0, messages.size() - MAX_HISTORY_MESSAGES);
-        for (int index = start; index < messages.size(); index++) {
-            AgentHistoryMessage message = messages.get(index);
-            String content = truncate(promptSanitizer.sanitize(message.content()), 1_000);
+        for (AgentHistoryMessage message : messages) {
+            String content = promptSanitizer.sanitize(message.content());
             if ("assistant".equals(message.role())) {
                 result.add(new AssistantMessage(content));
             } else {
@@ -154,12 +140,5 @@ public class InterviewAgentService {
             }
         }
         return result;
-    }
-
-    private String truncate(String value, int maxChars) {
-        if (value == null || value.length() <= maxChars) {
-            return value;
-        }
-        return value.substring(0, maxChars) + "\n[内容已截断]";
     }
 }
