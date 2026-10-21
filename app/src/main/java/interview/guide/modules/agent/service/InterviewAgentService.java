@@ -245,11 +245,11 @@ public class InterviewAgentService {
         return Flux.defer(modelStream)
             .doOnNext(content -> {
                 modelOutputStarted.set(true);
-                llmProviderRegistry.markChatProviderSuccess(providerId);
                 if (content != null) {
                     output.get().append(content);
                 }
             })
+            .doOnComplete(() -> llmProviderRegistry.markChatProviderSuccess(providerId))
             .map(AgentStreamEvent::delta)
             .onErrorResume(error -> {
                 if (isProviderSwitchableError(error)) {
