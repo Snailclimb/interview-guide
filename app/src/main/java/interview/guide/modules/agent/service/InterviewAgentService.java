@@ -26,6 +26,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /**
@@ -47,6 +49,7 @@ public class InterviewAgentService {
     private final PromptTemplate systemPromptTemplate;
     private final PromptTemplate fixedContextPromptTemplate;
     private final PromptTemplate userPromptTemplate;
+    private final Set<String> activeSessions = ConcurrentHashMap.newKeySet();
 
     public InterviewAgentService(
         AgentContextService agentContextService,
@@ -77,7 +80,11 @@ public class InterviewAgentService {
         return Flux.concat(
             Flux.just(AgentStreamEvent.step("context", "running")),
             Flux.defer(() -> {
-            AgentContextService.AgentContext context = agentContextService.build(sessionId, request);
+            if (!activeSessions.add(sessionId)) {
+                return Flux.just(AgentStreamEvent.error("当前面试已有一个 Agent 任务正在执行，请等待完成后再试"));
+            }
+            try {
+                AgentContextService.AgentContext context = agentContextService.build(sessionId, request);
             String message = promptSanitizer.sanitize(request.message());
             List<AgentHistoryMessage> persistedHistory = agentConversationService.loadHistory(sessionId);
             List<AgentHistoryMessage> historyMessages = AgentHistoryPolicy.normalize(
@@ -136,7 +143,11 @@ public class InterviewAgentService {
                     AgentStreamEvent.step("action", "running")
                 ),
                 response
-            );
+            ).doFinally(signal -> activeSessions.remove(sessionId));
+            } catch (Throwable error) {
+                activeSessions.remove(sessionId);
+                return Flux.error(error);
+            }
         })
         ).onErrorResume(BusinessException.class, error -> Flux.just(
             AgentStreamEvent.error(error.getMessage())
