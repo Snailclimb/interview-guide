@@ -14,10 +14,18 @@ export interface AgentMessageRequest {
 
 export type AgentStepStatus = 'pending' | 'running' | 'completed';
 
+export interface AgentSource {
+  kind: 'skill' | 'rag';
+  title: string;
+  score?: number | null;
+  reference: string;
+}
+
 export interface AgentStreamEvent {
-  type: 'step' | 'delta' | 'done' | 'error';
+  type: 'step' | 'delta' | 'sources' | 'done' | 'error';
   step?: string;
   status?: AgentStepStatus;
   content?: string;
   message?: string;
+  sources?: AgentSource[];
 }

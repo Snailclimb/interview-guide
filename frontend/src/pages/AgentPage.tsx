@@ -24,7 +24,7 @@ import {
 import { agentApi } from '../api/agent';
 import { historyApi, type InterviewDetail } from '../api/history';
 import { getErrorMessage } from '../api/request';
-import type { AgentGoal, AgentHistoryMessage, AgentStreamEvent } from '../types/agent';
+import type { AgentGoal, AgentHistoryMessage, AgentSource, AgentStreamEvent } from '../types/agent';
 type RunStatus = 'idle' | 'running' | 'completed' | 'error';
 type StepStatus = 'pending' | 'running' | 'completed';
 
@@ -50,6 +50,7 @@ const goalOptions: Array<{ id: AgentGoal; title: string; description: string }> 
 const createInitialSteps = (): AgentStep[] => [
   { id: 'context', title: '整理面试上下文', description: '读取本场面试的问题、回答和评分', status: 'pending' },
   { id: 'insight', title: '识别表现模式', description: '归纳回答中的优势、风险和知识盲区', status: 'pending' },
+  { id: 'retrieval', title: '检索相关知识', description: '结合 Skill 和知识库补充训练依据', status: 'pending' },
   { id: 'action', title: '生成下一步建议', description: '给出可执行的训练任务和追问方向', status: 'pending' },
 ];
 
@@ -78,6 +79,7 @@ export default function AgentPage() {
   const [runStatus, setRunStatus] = useState<RunStatus>('idle');
   const [runError, setRunError] = useState('');
   const [steps, setSteps] = useState<AgentStep[]>(createInitialSteps);
+  const [sources, setSources] = useState<AgentSource[]>([]);
   const [messages, setMessages] = useState<AgentMessage[]>([
     {
       id: 1,
@@ -154,6 +156,7 @@ export default function AgentPage() {
 
     setInput('');
     setRunError('');
+    setSources([]);
     setRunStatus('running');
     setSteps(createInitialSteps().map((step, index) => ({
       ...step,
@@ -171,6 +174,9 @@ export default function AgentPage() {
       {
         onEvent: (event) => {
           updateStep(event);
+          if (event.type === 'sources') {
+            setSources(event.sources ?? []);
+          }
           if (event.type === 'delta' && event.content) {
             setMessages((current) => current.map((message) => message.id === assistantMessageId
               ? { ...message, content: message.content + event.content }
@@ -343,7 +349,7 @@ export default function AgentPage() {
               <div>
                 <p className="text-xs font-semibold text-primary-500 uppercase tracking-wider mb-1">Workflow</p>
                 <h2 className="text-lg font-semibold dark-text">Agent 工作流</h2>
-                <p className="text-sm dark-text-muted mt-1">工作流状态和模型回答由后端 Agent 实时推送。</p>
+                <p className="text-sm dark-text-muted mt-1">后端会结合面试报告、Skill 和知识库生成建议。</p>
               </div>
               <Sparkles className="w-5 h-5 text-primary-500" />
             </div>
@@ -378,7 +384,7 @@ export default function AgentPage() {
                 {runStatus === 'running' ? 'Agent 执行中' : runStatus === 'completed' ? '再次运行' : runStatus === 'error' ? '重试执行' : '开始执行'}
               </button>
               {(runStatus === 'completed' || runStatus === 'error') && (
-                <button onClick={() => { setRunStatus('idle'); setRunError(''); setSteps(createInitialSteps()); }} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm">
+                <button onClick={() => { setRunStatus('idle'); setRunError(''); setSources([]); setSteps(createInitialSteps()); }} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm">
                   <RotateCcw className="w-4 h-4" />
                   清空流程
                 </button>
@@ -389,6 +395,18 @@ export default function AgentPage() {
               </span>
             </div>
             {runError && <p className="text-sm text-rose-500 dark:text-rose-300 mt-3">{runError}</p>}
+            {sources.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
+                <p className="text-xs font-semibold dark-text-muted mb-2">本次参考来源</p>
+                <div className="flex flex-wrap gap-2">
+                  {sources.map((source) => (
+                    <span key={`${source.kind}-${source.reference}`} className="text-xs px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                      {source.reference} · {source.title}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </section>
         </div>
 

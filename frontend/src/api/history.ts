@@ -42,6 +42,9 @@ export interface InterviewItem {
   sessionId: string;
   totalQuestions: number;
   status: string;
+  sourceType?: string;
+  knowledgeBaseId?: number | null;
+  skillId?: string | null;
   evaluateStatus?: EvaluateStatus;
   evaluateError?: string;
   overallScore: number | null;

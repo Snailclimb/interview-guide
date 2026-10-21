@@ -4,12 +4,9 @@ import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.ai.PromptSanitizer;
 import interview.guide.common.ai.PromptSecurityConstants;
 import interview.guide.common.exception.BusinessException;
-import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
 import interview.guide.modules.agent.model.AgentMessageRequest;
 import interview.guide.modules.agent.model.AgentStreamEvent;
-import interview.guide.modules.interview.model.InterviewDetailDTO;
-import interview.guide.modules.interview.service.InterviewHistoryService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -19,8 +16,6 @@ import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
-import tools.jackson.core.JacksonException;
-import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -38,28 +33,24 @@ import java.util.Map;
 @Slf4j
 @Service
 public class InterviewAgentService {
-    private static final int MAX_CONTEXT_CHARS = 14_000;
     private static final int MAX_HISTORY_MESSAGES = 8;
     private static final int MAX_HISTORY_CHARS = 6_000;
 
-    private final InterviewHistoryService interviewHistoryService;
+    private final AgentContextService agentContextService;
     private final LlmProviderRegistry llmProviderRegistry;
     private final PromptSanitizer promptSanitizer;
-    private final ObjectMapper objectMapper;
     private final PromptTemplate systemPromptTemplate;
     private final PromptTemplate userPromptTemplate;
 
     public InterviewAgentService(
-        InterviewHistoryService interviewHistoryService,
+        AgentContextService agentContextService,
         LlmProviderRegistry llmProviderRegistry,
         PromptSanitizer promptSanitizer,
-        ObjectMapper objectMapper,
         ResourceLoader resourceLoader
     ) throws IOException {
-        this.interviewHistoryService = interviewHistoryService;
+        this.agentContextService = agentContextService;
         this.llmProviderRegistry = llmProviderRegistry;
         this.promptSanitizer = promptSanitizer;
-        this.objectMapper = objectMapper;
         this.systemPromptTemplate = new PromptTemplate(resourceLoader
             .getResource("classpath:prompts/agent-interview-coach-system.st")
             .getContentAsString(StandardCharsets.UTF_8));
@@ -72,16 +63,19 @@ public class InterviewAgentService {
      * 执行一次面试教练任务并以 SSE 事件流返回结果。
      */
     public Flux<AgentStreamEvent> stream(String sessionId, AgentMessageRequest request) {
-        return Flux.defer(() -> {
-            InterviewDetailDTO detail = interviewHistoryService.getInterviewDetail(sessionId);
-            String context = serializeContext(detail);
+        return Flux.concat(
+            Flux.just(AgentStreamEvent.step("context", "running")),
+            Flux.defer(() -> {
+            AgentContextService.AgentContext context = agentContextService.build(sessionId, request);
             String historyText = buildHistoryText(request.history());
             String message = promptSanitizer.sanitize(request.message());
 
             Map<String, Object> variables = new HashMap<>();
             variables.put("goal", promptSanitizer.sanitize(request.goal()));
             variables.put("question", promptSanitizer.wrapWithDelimiters("user-message", message));
-            variables.put("context", promptSanitizer.wrapWithDelimiters("interview-report", context));
+            variables.put("context", promptSanitizer.wrapWithDelimiters("interview-report", context.interviewReport()));
+            variables.put("skill", promptSanitizer.wrapWithDelimiters("skill-reference", context.skillReference()));
+            variables.put("rag", promptSanitizer.wrapWithDelimiters("rag-context", context.ragContext()));
             variables.put("history", promptSanitizer.wrapWithDelimiters("conversation-history", historyText));
 
             String systemPrompt = systemPromptTemplate.render()
@@ -109,26 +103,21 @@ public class InterviewAgentService {
             return Flux.concat(
                 Flux.just(
                     AgentStreamEvent.step("context", "completed"),
-                    AgentStreamEvent.step("insight", "running")
+                    AgentStreamEvent.step("insight", "running"),
+                    AgentStreamEvent.step("retrieval", "running"),
+                    AgentStreamEvent.step("retrieval", "completed"),
+                    AgentStreamEvent.sources(context.sources()),
+                    AgentStreamEvent.step("action", "running")
                 ),
                 response
             );
-        }).onErrorResume(BusinessException.class, error -> Flux.just(
+        })
+        ).onErrorResume(BusinessException.class, error -> Flux.just(
             AgentStreamEvent.error(error.getMessage())
         )).onErrorResume(Exception.class, error -> {
             log.error("面试教练 Agent 执行失败: sessionId={}", sessionId, error);
             return Flux.just(AgentStreamEvent.error("AI 面试教练暂时不可用，请稍后重试"));
         });
-    }
-
-    private String serializeContext(InterviewDetailDTO detail) {
-        try {
-            String json = objectMapper.writeValueAsString(detail);
-            return truncate(json, MAX_CONTEXT_CHARS);
-        } catch (JacksonException error) {
-            log.error("序列化面试上下文失败: sessionId={}", detail.sessionId(), error);
-            throw new BusinessException(ErrorCode.AI_SERVICE_ERROR, "面试上下文整理失败");
-        }
     }
 
     private String buildHistoryText(List<AgentHistoryMessage> messages) {
