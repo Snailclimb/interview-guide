@@ -16,12 +16,15 @@ import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.util.retry.Retry;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 面试教练 Agent 编排服务。
@@ -32,6 +35,8 @@ import java.util.Map;
 @Slf4j
 @Service
 public class InterviewAgentService {
+    private static final int MODEL_RETRY_ATTEMPTS = 2;
+
     private final AgentContextService agentContextService;
     private final LlmProviderRegistry llmProviderRegistry;
     private final PromptSanitizer promptSanitizer;
@@ -95,11 +100,21 @@ public class InterviewAgentService {
                 promptSpec = promptSpec.messages(history);
             }
 
+            AtomicBoolean modelOutputStarted = new AtomicBoolean();
             Flux<AgentStreamEvent> response = promptSpec
                 .user(userPrompt)
                 .stream()
                 .content()
+                .doOnNext(content -> modelOutputStarted.set(true))
                 .map(AgentStreamEvent::delta)
+                .retryWhen(Retry.backoff(MODEL_RETRY_ATTEMPTS, Duration.ofSeconds(1))
+                    .maxBackoff(Duration.ofSeconds(4))
+                    .jitter(0.2)
+                    .filter(error -> !modelOutputStarted.get() && isTransientModelError(error))
+                    .doBeforeRetry(signal -> log.warn(
+                        "Agent 模型服务暂时繁忙，将进行第 {} 次重试: providerId={}",
+                        signal.totalRetries() + 1,
+                        request.providerId())))
                 .concatWith(Flux.just(
                     AgentStreamEvent.step("insight", "completed"),
                     AgentStreamEvent.step("action", "completed"),
@@ -122,8 +137,53 @@ public class InterviewAgentService {
             AgentStreamEvent.error(error.getMessage())
         )).onErrorResume(Exception.class, error -> {
             log.error("面试教练 Agent 执行失败: sessionId={}", sessionId, error);
-            return Flux.just(AgentStreamEvent.error("AI 面试教练暂时不可用，请稍后重试"));
+            return Flux.just(AgentStreamEvent.error(toAgentErrorMessage(error)));
         });
+    }
+
+    private String toAgentErrorMessage(Throwable error) {
+        if (isProviderAccountUnavailable(error)) {
+            return "当前模型账号不可用，请在模型设置中检查 API Key 或切换其他模型";
+        }
+        if (isTransientModelError(error)) {
+            return "当前模型服务繁忙，请稍后重试；也可以在模型设置中切换其他模型";
+        }
+        return "AI 面试教练暂时不可用，请稍后重试";
+    }
+
+    private boolean isTransientModelError(Throwable error) {
+        for (Throwable current = error; current != null; current = current.getCause()) {
+            String message = current.getMessage();
+            if (message == null) {
+                continue;
+            }
+            String normalized = message.toLowerCase(java.util.Locale.ROOT);
+            if (normalized.contains("overloaded")
+                || normalized.contains("temporarily unavailable")
+                || normalized.contains("service unavailable")
+                || normalized.contains("try again later")
+                || normalized.contains("concurrency limit")
+                || normalized.contains("rate limit")
+                || normalized.contains("too many requests")
+                || normalized.contains("429")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isProviderAccountUnavailable(Throwable error) {
+        for (Throwable current = error; current != null; current = current.getCause()) {
+            String message = current.getMessage();
+            if (message == null) {
+                continue;
+            }
+            String normalized = message.toLowerCase(java.util.Locale.ROOT);
+            if (normalized.contains("selected account") && normalized.contains("no longer available")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private List<Message> buildModelHistory(List<AgentHistoryMessage> messages) {
