@@ -1,4 +1,4 @@
-import type { AgentGoal } from '../types/agent';
+import type { AgentConversationResponse, AgentGoal } from '../types/agent';
 
 export interface AgentRunRequest {
   goal: AgentGoal;
@@ -15,6 +15,24 @@ export interface AgentRunMessage {
   id: number;
   role: 'assistant' | 'user';
   content: string;
+}
+
+function isAgentGoal(value: string | null | undefined): value is AgentGoal {
+  return value === 'review' || value === 'practice' || value === 'plan';
+}
+
+/** 从持久化失败会话中恢复可重试的原始用户请求。 */
+export function getRetryableRequest(conversation: AgentConversationResponse): AgentRunRequest | null {
+  if (conversation.runStatus !== 'FAILED') return null;
+  const lastUserMessage = [...conversation.messages].reverse()
+    .find((message) => message.role === 'user' && message.content.trim().length > 0);
+  if (!lastUserMessage) return null;
+
+  return {
+    goal: isAgentGoal(conversation.goal) ? conversation.goal : 'review',
+    message: lastUserMessage.content,
+    providerId: conversation.providerId || undefined,
+  };
 }
 
 /**

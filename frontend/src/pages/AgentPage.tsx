@@ -28,7 +28,7 @@ import { historyApi, type InterviewDetail } from '../api/history';
 import { llmProviderApi } from '../api/llmProvider';
 import { getErrorMessage } from '../api/request';
 import CodeBlock from '../components/CodeBlock';
-import { removeLastRunMessages, type AgentRunMessageIds, type AgentRunRequest } from './agentRun';
+import { getRetryableRequest, removeLastRunMessages, type AgentRunMessageIds, type AgentRunRequest } from './agentRun';
 import type {
   AgentGoal,
   AgentConversationResponse,
@@ -232,6 +232,13 @@ export default function AgentPage() {
     setMessages(restoredMessages);
   }, []);
 
+  const rememberRetryableRequest = useCallback((conversation: AgentConversationResponse) => {
+    const retryableRequest = getRetryableRequest(conversation);
+    if (!retryableRequest) return;
+    lastRunRequestRef.current = retryableRequest;
+    lastRunMessageIdsRef.current = null;
+  }, []);
+
   const reconcileConversation = useCallback((currentSessionId: string, fallbackAssistant?: AgentMessage) => {
     clearReconciliationTimer();
     let attempts = 0;
@@ -249,6 +256,7 @@ export default function AgentPage() {
           }
 
           clearReconciliationTimer();
+          rememberRetryableRequest(conversation);
           restoreConversationMessages(conversation, fallbackAssistant);
           if (conversation.runStatus === 'COMPLETED') {
             setRunError('');
@@ -280,7 +288,7 @@ export default function AgentPage() {
     };
 
     poll();
-  }, [clearReconciliationTimer, restoreConversationMessages]);
+  }, [clearReconciliationTimer, rememberRetryableRequest, restoreConversationMessages]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -337,6 +345,8 @@ export default function AgentPage() {
       .then((conversation) => {
         if (cancelled) return;
 
+        rememberRetryableRequest(conversation);
+
         if (conversation.goal === 'review' || conversation.goal === 'practice' || conversation.goal === 'plan') {
           setGoal(conversation.goal);
         }
@@ -371,7 +381,7 @@ export default function AgentPage() {
       cancelled = true;
       clearReconciliationTimer();
     };
-  }, [reconcileConversation, restoreConversationMessages, sessionId]);
+  }, [reconcileConversation, rememberRetryableRequest, restoreConversationMessages, sessionId]);
 
   useEffect(() => () => {
     abortRef.current?.abort();

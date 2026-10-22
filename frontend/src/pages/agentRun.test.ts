@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { removeLastRunMessages, type AgentRunRequest } from './agentRun.ts';
+import { getRetryableRequest, removeLastRunMessages, type AgentRunRequest } from './agentRun.ts';
 
 const request: AgentRunRequest = {
   goal: 'review',
@@ -39,4 +39,40 @@ test('末尾不是该请求时不误删正常历史', () => {
   ];
 
   assert.deepEqual(removeLastRunMessages(messages, request), messages);
+});
+
+test('页面刷新后从失败会话恢复原始请求', () => {
+  assert.deepEqual(getRetryableRequest({
+    interviewSessionId: 'session-1',
+    goal: 'practice',
+    providerId: 'backup',
+    runId: 'run-1',
+    runStatus: 'FAILED',
+    runStartedAt: null,
+    runFinishedAt: null,
+    runError: '模型不可用',
+    messages: [
+      { role: 'user', content: '之前的问题' },
+      { role: 'assistant', content: '之前的回答' },
+      { role: 'user', content: '这次失败的问题' },
+    ],
+  }), {
+    goal: 'practice',
+    message: '这次失败的问题',
+    providerId: 'backup',
+  });
+});
+
+test('没有失败状态或没有用户消息时不生成重试请求', () => {
+  assert.equal(getRetryableRequest({
+    interviewSessionId: 'session-1',
+    goal: 'review',
+    providerId: null,
+    runId: null,
+    runStatus: 'COMPLETED',
+    runStartedAt: null,
+    runFinishedAt: null,
+    runError: null,
+    messages: [],
+  }), null);
 });
