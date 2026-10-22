@@ -16,6 +16,7 @@ import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
@@ -139,7 +140,7 @@ public class InterviewAgentService {
                     context.sources()
                 );
 
-                return Flux.concat(
+                Flux<AgentStreamEvent> workflow = Flux.concat(
                     Flux.just(
                         AgentStreamEvent.step("context", "completed"),
                         AgentStreamEvent.step("insight", "running"),
@@ -155,6 +156,20 @@ public class InterviewAgentService {
                         activeSessions.remove(sessionId);
                         cancellationSignals.remove(sessionId, cancellationSignal);
                     });
+                // SSE 断开后不缓存全部 token；最终答案由 AgentConversationService 持久化。
+                return Flux.create(emitter -> {
+                    workflow.subscribe(
+                        emitter::next,
+                        error -> {
+                            log.error("面试教练 Agent 后台任务失败: sessionId={}", sessionId, error);
+                            if (!emitter.isCancelled()) {
+                                emitter.next(AgentStreamEvent.error(toAgentErrorMessage(error)));
+                            }
+                            emitter.complete();
+                        },
+                        emitter::complete
+                    );
+                }, FluxSink.OverflowStrategy.DROP);
             } catch (Throwable error) {
                 if (preparedAssistantMessageId != null) {
                     failPreparedMessage(preparedAssistantMessageId, error);
