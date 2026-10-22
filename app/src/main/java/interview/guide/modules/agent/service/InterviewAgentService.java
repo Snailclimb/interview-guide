@@ -92,6 +92,7 @@ public class InterviewAgentService {
             Sinks.One<Void> cancellationSignal = Sinks.one();
             cancellationSignals.put(sessionId, cancellationSignal);
             Long preparedAssistantMessageId = null;
+            AtomicReference<AgentTaskHandle> taskHandleRef = new AtomicReference<>();
             try {
                 AgentContextService.AgentContext context = agentContextService.build(sessionId, request);
                 String message = promptSanitizer.sanitize(request.message());
@@ -107,6 +108,11 @@ public class InterviewAgentService {
                     message
                 );
                 preparedAssistantMessageId = preparedMessage.assistantMessageId();
+                AgentTaskHandle taskHandle = new AgentTaskHandle(
+                    preparedMessage.assistantMessageId(), cancellationSignal
+                );
+                taskHandleRef.set(taskHandle);
+                activeTasks.put(sessionId, taskHandle);
 
                 Map<String, Object> fixedContextVariables = Map.of(
                     "context", promptSanitizer.wrapWithStableDelimiters(
@@ -159,13 +165,9 @@ public class InterviewAgentService {
                     .doFinally(signal -> {
                         activeSessions.remove(sessionId);
                         cancellationSignals.remove(sessionId, cancellationSignal);
-                        activeTasks.remove(sessionId);
+                        activeTasks.remove(sessionId, taskHandle);
                     });
                 // SSE 断开后不缓存全部 token；最终答案由 AgentConversationService 持久化。
-                AgentTaskHandle taskHandle = new AgentTaskHandle(
-                    preparedMessage.assistantMessageId(), cancellationSignal
-                );
-                activeTasks.put(sessionId, taskHandle);
                 return Flux.create(emitter -> {
                     taskHandle.subscription = workflow.subscribe(
                         emitter::next,
@@ -185,7 +187,12 @@ public class InterviewAgentService {
                 }
                 activeSessions.remove(sessionId);
                 cancellationSignals.remove(sessionId, cancellationSignal);
-                activeTasks.remove(sessionId);
+                AgentTaskHandle taskHandle = taskHandleRef.get();
+                if (taskHandle == null) {
+                    activeTasks.remove(sessionId);
+                } else {
+                    activeTasks.remove(sessionId, taskHandle);
+                }
                 return Flux.error(error);
             }
         })
