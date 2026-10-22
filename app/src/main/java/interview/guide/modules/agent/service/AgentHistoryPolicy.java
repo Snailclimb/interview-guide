@@ -27,12 +27,21 @@ public final class AgentHistoryPolicy {
     }
 
     public static List<AgentHistoryMessage> normalize(List<AgentHistoryMessage> messages) {
+        return normalize(messages, MAX_TOTAL_CHARS, MAX_MESSAGE_CHARS);
+    }
+
+    /** 在模型明确返回上下文超限时使用更紧的历史预算。 */
+    public static List<AgentHistoryMessage> normalize(
+        List<AgentHistoryMessage> messages,
+        int maxTotalChars,
+        int maxMessageChars
+    ) {
         if (messages == null || messages.isEmpty()) {
             return List.of();
         }
 
         List<AgentHistoryMessage> normalized = new ArrayList<>();
-        int remaining = MAX_TOTAL_CHARS;
+        int remaining = Math.max(0, maxTotalChars);
         int start = Math.max(0, messages.size() - MAX_MESSAGES);
         for (int index = messages.size() - 1; index >= start && remaining > 0; index--) {
             AgentHistoryMessage message = messages.get(index);
@@ -41,7 +50,7 @@ public final class AgentHistoryPolicy {
             }
 
             int roleOverhead = message.role().length() + 2;
-            int available = Math.min(MAX_MESSAGE_CHARS, remaining - roleOverhead);
+            int available = Math.min(Math.max(0, maxMessageChars), remaining - roleOverhead);
             if (available <= 0) {
                 break;
             }
