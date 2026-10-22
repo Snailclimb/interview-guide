@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { getRetryableRequest, removeLastRunMessages, type AgentRunRequest } from './agentRun.ts';
+import { getRetryableRequest, removeLastRunMessages, resolveRetryProviderId, type AgentRunRequest } from './agentRun.ts';
 
 const request: AgentRunRequest = {
   goal: 'review',
@@ -75,4 +75,9 @@ test('没有失败状态或没有用户消息时不生成重试请求', () => {
     runError: null,
     messages: [],
   }), null);
+});
+
+test('重试时优先使用用户刚选择的模型', () => {
+  assert.equal(resolveRetryProviderId('backup', 'primary'), 'backup');
+  assert.equal(resolveRetryProviderId('  ', 'primary'), 'primary');
 });

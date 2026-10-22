@@ -29,7 +29,7 @@ import { llmProviderApi } from '../api/llmProvider';
 import { getErrorMessage } from '../api/request';
 import { StreamHttpError } from '../api/stream';
 import CodeBlock from '../components/CodeBlock';
-import { getRetryableRequest, removeLastRunMessages, type AgentRunMessageIds, type AgentRunRequest } from './agentRun';
+import { getRetryableRequest, removeLastRunMessages, resolveRetryProviderId, type AgentRunMessageIds, type AgentRunRequest } from './agentRun';
 import { normalizeAgentMarkdown } from './agentMarkdown';
 import { isNearChatBottom } from './agentChatScroll';
 import type {
@@ -515,7 +515,7 @@ export default function AgentPage() {
       setGoal(lastRequest.goal);
       streamAgentMessage(lastRequest.message, {
         goal: lastRequest.goal,
-        providerId: lastRequest.providerId,
+        providerId: resolveRetryProviderId(providerId, lastRequest.providerId),
         retrying: true,
       });
       return;
