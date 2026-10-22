@@ -121,6 +121,16 @@ done
 2. 独立 Agent 会话/消息表、运行生命周期、进度和来源摘要恢复。
 3. Provider 失败重试、备用 Provider、SSE 心跳、取消、超时回收和重复任务保护。
 4. 前端 Markdown 展示、断线恢复、失败重试和当前运行来源展示。
+5. Agent 只读 Skill 工具调用的成功/失败与耗时指标（不记录参数和返回内容）。
+
+关键 Agent 指标：
+
+- `app.agent.runs{result}`：运行开始及终态数量。
+- `app.agent.run.duration{result}`：单次 Agent 运行耗时。
+- `app.agent.retries{reason}`：模型重试次数。
+- `app.agent.provider.attempts{role,result}`：主/备用 Provider 尝试结果。
+- `app.agent.tool.calls{tool,result}`：只读工具调用结果。
+- `app.agent.tool.duration{tool,result}`：只读工具调用耗时。
 
 后续按风险从低到高推进：
 

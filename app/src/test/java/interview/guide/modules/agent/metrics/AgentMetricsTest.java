@@ -1,6 +1,7 @@
 package interview.guide.modules.agent.metrics;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -74,5 +75,24 @@ class AgentMetricsTest {
         AgentMetrics withoutRegistry = new AgentMetrics(null, true);
         withoutRegistry.recordRetry("transient");
         withoutRegistry.finishRun(withoutRegistry.startRun(), "success");
+    }
+
+    @Test
+    @DisplayName("记录只读工具调用次数和耗时")
+    void recordsToolCallMetrics() {
+        AgentMetrics metrics = metrics(true);
+
+        metrics.recordToolCall("load_skill", "success", Duration.ofMillis(12));
+        metrics.recordToolCall("load_skill", "failure", Duration.ofMillis(4));
+
+        assertThat(registry.get(AgentMetrics.TOOL_CALLS)
+            .tag("tool", "load_skill").tag("result", "success").counter().count())
+            .isEqualTo(1.0);
+        assertThat(registry.get(AgentMetrics.TOOL_CALLS)
+            .tag("tool", "load_skill").tag("result", "failure").counter().count())
+            .isEqualTo(1.0);
+        assertThat(registry.get(AgentMetrics.TOOL_DURATION)
+            .tag("tool", "load_skill").tag("result", "success").timer().count())
+            .isEqualTo(1L);
     }
 }
