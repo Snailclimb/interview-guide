@@ -30,6 +30,7 @@ import { getErrorMessage } from '../api/request';
 import { StreamHttpError } from '../api/stream';
 import CodeBlock from '../components/CodeBlock';
 import { getRetryableRequest, removeLastRunMessages, type AgentRunMessageIds, type AgentRunRequest } from './agentRun';
+import { normalizeAgentMarkdown } from './agentMarkdown';
 import type {
   AgentGoal,
   AgentConversationResponse,
@@ -58,26 +59,6 @@ const MAX_HISTORY_MESSAGES = 32;
 const MAX_AGENT_MESSAGE_CHARS = 4000;
 const MAX_RECONCILIATION_ATTEMPTS = 300;
 const RECONCILIATION_INTERVAL_MS = 3000;
-
-const INLINE_HEADING_TITLES = [
-  '本场面试复盘结论',
-  '本场面试考察重点',
-  '目前无法确认的关键问题',
-  '表现概览',
-  '关键优势',
-  '最重要的改进点',
-  '下一步练习',
-  '薄弱点判断',
-  '答题要点',
-  '自测标准',
-  '短期目标',
-  '分步任务',
-  '完成标准',
-  '复盘周期',
-  '行动建议',
-  '改进建议',
-  '训练计划',
-];
 
 const goalOptions: Array<{ id: AgentGoal; title: string; description: string }> = [
   { id: 'review', title: '复盘本场面试', description: '分析表现，提炼优势和改进点' },
@@ -111,33 +92,6 @@ function buildAgentHistory(messages: AgentMessage[]): AgentHistoryMessage[] {
     .filter((message) => message.content.trim().length > 0)
     .slice(-MAX_HISTORY_MESSAGES)
     .map(({ role, content }) => ({ role, content }));
-}
-
-/**
- * 模型流式输出偶尔会把标题、列表项和正文压缩到同一行。
- * 只处理普通 Markdown 文本，代码围栏内部保持原样，避免破坏代码内容。
- */
-function normalizeAgentMarkdown(content: string) {
-  const headingTitles = INLINE_HEADING_TITLES.join('|');
-  const inlineHeadingPattern = new RegExp(
-    `^(#{1,6}\\s+(?:${headingTitles}))[ \\t]+(?=\\S)`,
-    'gm',
-  );
-
-  return content
-    .replace(/\r\n?/g, '\n')
-    .split(/(```[\s\S]*?```)/g)
-    .map((part, index) => {
-      if (index % 2 === 1) return part;
-      return part
-        .replace(inlineHeadingPattern, '$1\n\n')
-        .replace(/^(\s*(?:[-*+]|\d+\.)\s+\*\*[^*\n]+\*\*)\s*[-：:]\s*/gm, '$1\n   - ')
-        .replace(/[ \t]+(?=#{1,6}\s)/g, '\n\n')
-        .replace(/([^\n])(?=#{1,6}\s)/g, '$1\n\n')
-        .replace(/[ \t]+(?=(?:[-*+] )(?:(?:\*\*)|(?:`)|[A-Za-z\u4e00-\u9fff]))/g, '\n')
-        .replace(/[ \t]+(?=\d{1,2}\. (?:(?:\*\*)|(?:`)|[A-Za-z\u4e00-\u9fff]))/g, '\n');
-    })
-    .join('');
 }
 
 function AgentMarkdown({ content }: { content: string }) {
