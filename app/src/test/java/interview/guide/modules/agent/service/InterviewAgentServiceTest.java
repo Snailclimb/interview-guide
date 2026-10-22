@@ -47,6 +47,9 @@ class InterviewAgentServiceTest {
     private AgentMetrics agentMetrics;
 
     @Mock
+    private AgentProgressWriter agentProgressWriter;
+
+    @Mock
     private ResourceLoader resourceLoader;
 
     @Test
@@ -85,7 +88,8 @@ class InterviewAgentServiceTest {
         when(providerRegistry.getAgentChatClient("backup")).thenReturn(backup);
 
         InterviewAgentService service = new InterviewAgentService(
-            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
+            agentProgressWriter
         );
 
         List<AgentStreamEvent> events = service.stream(
@@ -127,7 +131,8 @@ class InterviewAgentServiceTest {
         ChatClient longRunningClient = mockStreamClient(Flux.never());
         when(providerRegistry.getAgentChatClient("primary")).thenReturn(longRunningClient);
         InterviewAgentService service = new InterviewAgentService(
-            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
+            agentProgressWriter
         );
 
         AgentMessageRequest request = new AgentMessageRequest("review", "请复盘", List.of(), "primary");
@@ -169,7 +174,8 @@ class InterviewAgentServiceTest {
         when(providerRegistry.getAgentChatClient("primary")).thenReturn(longRunningClient);
 
         InterviewAgentService service = new InterviewAgentService(
-            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
+            agentProgressWriter
         );
 
         reactor.core.Disposable subscription = service.stream(
@@ -209,7 +215,8 @@ class InterviewAgentServiceTest {
             .thenThrow(new IllegalStateException("provider registry unavailable"));
 
         InterviewAgentService service = new InterviewAgentService(
-            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
+            agentProgressWriter
         );
 
         List<AgentStreamEvent> events = service.stream(
@@ -250,7 +257,8 @@ class InterviewAgentServiceTest {
         when(providerRegistry.getAgentChatClient("primary")).thenReturn(longRunningClient);
 
         InterviewAgentService service = new InterviewAgentService(
-            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
+            agentProgressWriter
         );
 
         reactor.core.Disposable subscription = service.stream(
@@ -297,7 +305,8 @@ class InterviewAgentServiceTest {
         when(providerRegistry.getAgentChatClient("primary")).thenReturn(oversizedClient);
 
         InterviewAgentService service = new InterviewAgentService(
-            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
+            agentProgressWriter
         );
 
         List<AgentStreamEvent> events = service.stream(
@@ -325,7 +334,8 @@ class InterviewAgentServiceTest {
             return new ByteArrayResource(template.getBytes(StandardCharsets.UTF_8));
         });
         InterviewAgentService service = new InterviewAgentService(
-            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
+            agentProgressWriter
         );
 
         List<AgentStreamEvent> events = service.retryWaitingEvents(

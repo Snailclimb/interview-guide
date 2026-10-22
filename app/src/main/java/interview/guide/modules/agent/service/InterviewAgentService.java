@@ -60,6 +60,7 @@ public class InterviewAgentService {
     private final PromptTemplate fixedContextPromptTemplate;
     private final PromptTemplate userPromptTemplate;
     private final AgentMetrics agentMetrics;
+    private final AgentProgressWriter agentProgressWriter;
     private final Set<String> activeSessions = ConcurrentHashMap.newKeySet();
     private final Map<String, Sinks.One<Void>> cancellationSignals = new ConcurrentHashMap<>();
     private final Map<String, AgentTaskHandle> activeTasks = new ConcurrentHashMap<>();
@@ -70,13 +71,15 @@ public class InterviewAgentService {
         LlmProviderRegistry llmProviderRegistry,
         PromptSanitizer promptSanitizer,
         ResourceLoader resourceLoader,
-        AgentMetrics agentMetrics
+        AgentMetrics agentMetrics,
+        AgentProgressWriter agentProgressWriter
     ) throws IOException {
         this.agentContextService = agentContextService;
         this.agentConversationService = agentConversationService;
         this.llmProviderRegistry = llmProviderRegistry;
         this.promptSanitizer = promptSanitizer;
         this.agentMetrics = agentMetrics;
+        this.agentProgressWriter = agentProgressWriter;
         this.systemPromptTemplate = new PromptTemplate(resourceLoader
             .getResource("classpath:prompts/agent-interview-coach-system.st")
             .getContentAsString(StandardCharsets.UTF_8));
@@ -178,6 +181,7 @@ public class InterviewAgentService {
                     .doOnNext(event -> persistRunProgress(preparedMessage.assistantMessageId(), event))
                     .takeUntilOther(Flux.merge(cancellationSignal.asMono(), remoteCancellation))
                     .doFinally(signal -> {
+                        agentProgressWriter.finish(preparedMessage.assistantMessageId());
                         activeSessions.remove(sessionId);
                         cancellationSignals.remove(sessionId, cancellationSignal);
                         activeTasks.remove(sessionId, taskHandle);
@@ -199,6 +203,7 @@ public class InterviewAgentService {
             } catch (Throwable error) {
                 if (preparedAssistantMessageId != null) {
                     failPreparedMessage(preparedAssistantMessageId, error);
+                    agentProgressWriter.finish(preparedAssistantMessageId);
                 }
                 agentMetrics.finishRun(runTracker, "failure");
                 activeSessions.remove(sessionId);
@@ -229,6 +234,7 @@ public class InterviewAgentService {
             // 已订阅的模型流会通过 doOnCancel 持久化；尚未完成订阅时由这里兜底写状态。
             if (!taskHandle.cancel()) {
                 agentConversationService.cancelMessage(taskHandle.assistantMessageId, "");
+                agentProgressWriter.finish(taskHandle.assistantMessageId);
             }
             return true;
         }
@@ -267,25 +273,15 @@ public class InterviewAgentService {
 
     /** 进度写库失败不能中断模型主流程，数据库状态仅用于断线后的展示恢复。 */
     private void persistRunProgress(Long assistantMessageId, AgentStreamEvent event) {
-        try {
-            if ("step".equals(event.type())) {
-                persistRunProgress(assistantMessageId, event.step(), event.status(), event.message());
-            } else if ("sources".equals(event.type())) {
-                agentConversationService.updateRunSources(assistantMessageId, event.sources());
-            }
-        } catch (Throwable persistenceError) {
-            log.warn("Agent 运行进度持久化失败: messageId={}, eventType={}",
-                assistantMessageId, event.type(), persistenceError);
+        if ("step".equals(event.type())) {
+            agentProgressWriter.recordStep(assistantMessageId, event.step(), event.status(), event.message());
+        } else if ("sources".equals(event.type())) {
+            agentProgressWriter.recordSources(assistantMessageId, event.sources());
         }
     }
 
     private void persistRunProgress(Long assistantMessageId, String step, String status, String notice) {
-        try {
-            agentConversationService.updateRunProgress(assistantMessageId, step, status, notice);
-        } catch (Throwable persistenceError) {
-            log.warn("Agent 初始运行进度持久化失败: messageId={}, step={}",
-                assistantMessageId, step, persistenceError);
-        }
+        agentProgressWriter.recordStep(assistantMessageId, step, status, notice);
     }
 
     private Flux<Boolean> monitorRemoteCancellation(String sessionId, String runId) {
