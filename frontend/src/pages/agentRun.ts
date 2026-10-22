@@ -17,6 +17,12 @@ export interface AgentRunMessage {
   content: string;
 }
 
+/** 重试时优先使用用户当前选择的模型；没有选择时才沿用失败任务的模型。 */
+export function resolveRetryProviderId(currentProviderId: string, previousProviderId?: string) {
+  const current = currentProviderId.trim();
+  return current || previousProviderId;
+}
+
 function isAgentGoal(value: string | null | undefined): value is AgentGoal {
   return value === 'review' || value === 'practice' || value === 'plan';
 }
