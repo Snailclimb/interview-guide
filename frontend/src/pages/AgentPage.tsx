@@ -169,7 +169,7 @@ export default function AgentPage() {
   }, []);
 
   const restoreConversationMessages = useCallback((conversation: AgentConversationResponse, fallbackAssistant?: AgentMessage) => {
-    if (conversation.messages.length === 0 && !fallbackAssistant) return;
+    if (conversation.messages.length === 0 && !fallbackAssistant && !conversation.runPartialAnswer) return;
     const restoredMessages: AgentMessage[] = [
       {
         id: 1,
@@ -182,7 +182,16 @@ export default function AgentPage() {
         content: message.content,
       })),
     ];
-    if (fallbackAssistant && !conversation.messages.some((message) => message.role === 'assistant')) {
+    if (conversation.runPartialAnswer?.trim()) {
+      restoredMessages.push({
+        id: restoredMessages.length + 1,
+        role: 'assistant',
+        content: conversation.runPartialAnswer,
+      });
+    }
+    if (fallbackAssistant
+      && !conversation.messages.some((message) => message.role === 'assistant')
+      && !conversation.runPartialAnswer?.trim()) {
       restoredMessages.push(fallbackAssistant);
     }
     setMessages(restoredMessages);
@@ -457,7 +466,12 @@ export default function AgentPage() {
             setRunError(message);
             setRunStatus('error');
             setMessages((current) => current.map((item) => item.id === assistantMessageId
-              ? { ...item, content: message }
+              ? {
+                ...item,
+                content: item.content.trim()
+                  ? `${item.content}\n\n---\n\n**本次任务未完成**：${message}`
+                  : message,
+              }
               : item));
           }
           if (event.type === 'done') {

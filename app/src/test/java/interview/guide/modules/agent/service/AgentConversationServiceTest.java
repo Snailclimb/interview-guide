@@ -133,6 +133,44 @@ class AgentConversationServiceTest {
     }
 
     @Test
+    @DisplayName("失败任务恢复时返回半截回答，但不把它当作已完成历史")
+    void exposesPartialAnswerForFailedRunWithoutAddingItToHistory() {
+        AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+            .id(11L)
+            .interviewSessionId("interview-1")
+            .runStatus(interview.guide.modules.agent.model.AgentRunStatus.FAILED)
+            .runError("模型响应超时")
+            .build();
+        AgentChatMessageEntity user = AgentChatMessageEntity.builder()
+            .session(session)
+            .role(AgentChatMessageEntity.MessageRole.USER)
+            .content("请复盘")
+            .sequenceNum(2)
+            .completed(true)
+            .build();
+        when(sessionRepository.findByInterviewSessionId("interview-1"))
+            .thenReturn(Optional.of(session));
+        when(messageRepository.findBySessionIdAndCompletedTrueOrderBySequenceNumDesc(
+            org.mockito.ArgumentMatchers.eq(11L), any(Pageable.class)
+        )).thenReturn(List.of(user));
+        AgentChatMessageEntity partial = AgentChatMessageEntity.builder()
+            .session(session)
+            .role(AgentChatMessageEntity.MessageRole.ASSISTANT)
+            .content("## 已完成的分析\n\n这里是已经生成的部分")
+            .sequenceNum(3)
+            .completed(false)
+            .build();
+        when(messageRepository.findTopBySessionIdAndCompletedFalseOrderBySequenceNumDesc(11L))
+            .thenReturn(Optional.of(partial));
+
+        AgentConversationResponse response = service.getConversation("interview-1");
+
+        assertThat(response.runPartialAnswer()).isEqualTo(partial.getContent());
+        assertThat(response.messages()).extracting(AgentHistoryMessage::content)
+            .containsExactly("请复盘");
+    }
+
+    @Test
     @DisplayName("旧任务迟到的完成事件不会覆盖当前运行任务")
     void ignoresLateCompletionFromStaleMessage() {
         AgentChatSessionEntity session = AgentChatSessionEntity.builder()

@@ -15,6 +15,7 @@ public record AgentConversationResponse(
     String runStep,
     String runStepStatus,
     String runNotice,
+    String runPartialAnswer,
     List<AgentSource> runSources,
     List<AgentHistoryMessage> messages
 ) {

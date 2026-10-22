@@ -24,6 +24,7 @@ export interface AgentConversationResponse {
   runStep?: string | null;
   runStepStatus?: AgentStepStatus | string | null;
   runNotice?: string | null;
+  runPartialAnswer?: string | null;
   runSources?: AgentSource[];
   messages: AgentHistoryMessage[];
 }
