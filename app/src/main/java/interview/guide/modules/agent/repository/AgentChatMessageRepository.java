@@ -17,4 +17,6 @@ public interface AgentChatMessageRepository extends JpaRepository<AgentChatMessa
     );
 
     Optional<AgentChatMessageEntity> findTopBySessionIdOrderBySequenceNumDesc(Long sessionId);
+
+    Optional<AgentChatMessageEntity> findTopBySessionIdAndCompletedFalseOrderBySequenceNumDesc(Long sessionId);
 }

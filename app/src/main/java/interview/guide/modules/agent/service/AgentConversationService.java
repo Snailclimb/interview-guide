@@ -208,7 +208,7 @@ public class AgentConversationService {
         if (session == null) {
             return new AgentConversationResponse(
                 interviewSessionId, null, null, null, AgentRunStatus.IDLE,
-                null, null, null, null, null, null, List.of(), List.of()
+                null, null, null, null, null, null, null, List.of(), List.of()
             );
         }
         if (isStaleRun(session)) {
@@ -229,6 +229,13 @@ public class AgentConversationService {
             messages.add(new AgentHistoryMessage(message.getRole().name().toLowerCase(), message.getContent()));
         }
         List<AgentHistoryMessage> normalized = AgentHistoryPolicy.normalize(messages);
+        String partialAnswer = shouldExposePartialAnswer(session.getRunStatus())
+            ? messageRepository
+                .findTopBySessionIdAndCompletedFalseOrderBySequenceNumDesc(session.getId())
+                .map(AgentChatMessageEntity::getContent)
+                .filter(content -> content != null && !content.isBlank())
+                .orElse(null)
+            : null;
         return new AgentConversationResponse(
             interviewSessionId,
             session.getGoal(),
@@ -241,6 +248,7 @@ public class AgentConversationService {
             session.getRunStep(),
             session.getRunStepStatus(),
             session.getRunNotice(),
+            partialAnswer,
             parseSources(session.getRunSourcesJson()),
             normalized
         );
@@ -331,6 +339,12 @@ public class AgentConversationService {
             && message.getId() != null
             && message.getId().equals(session.getActiveMessageId())
             && session.getRunStatus() == AgentRunStatus.RUNNING;
+    }
+
+    private boolean shouldExposePartialAnswer(AgentRunStatus status) {
+        return status == AgentRunStatus.RUNNING
+            || status == AgentRunStatus.FAILED
+            || status == AgentRunStatus.CANCELLED;
     }
 
     private void recoverStaleRun(AgentChatSessionEntity session) {
