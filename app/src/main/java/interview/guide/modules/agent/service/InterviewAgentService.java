@@ -148,7 +148,7 @@ public class InterviewAgentService {
                     + fixedContextPromptTemplate.render(fixedContextVariables);
                 String userPrompt = userPromptTemplate.render(variables);
                 List<Message> history = buildModelHistory(historyMessages);
-                Flux<AgentStreamEvent> response = withModelHeartbeat(streamModelWithRetry(
+                Flux<AgentStreamEvent> response = streamModelWithRetry(
                     providerId -> {
                         ChatClient chatClient = llmProviderRegistry.getAgentChatClient(providerId);
                         return () -> {
@@ -164,7 +164,7 @@ public class InterviewAgentService {
                     preparedMessage.assistantMessageId(),
                     context.sources(),
                     runTracker
-                ));
+                );
                 Flux<Boolean> remoteCancellation = monitorRemoteCancellation(sessionId, preparedMessage.runId());
 
                 Flux<AgentStreamEvent> workflow = Flux.concat(
@@ -332,12 +332,16 @@ public class InterviewAgentService {
                 AgentStreamEvent.step("action", "completed"),
                 AgentStreamEvent.done()
             ))
-            .doOnComplete(() -> agentConversationService.completeMessage(
-                assistantMessageId,
-                output.get().toString()
-            ))
+            .doOnComplete(() -> {
+                agentProgressWriter.flush(assistantMessageId);
+                agentConversationService.completeMessage(
+                    assistantMessageId,
+                    output.get().toString()
+                );
+            })
             .doOnComplete(() -> agentMetrics.finishRun(runTracker, "success"))
             .doOnError(error -> {
+                agentProgressWriter.flush(assistantMessageId);
                 agentConversationService.failMessage(
                     assistantMessageId,
                     output.get().toString(),
@@ -346,6 +350,7 @@ public class InterviewAgentService {
                 agentMetrics.finishRun(runTracker, "failure");
             })
             .doOnCancel(() -> {
+                agentProgressWriter.flush(assistantMessageId);
                 agentConversationService.cancelMessage(
                     assistantMessageId,
                     output.get().toString()
@@ -438,7 +443,7 @@ public class InterviewAgentService {
         AtomicReference<StringBuilder> output,
         int attempt
     ) {
-        return Flux.defer(modelStream)
+        Flux<AgentStreamEvent> attemptStream = Flux.defer(modelStream)
             .doOnNext(content -> {
                 modelOutputStarted.set(true);
             })
@@ -447,7 +452,8 @@ public class InterviewAgentService {
             // 达到展示上限后立即取消上游模型流，避免继续消耗模型额度。
             .takeUntil(ignored -> output.get().length() >= MAX_AGENT_OUTPUT_CHARS)
             .filter(content -> !content.isEmpty())
-            .map(AgentStreamEvent::delta)
+            .map(AgentStreamEvent::delta);
+        return withModelHeartbeat(attemptStream)
             .onErrorResume(error -> {
                 if (isProviderSwitchableError(error)) {
                     llmProviderRegistry.markChatProviderFailure(providerId);
