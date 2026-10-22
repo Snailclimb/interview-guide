@@ -6,9 +6,11 @@ import interview.guide.modules.agent.model.AgentMessageRequest;
 import interview.guide.modules.agent.model.AgentStreamEvent;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.chat.client.ChatClient;
@@ -255,6 +257,55 @@ class InterviewAgentServiceTest {
         verify(conversationService, after(200).never()).cancelMessage(any(), anyString());
         assertThat(service.cancel("disconnect-session")).isTrue();
         verify(conversationService, timeout(1000)).cancelMessage(10L, "");
+    }
+
+    @Test
+    @DisplayName("异常超长模型输出被截断并持久化安全内容")
+    void capsOversizedModelOutput() throws Exception {
+        when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {
+            String path = invocation.getArgument(0);
+            String template = path.contains("system")
+                ? "系统规则"
+                : path.contains("context")
+                    ? "固定上下文 {context} {skill}"
+                    : "目标 {goal}，资料 {rag}，问题 {question}";
+            return new ByteArrayResource(template.getBytes(StandardCharsets.UTF_8));
+        });
+        when(promptSanitizer.sanitize(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(promptSanitizer.wrapWithStableDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(contextService.build(anyString(), any())).thenReturn(new AgentContextService.AgentContext(
+            "报告", "skill", "skill", "无资料", "问题", List.of()
+        ));
+        when(conversationService.loadHistory(anyString())).thenReturn(List.of());
+        when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
+            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
+        when(providerRegistry.resolveChatProviderCandidates("primary"))
+            .thenReturn(List.of("primary"));
+        AtomicBoolean upstreamCancelled = new AtomicBoolean();
+        Flux<String> oversizedOutput = Flux.concat(
+            Flux.just("x".repeat(40_000)),
+            Flux.never()
+        ).doOnCancel(() -> upstreamCancelled.set(true));
+        ChatClient oversizedClient = mockStreamClient(oversizedOutput);
+        when(providerRegistry.getAgentChatClient("primary")).thenReturn(oversizedClient);
+
+        InterviewAgentService service = new InterviewAgentService(
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader
+        );
+
+        List<AgentStreamEvent> events = service.stream(
+            "oversized-session", new AgentMessageRequest("review", "请复盘", List.of(), "primary")
+        ).collectList().block();
+
+        assertThat(events).isNotNull();
+        ArgumentCaptor<String> outputCaptor = ArgumentCaptor.forClass(String.class);
+        verify(conversationService).completeMessage(org.mockito.ArgumentMatchers.eq(10L), outputCaptor.capture());
+        assertThat(outputCaptor.getValue()).hasSizeLessThanOrEqualTo(32_000);
+        assertThat(outputCaptor.getValue()).contains("回答已达到展示上限");
+        assertThat(upstreamCancelled).isTrue();
     }
 
     private ChatClient mockStreamClient(Flux<String> content) {

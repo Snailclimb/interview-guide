@@ -45,6 +45,9 @@ import java.util.function.Supplier;
 public class InterviewAgentService {
     /** 最多等待并重试 6 次；退避时间合计约 90 秒，并通过 SSE 持续告知前端。 */
     private static final int MODEL_RETRY_ATTEMPTS = 6;
+    /** 保护 SSE、内存和数据库；正常面试复盘远低于此上限。 */
+    private static final int MAX_AGENT_OUTPUT_CHARS = 32_000;
+    private static final String OUTPUT_TRUNCATION_NOTICE = "\n\n[回答已达到展示上限，后续内容已截断]";
 
     private final AgentContextService agentContextService;
     private final AgentConversationService agentConversationService;
@@ -285,11 +288,11 @@ public class InterviewAgentService {
         return providerStream
             .concatWith(Flux.defer(() -> {
                 String notice = AgentAnswerGroundingPolicy.buildNotice(output.get().toString(), sources);
-                if (notice.isBlank()) {
+                String emittedNotice = appendOutputChunk(notice, output);
+                if (emittedNotice.isBlank()) {
                     return Flux.empty();
                 }
-                output.get().append(notice);
-                return Flux.just(AgentStreamEvent.delta(notice));
+                return Flux.just(AgentStreamEvent.delta(emittedNotice));
             }))
             .concatWith(Flux.just(
                 AgentStreamEvent.step("insight", "completed"),
@@ -370,11 +373,12 @@ public class InterviewAgentService {
         return Flux.defer(modelStream)
             .doOnNext(content -> {
                 modelOutputStarted.set(true);
-                if (content != null) {
-                    output.get().append(content);
-                }
             })
             .doOnComplete(() -> llmProviderRegistry.markChatProviderSuccess(providerId))
+            .map(content -> appendOutputChunk(content, output))
+            // 达到展示上限后立即取消上游模型流，避免继续消耗模型额度。
+            .takeUntil(ignored -> output.get().length() >= MAX_AGENT_OUTPUT_CHARS)
+            .filter(content -> !content.isEmpty())
             .map(AgentStreamEvent::delta)
             .onErrorResume(error -> {
                 if (isProviderSwitchableError(error)) {
@@ -409,6 +413,34 @@ public class InterviewAgentService {
 
     private Duration retryDelay(int attempt) {
         return Duration.ofSeconds(Math.min(30, 2L << attempt));
+    }
+
+    private String appendOutputChunk(String content, AtomicReference<StringBuilder> output) {
+        if (content == null || content.isEmpty()) {
+            return "";
+        }
+        StringBuilder target = output.get();
+        int contentLimit = MAX_AGENT_OUTPUT_CHARS - OUTPUT_TRUNCATION_NOTICE.length();
+        if (target.length() >= contentLimit) {
+            if (!target.toString().endsWith(OUTPUT_TRUNCATION_NOTICE)) {
+                target.append(OUTPUT_TRUNCATION_NOTICE);
+            }
+            return "";
+        }
+
+        int remaining = contentLimit - target.length();
+        if (content.length() <= remaining) {
+            target.append(content);
+            if (target.length() >= contentLimit) {
+                target.append(OUTPUT_TRUNCATION_NOTICE);
+                return content + OUTPUT_TRUNCATION_NOTICE;
+            }
+            return content;
+        }
+
+        String visible = content.substring(0, remaining);
+        target.append(visible).append(OUTPUT_TRUNCATION_NOTICE);
+        return visible + OUTPUT_TRUNCATION_NOTICE;
     }
 
     private String toAgentErrorMessage(Throwable error) {
