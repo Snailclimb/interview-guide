@@ -148,7 +148,7 @@ public class InterviewAgentService {
                     + fixedContextPromptTemplate.render(fixedContextVariables);
                 String userPrompt = userPromptTemplate.render(variables);
                 List<Message> history = buildModelHistory(historyMessages);
-                Flux<AgentStreamEvent> response = streamModelWithRetry(
+                Flux<AgentStreamEvent> response = withModelHeartbeat(streamModelWithRetry(
                     providerId -> {
                         ChatClient chatClient = llmProviderRegistry.getAgentChatClient(providerId);
                         return () -> {
@@ -164,7 +164,7 @@ public class InterviewAgentService {
                     preparedMessage.assistantMessageId(),
                     context.sources(),
                     runTracker
-                );
+                ));
                 Flux<Boolean> remoteCancellation = monitorRemoteCancellation(sessionId, preparedMessage.runId());
 
                 Flux<AgentStreamEvent> workflow = Flux.concat(
@@ -403,6 +403,31 @@ public class InterviewAgentService {
             }
             return Flux.error(error);
         });
+    }
+
+    /**
+     * 模型已接收请求但迟迟没有首个 token 时发送低频等待事件，避免反向代理把长等待
+     * 误判为断线。收到首个增量、完成或失败后立即停止心跳，不会增加模型调用次数。
+     */
+    Flux<AgentStreamEvent> withModelHeartbeat(Flux<AgentStreamEvent> response) {
+        Sinks.One<Void> stopSignal = Sinks.one();
+        Duration interval = Duration.ofSeconds(retryProperties.getRetryHeartbeatIntervalSeconds());
+        Flux<AgentStreamEvent> guardedResponse = response
+            .doOnNext(event -> {
+                if ("delta".equals(event.type()) || "done".equals(event.type())
+                    || "error".equals(event.type())) {
+                    stopSignal.tryEmitEmpty();
+                }
+            })
+            .doOnError(error -> stopSignal.tryEmitEmpty())
+            .doFinally(signal -> stopSignal.tryEmitEmpty());
+        Flux<AgentStreamEvent> heartbeats = Flux.interval(interval)
+            .takeUntilOther(stopSignal.asMono())
+            .map(index -> AgentStreamEvent.waiting(
+                "insight",
+                "模型仍在生成回答，已等待约 " + ((index + 1) * interval.toSeconds()) + " 秒"
+            ));
+        return Flux.merge(guardedResponse, heartbeats);
     }
 
     private Flux<AgentStreamEvent> streamModelAttempt(

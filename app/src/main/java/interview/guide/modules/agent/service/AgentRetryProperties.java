@@ -29,7 +29,7 @@ public class AgentRetryProperties {
     @Max(value = 120, message = "Agent 重试最长等待不能超过 120 秒")
     private int retryMaxDelaySeconds = 30;
 
-    /** 重试等待期间 SSE 心跳的间隔（秒）。 */
+    /** 模型等待首 token 或重试等待期间 SSE 心跳的间隔（秒）。 */
     @Min(value = 1, message = "Agent 重试心跳间隔必须大于 0 秒")
     @Max(value = 60, message = "Agent 重试心跳间隔不能超过 60 秒")
     private int retryHeartbeatIntervalSeconds = 10;
