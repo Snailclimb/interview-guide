@@ -418,6 +418,8 @@ export default function AgentPage() {
       ? removeLastRunMessages(messages, runRequest, lastRunMessageIdsRef.current)
       : messages;
     const history = buildAgentHistory(historyMessages);
+    // 新一轮任务开始时，无论用户之前是否上滑，都把视图带到最新问题和回答。
+    shouldFollowChatRef.current = true;
     const userMessageId = Date.now();
     const assistantMessageId = userMessageId + 1;
     const controller = new AbortController();
