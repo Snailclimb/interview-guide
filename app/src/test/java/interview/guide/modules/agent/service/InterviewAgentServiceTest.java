@@ -4,6 +4,7 @@ import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.ai.PromptSanitizer;
 import interview.guide.modules.agent.model.AgentMessageRequest;
 import interview.guide.modules.agent.model.AgentStreamEvent;
+import interview.guide.modules.agent.metrics.AgentMetrics;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -41,6 +42,9 @@ class InterviewAgentServiceTest {
 
     @Mock
     private PromptSanitizer promptSanitizer;
+
+    @Mock
+    private AgentMetrics agentMetrics;
 
     @Mock
     private ResourceLoader resourceLoader;
@@ -81,7 +85,7 @@ class InterviewAgentServiceTest {
         when(providerRegistry.getAgentChatClient("backup")).thenReturn(backup);
 
         InterviewAgentService service = new InterviewAgentService(
-            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics
         );
 
         List<AgentStreamEvent> events = service.stream(
@@ -123,7 +127,7 @@ class InterviewAgentServiceTest {
         ChatClient longRunningClient = mockStreamClient(Flux.never());
         when(providerRegistry.getAgentChatClient("primary")).thenReturn(longRunningClient);
         InterviewAgentService service = new InterviewAgentService(
-            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics
         );
 
         AgentMessageRequest request = new AgentMessageRequest("review", "请复盘", List.of(), "primary");
@@ -165,7 +169,7 @@ class InterviewAgentServiceTest {
         when(providerRegistry.getAgentChatClient("primary")).thenReturn(longRunningClient);
 
         InterviewAgentService service = new InterviewAgentService(
-            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics
         );
 
         reactor.core.Disposable subscription = service.stream(
@@ -205,7 +209,7 @@ class InterviewAgentServiceTest {
             .thenThrow(new IllegalStateException("provider registry unavailable"));
 
         InterviewAgentService service = new InterviewAgentService(
-            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics
         );
 
         List<AgentStreamEvent> events = service.stream(
@@ -246,7 +250,7 @@ class InterviewAgentServiceTest {
         when(providerRegistry.getAgentChatClient("primary")).thenReturn(longRunningClient);
 
         InterviewAgentService service = new InterviewAgentService(
-            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics
         );
 
         reactor.core.Disposable subscription = service.stream(
@@ -293,7 +297,7 @@ class InterviewAgentServiceTest {
         when(providerRegistry.getAgentChatClient("primary")).thenReturn(oversizedClient);
 
         InterviewAgentService service = new InterviewAgentService(
-            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics
         );
 
         List<AgentStreamEvent> events = service.stream(

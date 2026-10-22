@@ -7,6 +7,7 @@ import interview.guide.common.exception.BusinessException;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
 import interview.guide.modules.agent.model.AgentMessageRequest;
 import interview.guide.modules.agent.model.AgentStreamEvent;
+import interview.guide.modules.agent.metrics.AgentMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -56,6 +57,7 @@ public class InterviewAgentService {
     private final PromptTemplate systemPromptTemplate;
     private final PromptTemplate fixedContextPromptTemplate;
     private final PromptTemplate userPromptTemplate;
+    private final AgentMetrics agentMetrics;
     private final Set<String> activeSessions = ConcurrentHashMap.newKeySet();
     private final Map<String, Sinks.One<Void>> cancellationSignals = new ConcurrentHashMap<>();
     private final Map<String, AgentTaskHandle> activeTasks = new ConcurrentHashMap<>();
@@ -65,12 +67,14 @@ public class InterviewAgentService {
         AgentConversationService agentConversationService,
         LlmProviderRegistry llmProviderRegistry,
         PromptSanitizer promptSanitizer,
-        ResourceLoader resourceLoader
+        ResourceLoader resourceLoader,
+        AgentMetrics agentMetrics
     ) throws IOException {
         this.agentContextService = agentContextService;
         this.agentConversationService = agentConversationService;
         this.llmProviderRegistry = llmProviderRegistry;
         this.promptSanitizer = promptSanitizer;
+        this.agentMetrics = agentMetrics;
         this.systemPromptTemplate = new PromptTemplate(resourceLoader
             .getResource("classpath:prompts/agent-interview-coach-system.st")
             .getContentAsString(StandardCharsets.UTF_8));
@@ -95,6 +99,7 @@ public class InterviewAgentService {
             Sinks.One<Void> cancellationSignal = Sinks.one();
             cancellationSignals.put(sessionId, cancellationSignal);
             Long preparedAssistantMessageId = null;
+            AgentMetrics.RunTracker runTracker = agentMetrics.startRun();
             AtomicReference<AgentTaskHandle> taskHandleRef = new AtomicReference<>();
             try {
                 AgentContextService.AgentContext context = agentContextService.build(sessionId, request);
@@ -149,7 +154,8 @@ public class InterviewAgentService {
                     request.providerId(),
                     sessionId,
                     preparedMessage.assistantMessageId(),
-                    context.sources()
+                    context.sources(),
+                    runTracker
                 );
                 Flux<Boolean> remoteCancellation = monitorRemoteCancellation(sessionId, preparedMessage.runId());
 
@@ -188,6 +194,7 @@ public class InterviewAgentService {
                 if (preparedAssistantMessageId != null) {
                     failPreparedMessage(preparedAssistantMessageId, error);
                 }
+                agentMetrics.finishRun(runTracker, "failure");
                 activeSessions.remove(sessionId);
                 cancellationSignals.remove(sessionId, cancellationSignal);
                 AgentTaskHandle taskHandle = taskHandleRef.get();
@@ -269,7 +276,8 @@ public class InterviewAgentService {
         String providerId,
         String sessionId,
         Long assistantMessageId,
-        List<interview.guide.modules.agent.model.AgentSource> sources
+        List<interview.guide.modules.agent.model.AgentSource> sources,
+        AgentMetrics.RunTracker runTracker
     ) {
         AtomicBoolean modelOutputStarted = new AtomicBoolean();
         AtomicReference<StringBuilder> output = new AtomicReference<>(new StringBuilder());
@@ -303,15 +311,22 @@ public class InterviewAgentService {
                 assistantMessageId,
                 output.get().toString()
             ))
-            .doOnError(error -> agentConversationService.failMessage(
-                assistantMessageId,
-                output.get().toString(),
-                toAgentErrorMessage(error)
-            ))
-            .doOnCancel(() -> agentConversationService.cancelMessage(
-                assistantMessageId,
-                output.get().toString()
-            ));
+            .doOnComplete(() -> agentMetrics.finishRun(runTracker, "success"))
+            .doOnError(error -> {
+                agentConversationService.failMessage(
+                    assistantMessageId,
+                    output.get().toString(),
+                    toAgentErrorMessage(error)
+                );
+                agentMetrics.finishRun(runTracker, "failure");
+            })
+            .doOnCancel(() -> {
+                agentConversationService.cancelMessage(
+                    assistantMessageId,
+                    output.get().toString()
+                );
+                agentMetrics.finishRun(runTracker, "cancelled");
+            });
     }
 
     private Flux<AgentStreamEvent> streamProviderAttempt(
@@ -324,6 +339,7 @@ public class InterviewAgentService {
         AtomicReference<StringBuilder> output
     ) {
         String currentProvider = providers.get(providerIndex);
+        String providerRole = providerIndex == 0 ? "primary" : "fallback";
         return Flux.defer(() -> streamModelAttempt(
                 modelStreamFactory.apply(currentProvider),
                 currentProvider,
@@ -331,7 +347,9 @@ public class InterviewAgentService {
                 modelOutputStarted,
                 output,
                 0
-            )).onErrorResume(error -> {
+            )).doOnComplete(() -> agentMetrics.recordProviderAttempt(providerRole, "success"))
+            .doOnError(error -> agentMetrics.recordProviderAttempt(providerRole, "failure"))
+            .onErrorResume(error -> {
             if (!modelOutputStarted.get()
                 && isProviderSwitchableError(error)
                 && providerIndex < providers.size() - 1) {
@@ -387,6 +405,7 @@ public class InterviewAgentService {
                 if (!modelOutputStarted.get()
                     && isTransientModelError(error)
                     && attempt < MODEL_RETRY_ATTEMPTS) {
+                    agentMetrics.recordRetry("transient");
                     Duration delay = retryDelay(attempt);
                     int retryNumber = attempt + 1;
                     log.warn(
