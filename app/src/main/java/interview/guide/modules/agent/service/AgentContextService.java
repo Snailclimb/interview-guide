@@ -2,6 +2,7 @@ package interview.guide.modules.agent.service;
 
 import interview.guide.common.ai.PromptSanitizer;
 import interview.guide.modules.agent.model.AgentMessageRequest;
+import interview.guide.modules.agent.model.AgentHistoryMessage;
 import interview.guide.modules.agent.model.AgentSource;
 import interview.guide.modules.interview.model.InterviewDetailDTO;
 import interview.guide.modules.interview.service.InterviewHistoryService;
@@ -14,8 +15,12 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
 
 /**
  * 面试教练 Agent 的只读上下文编排。
@@ -30,6 +35,8 @@ public class AgentContextService {
     private static final int MAX_RAG_CONTEXT_CHARS = 8_000;
     private static final String RAG_TRUNCATION_NOTICE = "[该来源片段已截断]";
     private static final int MAX_RETRIEVAL_QUERY_CHARS = 1_800;
+    private static final int MAX_RETRIEVAL_HISTORY_MESSAGES = 6;
+    private static final int MAX_RETRIEVAL_HISTORY_CHARS = 2_400;
     private static final int MAX_WEAK_ANSWERS = 4;
     private static final int WEAK_SCORE_THRESHOLD = 70;
 
@@ -60,7 +67,7 @@ public class AgentContextService {
 
         String skillReference = loadSkillReference(detail, sources);
         String retrievalQuery = buildRetrievalQuery(detail, request);
-        String ragContext = loadRagContext(detail, retrievalQuery, sources);
+        String ragContext = loadRagContext(detail, retrievalQuery, sources, buildRetrievalHistory(request.history()));
 
         return new AgentContext(
             report,
@@ -92,7 +99,8 @@ public class AgentContextService {
     private String loadRagContext(
         InterviewDetailDTO detail,
         String retrievalQuery,
-        List<AgentSource> sources
+        List<AgentSource> sources,
+        List<Message> history
     ) {
         if (detail.knowledgeBaseId() == null || retrievalQuery.isBlank()) {
             return "暂无知识库检索上下文";
@@ -100,7 +108,7 @@ public class AgentContextService {
 
         try {
             RagQueryExecution execution = knowledgeBaseQueryService.retrieveOnly(
-                List.of(detail.knowledgeBaseId()), retrievalQuery, List.of()
+                List.of(detail.knowledgeBaseId()), retrievalQuery, history
             );
             if (execution.retrievedDocs().isEmpty()) {
                 return "本次未检索到达到阈值的知识库片段";
@@ -141,6 +149,38 @@ public class AgentContextService {
                 detail.sessionId(), detail.knowledgeBaseId(), error.getClass().getSimpleName());
             return "知识库检索暂时不可用，本次回答不要声称使用了知识库依据";
         }
+    }
+
+    /**
+     * RAG 查询改写只需要最近几轮对话，不复用完整 Agent 历史，避免检索请求膨胀。
+     * 每条消息先净化，再按总字符预算从最近消息向前保留。
+     */
+    private List<Message> buildRetrievalHistory(List<AgentHistoryMessage> history) {
+        if (history == null || history.isEmpty()) {
+            return List.of();
+        }
+        List<Message> result = new ArrayList<>();
+        int remaining = MAX_RETRIEVAL_HISTORY_CHARS;
+        int start = Math.max(0, history.size() - MAX_RETRIEVAL_HISTORY_MESSAGES);
+        for (int index = history.size() - 1; index >= start && remaining > 0; index--) {
+            AgentHistoryMessage item = history.get(index);
+            if (item == null || item.role() == null || item.content() == null) {
+                continue;
+            }
+            String content = promptSanitizer.sanitize(item.content().trim());
+            if (content.isBlank()) {
+                continue;
+            }
+            int budget = Math.min(remaining, content.length());
+            String compact = content.substring(Math.max(0, content.length() - budget));
+            Message message = "assistant".equals(item.role())
+                ? new AssistantMessage(compact)
+                : new UserMessage(compact);
+            result.add(message);
+            remaining -= compact.length();
+        }
+        Collections.reverse(result);
+        return List.copyOf(result);
     }
 
     private String buildRetrievalQuery(InterviewDetailDTO detail, AgentMessageRequest request) {
