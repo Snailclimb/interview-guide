@@ -54,6 +54,7 @@ interface AgentMessage {
 }
 
 const MAX_HISTORY_MESSAGES = 128;
+const MAX_AGENT_MESSAGE_CHARS = 4000;
 const MAX_RECONCILIATION_ATTEMPTS = 300;
 const RECONCILIATION_INTERVAL_MS = 3000;
 
@@ -568,7 +569,14 @@ export default function AgentPage() {
       });
   };
 
-  const sendMessage = () => streamAgentMessage(input.trim());
+  const sendMessage = () => {
+    const content = input.trim();
+    if (content.length > MAX_AGENT_MESSAGE_CHARS) {
+      setRunError(`单条消息不能超过 ${MAX_AGENT_MESSAGE_CHARS} 个字符，请分多次发送`);
+      return;
+    }
+    streamAgentMessage(content);
+  };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -873,6 +881,7 @@ export default function AgentPage() {
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={handleKeyDown}
+                maxLength={MAX_AGENT_MESSAGE_CHARS}
                 rows={3}
                 placeholder="问问你的面试教练..."
                 className="dark-input w-full resize-none rounded-xl px-4 py-3 pr-12 text-sm outline-none"
@@ -886,7 +895,9 @@ export default function AgentPage() {
                 <Send className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-2">Enter 发送，Shift + Enter 换行 · 使用所选模型，未选择时使用系统默认模型</p>
+            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-2">
+              Enter 发送，Shift + Enter 换行 · 单条最多 {MAX_AGENT_MESSAGE_CHARS} 字符 · 已输入 {input.length}/{MAX_AGENT_MESSAGE_CHARS}
+            </p>
           </div>
         </section>
       </div>
