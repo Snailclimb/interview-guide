@@ -610,9 +610,11 @@ public class InterviewAgentService {
     }
 
     private boolean isTransientModelError(Throwable error) {
-        return containsErrorMessage(error,
+        return isTimeoutError(error) || containsErrorMessage(error,
             "overloaded", "temporarily unavailable", "service unavailable", "try again later",
-            "concurrency limit", "rate limit", "too many requests", "429"
+            "concurrency limit", "rate limit", "too many requests", "429",
+            "internal server error", "bad gateway", "gateway timeout", "upstream connect error",
+            "connection reset", "connection refused", "500", "502", "503", "504"
         );
     }
 
