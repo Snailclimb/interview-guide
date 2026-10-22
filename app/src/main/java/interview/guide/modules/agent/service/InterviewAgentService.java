@@ -44,10 +44,7 @@ import java.util.function.Supplier;
 @Slf4j
 @Service
 public class InterviewAgentService {
-    /** 最多等待并重试 6 次；退避时间合计约 90 秒，并通过 SSE 持续告知前端。 */
-    private static final int MODEL_RETRY_ATTEMPTS = 6;
-    /** 重试退避期间最多每 10 秒发一次状态，避免 SSE 长时间没有数据被代理断开。 */
-    private static final Duration RETRY_HEARTBEAT_INTERVAL = Duration.ofSeconds(10);
+    /** 重试次数和等待策略由 AgentRetryProperties 控制，并通过 SSE 持续告知前端。 */
     /** 保护 SSE、内存和数据库；正常面试复盘远低于此上限。 */
     private static final int MAX_AGENT_OUTPUT_CHARS = 32_000;
     private static final String OUTPUT_TRUNCATION_NOTICE = "\n\n[回答已达到展示上限，后续内容已截断]";
@@ -61,6 +58,7 @@ public class InterviewAgentService {
     private final PromptTemplate userPromptTemplate;
     private final AgentMetrics agentMetrics;
     private final AgentProgressWriter agentProgressWriter;
+    private final AgentRetryProperties retryProperties;
     private final Set<String> activeSessions = ConcurrentHashMap.newKeySet();
     private final Map<String, Sinks.One<Void>> cancellationSignals = new ConcurrentHashMap<>();
     private final Map<String, AgentTaskHandle> activeTasks = new ConcurrentHashMap<>();
@@ -72,7 +70,8 @@ public class InterviewAgentService {
         PromptSanitizer promptSanitizer,
         ResourceLoader resourceLoader,
         AgentMetrics agentMetrics,
-        AgentProgressWriter agentProgressWriter
+        AgentProgressWriter agentProgressWriter,
+        AgentRetryProperties retryProperties
     ) throws IOException {
         this.agentContextService = agentContextService;
         this.agentConversationService = agentConversationService;
@@ -80,6 +79,7 @@ public class InterviewAgentService {
         this.promptSanitizer = promptSanitizer;
         this.agentMetrics = agentMetrics;
         this.agentProgressWriter = agentProgressWriter;
+        this.retryProperties = retryProperties;
         this.systemPromptTemplate = new PromptTemplate(resourceLoader
             .getResource("classpath:prompts/agent-interview-coach-system.st")
             .getContentAsString(StandardCharsets.UTF_8));
@@ -429,7 +429,7 @@ public class InterviewAgentService {
                 }
                 if (!modelOutputStarted.get()
                     && isTransientModelError(error)
-                    && attempt < MODEL_RETRY_ATTEMPTS) {
+                    && attempt < retryProperties.getModelRetryAttempts()) {
                     agentMetrics.recordRetry("transient");
                     Duration delay = retryDelay(attempt);
                     int retryNumber = attempt + 1;
@@ -441,7 +441,7 @@ public class InterviewAgentService {
                         Flux.just(AgentStreamEvent.waiting(
                             "insight",
                             "模型服务暂时繁忙，正在等待资源（第 " + retryNumber + "/"
-                                + MODEL_RETRY_ATTEMPTS + " 次重试）"
+                                + retryProperties.getModelRetryAttempts() + " 次重试）"
                         )),
                         retryWaitingEvents(delay, retryNumber),
                         Flux.just(AgentStreamEvent.step("insight", "running")),
@@ -461,7 +461,11 @@ public class InterviewAgentService {
      * 因此不会因为心跳而增加模型请求次数。</p>
      */
     Flux<AgentStreamEvent> retryWaitingEvents(Duration delay, int retryNumber) {
-        return retryWaitingEvents(delay, retryNumber, RETRY_HEARTBEAT_INTERVAL);
+        return retryWaitingEvents(
+            delay,
+            retryNumber,
+            Duration.ofSeconds(retryProperties.getRetryHeartbeatIntervalSeconds())
+        );
     }
 
     Flux<AgentStreamEvent> retryWaitingEvents(
@@ -489,7 +493,7 @@ public class InterviewAgentService {
                     return AgentStreamEvent.waiting(
                         "insight",
                         "模型服务暂时繁忙，正在等待资源（第 " + retryNumber + "/"
-                            + MODEL_RETRY_ATTEMPTS + " 次重试，" + suffix + "）"
+                            + retryProperties.getModelRetryAttempts() + " 次重试，" + suffix + "）"
                     );
                 });
 
@@ -502,7 +506,10 @@ public class InterviewAgentService {
     }
 
     private Duration retryDelay(int attempt) {
-        return Duration.ofSeconds(Math.min(30, 2L << attempt));
+        return Duration.ofSeconds(Math.min(
+            retryProperties.getRetryMaxDelaySeconds(),
+            2L << attempt
+        ));
     }
 
     private String appendOutputChunk(String content, AtomicReference<StringBuilder> output) {

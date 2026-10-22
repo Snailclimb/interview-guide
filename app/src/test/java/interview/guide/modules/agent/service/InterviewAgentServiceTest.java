@@ -49,6 +49,8 @@ class InterviewAgentServiceTest {
     @Mock
     private AgentProgressWriter agentProgressWriter;
 
+    private final AgentRetryProperties retryProperties = new AgentRetryProperties();
+
     @Mock
     private ResourceLoader resourceLoader;
 
@@ -89,7 +91,7 @@ class InterviewAgentServiceTest {
 
         InterviewAgentService service = new InterviewAgentService(
             contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
-            agentProgressWriter
+            agentProgressWriter, retryProperties
         );
 
         List<AgentStreamEvent> events = service.stream(
@@ -132,7 +134,7 @@ class InterviewAgentServiceTest {
         when(providerRegistry.getAgentChatClient("primary")).thenReturn(longRunningClient);
         InterviewAgentService service = new InterviewAgentService(
             contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
-            agentProgressWriter
+            agentProgressWriter, retryProperties
         );
 
         AgentMessageRequest request = new AgentMessageRequest("review", "请复盘", List.of(), "primary");
@@ -175,7 +177,7 @@ class InterviewAgentServiceTest {
 
         InterviewAgentService service = new InterviewAgentService(
             contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
-            agentProgressWriter
+            agentProgressWriter, retryProperties
         );
 
         reactor.core.Disposable subscription = service.stream(
@@ -216,7 +218,7 @@ class InterviewAgentServiceTest {
 
         InterviewAgentService service = new InterviewAgentService(
             contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
-            agentProgressWriter
+            agentProgressWriter, retryProperties
         );
 
         List<AgentStreamEvent> events = service.stream(
@@ -258,7 +260,7 @@ class InterviewAgentServiceTest {
 
         InterviewAgentService service = new InterviewAgentService(
             contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
-            agentProgressWriter
+            agentProgressWriter, retryProperties
         );
 
         reactor.core.Disposable subscription = service.stream(
@@ -306,7 +308,7 @@ class InterviewAgentServiceTest {
 
         InterviewAgentService service = new InterviewAgentService(
             contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
-            agentProgressWriter
+            agentProgressWriter, retryProperties
         );
 
         List<AgentStreamEvent> events = service.stream(
@@ -335,7 +337,7 @@ class InterviewAgentServiceTest {
         });
         InterviewAgentService service = new InterviewAgentService(
             contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
-            agentProgressWriter
+            agentProgressWriter, retryProperties
         );
 
         List<AgentStreamEvent> events = service.retryWaitingEvents(
