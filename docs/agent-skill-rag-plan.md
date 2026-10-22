@@ -88,8 +88,8 @@ Agent 专用 ChatClient（SkillsTool + ToolCallingAdvisor）生成最终教练�
 
 - Skill 加载失败：记录警告，继续使用面试报告。
 - RAG 检索失败或无命中：记录 warning，继续使用面试报告和对话历史。
-- 模型暂时繁忙：默认最多重试 6 次，指数退避单次最多 30 秒，等待期间每 10 秒发送心跳；
-  可通过 `APP_AI_AGENT_MODEL_RETRY_ATTEMPTS`、`APP_AI_AGENT_RETRY_MAX_DELAY_SECONDS` 和
+- 模型暂时繁忙：默认最多重试 6 次，指数退避单次最多 30 秒；模型等待首 token 或退避等待期间每 10 秒发送心跳，
+  避免长请求被代理误判为断线；可通过 `APP_AI_AGENT_MODEL_RETRY_ATTEMPTS`、`APP_AI_AGENT_RETRY_MAX_DELAY_SECONDS` 和
   `APP_AI_AGENT_RETRY_HEARTBEAT_INTERVAL_SECONDS` 调整。
 - 首选 Provider 账号不可用或服务不可达：在模型尚未输出内容时切换备用 Provider。
 - 最终仍失败：持久化失败原因，返回 Agent error SSE 事件，前端保留原始请求并支持重试。

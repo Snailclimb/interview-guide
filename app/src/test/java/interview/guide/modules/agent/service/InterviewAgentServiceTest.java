@@ -6,8 +6,10 @@ import interview.guide.modules.agent.model.AgentMessageRequest;
 import interview.guide.modules.agent.model.AgentStreamEvent;
 import interview.guide.modules.agent.metrics.AgentMetrics;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -348,6 +350,89 @@ class InterviewAgentServiceTest {
         assertThat(events).allMatch(event -> "waiting".equals(event.status()));
         assertThat(events.get(0).message()).contains("预计还需约 1 秒");
         assertThat(events.get(2).message()).contains("即将重试");
+    }
+
+    @Test
+    @DisplayName("模型首 token 长时间未返回时发送等待心跳")
+    void emitsHeartbeatWhileWaitingForFirstModelToken() throws Exception {
+        when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {
+            String path = invocation.getArgument(0);
+            String template = path.contains("system")
+                ? "系统规则"
+                : path.contains("context")
+                    ? "固定上下文 {context} {skill}"
+                    : "目标 {goal}，资料 {rag}，问题 {question}";
+            return new ByteArrayResource(template.getBytes(StandardCharsets.UTF_8));
+        });
+        retryProperties.setRetryHeartbeatIntervalSeconds(1);
+        InterviewAgentService service = new InterviewAgentService(
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
+            agentProgressWriter, retryProperties
+        );
+
+        List<AgentStreamEvent> events = service.withModelHeartbeat(
+            Flux.<AgentStreamEvent>never()
+        ).take(1).collectList().block(Duration.ofSeconds(3));
+
+        assertThat(events).hasSize(1);
+        assertThat(events.getFirst().status()).isEqualTo("waiting");
+        assertThat(events.getFirst().message()).contains("模型仍在生成回答");
+    }
+
+    @Test
+    @DisplayName("模型首次繁忙时等待后重试并完成 Agent 输出")
+    void retriesTransientModelFailureBeforeFirstOutput() throws Exception {
+        when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {
+            String path = invocation.getArgument(0);
+            String template = path.contains("system")
+                ? "系统规则"
+                : path.contains("context")
+                    ? "固定上下文 {context} {skill}"
+                    : "目标 {goal}，资料 {rag}，问题 {question}";
+            return new ByteArrayResource(template.getBytes(StandardCharsets.UTF_8));
+        });
+        when(promptSanitizer.sanitize(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(promptSanitizer.wrapWithStableDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(contextService.build(anyString(), any())).thenReturn(new AgentContextService.AgentContext(
+            "报告", "skill", "skill", "无资料", "问题", List.of()
+        ));
+        when(conversationService.loadHistory(anyString())).thenReturn(List.of());
+        when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
+            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
+        when(providerRegistry.resolveChatProviderCandidates("primary"))
+            .thenReturn(List.of("primary"));
+
+        retryProperties.setModelRetryAttempts(1);
+        retryProperties.setRetryMaxDelaySeconds(1);
+        retryProperties.setRetryHeartbeatIntervalSeconds(1);
+        AtomicInteger attempts = new AtomicInteger();
+        Flux<String> modelOutput = Flux.defer(() -> {
+            if (attempts.incrementAndGet() == 1) {
+                return Flux.error(new IllegalStateException("429 too many requests"));
+            }
+            return Flux.just("重试后回答");
+        });
+        ChatClient retryingClient = mockStreamClient(modelOutput);
+        when(providerRegistry.getAgentChatClient("primary")).thenReturn(retryingClient);
+
+        InterviewAgentService service = new InterviewAgentService(
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
+            agentProgressWriter, retryProperties
+        );
+
+        List<AgentStreamEvent> events = service.stream(
+            "retry-session", new AgentMessageRequest("review", "请复盘", List.of(), "primary")
+        ).collectList().block(Duration.ofSeconds(5));
+
+        assertThat(events).isNotNull();
+        assertThat(attempts).hasValue(2);
+        assertThat(events).anySatisfy(event -> assertThat(event.status()).isEqualTo("waiting"));
+        assertThat(events).anySatisfy(event -> assertThat(event.content()).isEqualTo("重试后回答"));
+        assertThat(events).anySatisfy(event -> assertThat(event.type()).isEqualTo("done"));
+        verify(conversationService).completeMessage(10L, "重试后回答");
     }
 
     private ChatClient mockStreamClient(Flux<String> content) {
