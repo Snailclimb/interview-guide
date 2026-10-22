@@ -63,6 +63,18 @@ public class AgentChatSessionEntity {
     @Column(name = "run_error", length = 500)
     private String runError;
 
+    @Column(name = "run_step", length = 32)
+    private String runStep;
+
+    @Column(name = "run_step_status", length = 16)
+    private String runStepStatus;
+
+    @Column(name = "run_notice", length = 500)
+    private String runNotice;
+
+    @Column(name = "run_sources", columnDefinition = "TEXT")
+    private String runSourcesJson;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

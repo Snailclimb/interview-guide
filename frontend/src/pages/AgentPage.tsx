@@ -38,7 +38,7 @@ import type {
 } from '../types/agent';
 import type { ProviderItem } from '../types/llmProvider';
 type RunStatus = 'idle' | 'running' | 'completed' | 'error' | 'cancelled';
-type StepStatus = 'pending' | 'running' | 'waiting' | 'completed';
+type StepStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
 
 interface AgentStep {
   id: string;
@@ -232,6 +232,27 @@ export default function AgentPage() {
     setMessages(restoredMessages);
   }, []);
 
+  const restoreRunProgress = useCallback((conversation: AgentConversationResponse) => {
+    setSources(conversation.runSources ?? []);
+    setRunNotice(conversation.runNotice ?? '');
+    if (!conversation.runStep) return;
+
+    const status = conversation.runStepStatus;
+    setSteps((current) => {
+      const stepIndex = current.findIndex((step) => step.id === conversation.runStep);
+      if (stepIndex < 0) return current;
+      return current.map((step, index) => {
+      if (index < stepIndex) return { ...step, status: 'completed' };
+      if (index > stepIndex) return { ...step, status: 'pending' };
+      if (status === 'waiting') return { ...step, status: 'waiting' };
+      if (status === 'failed') return { ...step, status: 'failed' };
+      if (status === 'cancelled') return { ...step, status: 'cancelled' };
+      if (status === 'completed') return { ...step, status: 'completed' };
+      return { ...step, status: 'running' };
+      });
+    });
+  }, []);
+
   const rememberRetryableRequest = useCallback((conversation: AgentConversationResponse) => {
     const retryableRequest = getRetryableRequest(conversation);
     if (!retryableRequest) return;
@@ -247,10 +268,11 @@ export default function AgentPage() {
       attempts += 1;
       void agentApi.getConversation(currentSessionId)
         .then((conversation) => {
+          restoreRunProgress(conversation);
           if (conversation.runStatus === 'RUNNING' && attempts < MAX_RECONCILIATION_ATTEMPTS) {
             setRunStatus('running');
             setRunError('');
-            setRunNotice('连接已断开，但 Agent 仍在后台执行，正在等待任务完成...');
+            setRunNotice(conversation.runNotice || '连接已断开，但 Agent 仍在后台执行，正在等待任务完成...');
             reconciliationTimerRef.current = window.setTimeout(poll, RECONCILIATION_INTERVAL_MS);
             return;
           }
@@ -288,7 +310,7 @@ export default function AgentPage() {
     };
 
     poll();
-  }, [clearReconciliationTimer, rememberRetryableRequest, restoreConversationMessages]);
+  }, [clearReconciliationTimer, rememberRetryableRequest, restoreConversationMessages, restoreRunProgress]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -346,6 +368,7 @@ export default function AgentPage() {
         if (cancelled) return;
 
         rememberRetryableRequest(conversation);
+        restoreRunProgress(conversation);
 
         if (conversation.goal === 'review' || conversation.goal === 'practice' || conversation.goal === 'plan') {
           setGoal(conversation.goal);
@@ -355,7 +378,7 @@ export default function AgentPage() {
         }
         if (conversation.runStatus === 'RUNNING') {
           setRunStatus('running');
-          setRunNotice('服务端仍有一个 Agent 任务正在执行，可等待完成或取消任务。');
+          setRunNotice(conversation.runNotice || '服务端仍有一个 Agent 任务正在执行，可等待完成或取消任务。');
           reconcileConversation(sessionId);
         }
         if (conversation.runStatus === 'FAILED') {
@@ -381,7 +404,7 @@ export default function AgentPage() {
       cancelled = true;
       clearReconciliationTimer();
     };
-  }, [reconcileConversation, rememberRetryableRequest, restoreConversationMessages, sessionId]);
+  }, [reconcileConversation, rememberRetryableRequest, restoreConversationMessages, restoreRunProgress, sessionId]);
 
   useEffect(() => () => {
     abortRef.current?.abort();
@@ -716,9 +739,23 @@ export default function AgentPage() {
                         ? 'bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-300'
                         : step.status === 'waiting'
                           ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300'
-                        : 'bg-slate-100 dark:bg-slate-700 text-slate-400'
+                          : step.status === 'failed'
+                            ? 'bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-300'
+                            : step.status === 'cancelled'
+                              ? 'bg-slate-200 dark:bg-slate-600 text-slate-500 dark:text-slate-300'
+                              : 'bg-slate-100 dark:bg-slate-700 text-slate-400'
                       }`}>
-                      {step.status === 'completed' ? <CheckCircle2 className="w-4 h-4" /> : step.status === 'running' ? <Loader2 className="w-4 h-4 animate-spin" /> : step.status === 'waiting' ? <Clock3 className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
+                      {step.status === 'completed'
+                        ? <CheckCircle2 className="w-4 h-4" />
+                        : step.status === 'running'
+                          ? <Loader2 className="w-4 h-4 animate-spin" />
+                          : step.status === 'waiting'
+                            ? <Clock3 className="w-4 h-4" />
+                            : step.status === 'failed'
+                              ? <XCircle className="w-4 h-4" />
+                              : step.status === 'cancelled'
+                                ? <XCircle className="w-4 h-4" />
+                                : <Circle className="w-4 h-4" />}
                     </div>
                     {index < steps.length - 1 && <div className="w-px flex-1 bg-slate-200 dark:bg-slate-700 my-1" />}
                   </div>
