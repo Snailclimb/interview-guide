@@ -573,9 +573,18 @@ public class InterviewAgentService {
         return visible + OUTPUT_TRUNCATION_NOTICE;
     }
 
-    private String toAgentErrorMessage(Throwable error) {
+    String toAgentErrorMessage(Throwable error) {
+        if (isContextLimitError(error)) {
+            return "本次上下文过长，模型无法处理；请清空部分对话、缩短问题，或分多次发送后重试";
+        }
         if (isProviderAccountUnavailable(error)) {
-            return "当前模型账号不可用，请在模型设置中检查 API Key 或切换其他模型";
+            return "当前模型账号不可用，请在模型设置中检查 API Key、模型权限或切换其他模型";
+        }
+        if (isAuthenticationError(error)) {
+            return "当前模型 API Key 或访问权限无效，请在模型设置中检查配置后重试";
+        }
+        if (isTimeoutError(error)) {
+            return "模型响应超时，本次任务已结束；可以重试或切换其他模型";
         }
         if (isTransientModelError(error)) {
             return "当前模型服务繁忙，请稍后重试；也可以在模型设置中切换其他模型";
@@ -583,22 +592,41 @@ public class InterviewAgentService {
         return "AI 面试教练暂时不可用，请稍后重试";
     }
 
+    private boolean isContextLimitError(Throwable error) {
+        return containsErrorMessage(error,
+            "context length", "maximum context", "context window", "too many tokens",
+            "prompt is too long", "input is too long", "token limit", "request entity too large", "413"
+        );
+    }
+
+    private boolean isTimeoutError(Throwable error) {
+        return containsErrorMessage(error, "timeout", "timed out", "deadline exceeded", "read timed out");
+    }
+
+    private boolean isAuthenticationError(Throwable error) {
+        return containsErrorMessage(error,
+            "unauthorized", "invalid api key", "invalid_api_key", "authentication failed", "401", "403"
+        );
+    }
+
     private boolean isTransientModelError(Throwable error) {
+        return containsErrorMessage(error,
+            "overloaded", "temporarily unavailable", "service unavailable", "try again later",
+            "concurrency limit", "rate limit", "too many requests", "429"
+        );
+    }
+
+    private boolean containsErrorMessage(Throwable error, String... fragments) {
         for (Throwable current = error; current != null; current = current.getCause()) {
             String message = current.getMessage();
             if (message == null) {
                 continue;
             }
             String normalized = message.toLowerCase(java.util.Locale.ROOT);
-            if (normalized.contains("overloaded")
-                || normalized.contains("temporarily unavailable")
-                || normalized.contains("service unavailable")
-                || normalized.contains("try again later")
-                || normalized.contains("concurrency limit")
-                || normalized.contains("rate limit")
-                || normalized.contains("too many requests")
-                || normalized.contains("429")) {
-                return true;
+            for (String fragment : fragments) {
+                if (normalized.contains(fragment)) {
+                    return true;
+                }
             }
         }
         return false;
@@ -608,22 +636,10 @@ public class InterviewAgentService {
         if (isTransientModelError(error) || isProviderAccountUnavailable(error)) {
             return true;
         }
-        for (Throwable current = error; current != null; current = current.getCause()) {
-            String message = current.getMessage();
-            if (message == null) {
-                continue;
-            }
-            String normalized = message.toLowerCase(java.util.Locale.ROOT);
-            if (normalized.contains("unknown llm provider")
-                || normalized.contains("unauthorized")
-                || normalized.contains("invalid api key")
-                || normalized.contains("invalid_api_key")
-                || normalized.contains("401")
-                || normalized.contains("403")) {
-                return true;
-            }
-        }
-        return false;
+        return containsErrorMessage(error,
+            "unknown llm provider", "unauthorized", "invalid api key", "invalid_api_key",
+            "authentication failed", "401", "403"
+        );
     }
 
     private boolean isProviderAccountUnavailable(Throwable error) {
