@@ -54,7 +54,7 @@ interface AgentMessage {
   content: string;
 }
 
-const MAX_HISTORY_MESSAGES = 128;
+const MAX_HISTORY_MESSAGES = 32;
 const MAX_AGENT_MESSAGE_CHARS = 4000;
 const MAX_RECONCILIATION_ATTEMPTS = 300;
 const RECONCILIATION_INTERVAL_MS = 3000;

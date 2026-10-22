@@ -2,6 +2,7 @@ package interview.guide.modules.agent.model;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 /**
  * Agent 请求中的短期对话消息。
@@ -11,6 +12,7 @@ public record AgentHistoryMessage(
     @Pattern(regexp = "user|assistant")
     String role,
     @NotBlank
+    @Size(max = 32_000, message = "历史消息不能超过 32000 个字符")
     String content
 ) {
 }
