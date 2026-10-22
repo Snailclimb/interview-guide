@@ -345,8 +345,18 @@ export default function AgentPage() {
           setRunNotice('服务端仍有一个 Agent 任务正在执行，可等待完成或取消任务。');
           reconcileConversation(sessionId);
         }
-        if (conversation.runStatus === 'FAILED' && conversation.runError) {
-          setRunError(conversation.runError);
+        if (conversation.runStatus === 'FAILED') {
+          setRunStatus('error');
+          if (conversation.runError) {
+            setRunError(conversation.runError);
+          }
+        }
+        if (conversation.runStatus === 'COMPLETED') {
+          setRunStatus('completed');
+        }
+        if (conversation.runStatus === 'CANCELLED') {
+          setRunStatus('cancelled');
+          setRunNotice('上一次 Agent 任务已取消，可以重新执行。');
         }
         restoreConversationMessages(conversation);
       })
