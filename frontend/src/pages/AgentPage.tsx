@@ -27,6 +27,7 @@ import { agentApi } from '../api/agent';
 import { historyApi, type InterviewDetail } from '../api/history';
 import { llmProviderApi } from '../api/llmProvider';
 import { getErrorMessage } from '../api/request';
+import { StreamHttpError } from '../api/stream';
 import CodeBlock from '../components/CodeBlock';
 import { getRetryableRequest, removeLastRunMessages, type AgentRunMessageIds, type AgentRunRequest } from './agentRun';
 import type {
@@ -514,6 +515,15 @@ export default function AgentPage() {
         onError: (error) => {
           if (controller.signal.aborted) return;
           const message = getErrorMessage(error) || '连接暂时中断';
+          if (error instanceof StreamHttpError && error.status < 500) {
+            setRunNotice('本次请求没有提交到后台任务，请根据错误提示调整后重试。');
+            setRunError(message);
+            setRunStatus('error');
+            setMessages((current) => current.map((item) => item.id === assistantMessageId
+              ? { ...item, content: message }
+              : item));
+            return;
+          }
           setRunError('');
           setRunStatus('running');
           setRunNotice(`${message}，正在确认后台任务状态...`);
