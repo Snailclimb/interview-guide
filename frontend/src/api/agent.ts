@@ -16,6 +16,12 @@ export const agentApi = {
     );
   },
 
+  cancelRun(sessionId: string): Promise<AgentConversationResponse> {
+    return request.post<AgentConversationResponse>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/cancel`,
+    );
+  },
+
   streamMessage(
     sessionId: string,
     request: AgentMessageRequest,

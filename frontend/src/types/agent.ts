@@ -16,6 +16,11 @@ export interface AgentConversationResponse {
   interviewSessionId: string;
   goal?: AgentGoal | string | null;
   providerId?: string | null;
+  runId?: string | null;
+  runStatus?: 'IDLE' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | string | null;
+  runStartedAt?: string | null;
+  runFinishedAt?: string | null;
+  runError?: string | null;
   messages: AgentHistoryMessage[];
 }
 

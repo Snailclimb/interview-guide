@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
@@ -30,12 +30,13 @@ import { getErrorMessage } from '../api/request';
 import CodeBlock from '../components/CodeBlock';
 import type {
   AgentGoal,
+  AgentConversationResponse,
   AgentHistoryMessage,
   AgentSource,
   AgentStreamEvent,
 } from '../types/agent';
 import type { ProviderItem } from '../types/llmProvider';
-type RunStatus = 'idle' | 'running' | 'completed' | 'error';
+type RunStatus = 'idle' | 'running' | 'completed' | 'error' | 'cancelled';
 type StepStatus = 'pending' | 'running' | 'waiting' | 'completed';
 
 interface AgentStep {
@@ -52,6 +53,8 @@ interface AgentMessage {
 }
 
 const MAX_HISTORY_MESSAGES = 128;
+const MAX_RECONCILIATION_ATTEMPTS = 300;
+const RECONCILIATION_INTERVAL_MS = 3000;
 
 const INLINE_HEADING_TITLES = [
   '本场面试复盘结论',
@@ -197,6 +200,84 @@ export default function AgentPage() {
   ]);
   const [input, setInput] = useState('');
   const abortRef = useRef<AbortController | null>(null);
+  const reconciliationTimerRef = useRef<number | null>(null);
+
+  const clearReconciliationTimer = useCallback(() => {
+    if (reconciliationTimerRef.current !== null) {
+      window.clearTimeout(reconciliationTimerRef.current);
+      reconciliationTimerRef.current = null;
+    }
+  }, []);
+
+  const restoreConversationMessages = useCallback((conversation: AgentConversationResponse, fallbackAssistant?: AgentMessage) => {
+    if (conversation.messages.length === 0 && !fallbackAssistant) return;
+    const restoredMessages: AgentMessage[] = [
+      {
+        id: 1,
+        role: 'assistant',
+        content: '你好，我是你的 AI 面试教练。选择一个目标后，我会基于当前面试上下文帮你整理下一步。',
+      },
+      ...conversation.messages.map((message, index) => ({
+        id: index + 2,
+        role: message.role,
+        content: message.content,
+      })),
+    ];
+    if (fallbackAssistant && !conversation.messages.some((message) => message.role === 'assistant')) {
+      restoredMessages.push(fallbackAssistant);
+    }
+    setMessages(restoredMessages);
+  }, []);
+
+  const reconcileConversation = useCallback((currentSessionId: string, fallbackAssistant?: AgentMessage) => {
+    clearReconciliationTimer();
+    let attempts = 0;
+
+    const poll = () => {
+      attempts += 1;
+      void agentApi.getConversation(currentSessionId)
+        .then((conversation) => {
+          if (conversation.runStatus === 'RUNNING' && attempts < MAX_RECONCILIATION_ATTEMPTS) {
+            setRunStatus('running');
+            setRunError('');
+            setRunNotice('连接已断开，但 Agent 仍在后台执行，正在等待任务完成...');
+            reconciliationTimerRef.current = window.setTimeout(poll, RECONCILIATION_INTERVAL_MS);
+            return;
+          }
+
+          clearReconciliationTimer();
+          restoreConversationMessages(conversation, fallbackAssistant);
+          if (conversation.runStatus === 'COMPLETED') {
+            setRunError('');
+            setRunNotice('Agent 已在后台完成，回答内容已恢复。');
+            setRunStatus('completed');
+          } else if (conversation.runStatus === 'CANCELLED') {
+            setRunError('');
+            setRunNotice('本次 Agent 任务已取消，可以重新执行。');
+            setRunStatus('cancelled');
+          } else if (conversation.runStatus === 'FAILED') {
+            setRunNotice('');
+            setRunError(conversation.runError || 'Agent 执行失败，请稍后重试');
+            setRunStatus('error');
+          } else {
+            setRunNotice('连接已断开，暂时无法确认 Agent 任务状态，请刷新页面后重试。');
+            setRunStatus('error');
+          }
+        })
+        .catch(() => {
+          if (attempts < MAX_RECONCILIATION_ATTEMPTS) {
+            setRunNotice('暂时无法读取 Agent 状态，正在继续等待...');
+            reconciliationTimerRef.current = window.setTimeout(poll, RECONCILIATION_INTERVAL_MS);
+            return;
+          }
+          clearReconciliationTimer();
+          setRunError('连接已断开，暂时无法确认 Agent 任务状态，请刷新页面后重试。');
+          setRunStatus('error');
+        });
+    };
+
+    poll();
+  }, [clearReconciliationTimer, restoreConversationMessages]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -259,21 +340,25 @@ export default function AgentPage() {
         if (conversation.providerId) {
           setProviderId(conversation.providerId);
         }
-        if (conversation.messages.length === 0) return;
-
-        const restoredMessages: AgentMessage[] = [
-          {
-            id: 1,
-            role: 'assistant',
-            content: '你好，我是你的 AI 面试教练。选择一个目标后，我会基于当前面试上下文帮你整理下一步。',
-          },
-          ...conversation.messages.map((message, index) => ({
-            id: index + 2,
-            role: message.role,
-            content: message.content,
-          })),
-        ];
-        setMessages(restoredMessages);
+        if (conversation.runStatus === 'RUNNING') {
+          setRunStatus('running');
+          setRunNotice('服务端仍有一个 Agent 任务正在执行，可等待完成或取消任务。');
+          reconcileConversation(sessionId);
+        }
+        if (conversation.runStatus === 'FAILED') {
+          setRunStatus('error');
+          if (conversation.runError) {
+            setRunError(conversation.runError);
+          }
+        }
+        if (conversation.runStatus === 'COMPLETED') {
+          setRunStatus('completed');
+        }
+        if (conversation.runStatus === 'CANCELLED') {
+          setRunStatus('cancelled');
+          setRunNotice('上一次 Agent 任务已取消，可以重新执行。');
+        }
+        restoreConversationMessages(conversation);
       })
       .catch(() => {
         // 会话恢复失败不阻塞当前 Agent，仍允许用户从空白上下文开始。
@@ -281,12 +366,14 @@ export default function AgentPage() {
 
     return () => {
       cancelled = true;
+      clearReconciliationTimer();
     };
-  }, [sessionId]);
+  }, [reconcileConversation, restoreConversationMessages, sessionId]);
 
   useEffect(() => () => {
     abortRef.current?.abort();
-  }, []);
+    clearReconciliationTimer();
+  }, [clearReconciliationTimer]);
 
   const selectedGoal = useMemo(
     () => goalOptions.find((option) => option.id === goal) ?? goalOptions[0],
@@ -318,6 +405,7 @@ export default function AgentPage() {
     const assistantMessageId = userMessageId + 1;
     const controller = new AbortController();
     abortRef.current?.abort();
+    clearReconciliationTimer();
     abortRef.current = controller;
 
     setInput('');
@@ -371,12 +459,15 @@ export default function AgentPage() {
         onComplete: () => setRunStatus((current) => current === 'running' ? 'completed' : current),
         onError: (error) => {
           if (controller.signal.aborted) return;
-          const message = getErrorMessage(error) || 'Agent 执行失败，请稍后重试';
-          setRunError(message);
-          setRunStatus('error');
-          setMessages((current) => current.map((item) => item.id === assistantMessageId
-            ? { ...item, content: message }
-            : item));
+          const message = getErrorMessage(error) || '连接暂时中断';
+          setRunError('');
+          setRunStatus('running');
+          setRunNotice(`${message}，正在确认后台任务状态...`);
+          reconcileConversation(sessionId, {
+            id: assistantMessageId,
+            role: 'assistant',
+            content: 'Agent 连接暂时中断，正在恢复任务状态...',
+          });
         },
       },
       controller.signal,
@@ -384,6 +475,33 @@ export default function AgentPage() {
   };
 
   const startRun = () => streamAgentMessage(`开始${selectedGoal.title}`);
+
+  const cancelRun = () => {
+    if (!sessionId || runStatus !== 'running') return;
+    clearReconciliationTimer();
+    abortRef.current?.abort();
+    setRunNotice('正在取消 Agent 任务...');
+    void agentApi.cancelRun(sessionId)
+      .then((conversation) => {
+        if (conversation.runStatus === 'COMPLETED') {
+          restoreConversationMessages(conversation);
+          setRunError('');
+          setRunNotice('Agent 已在取消前完成，回答内容已恢复。');
+          setRunStatus('completed');
+        } else if (conversation.runStatus === 'FAILED') {
+          setRunNotice('');
+          setRunError(conversation.runError || 'Agent 执行失败，请稍后重试');
+          setRunStatus('error');
+        } else {
+          setRunStatus('cancelled');
+          setRunNotice('本次 Agent 任务已取消，可以重新执行。');
+        }
+      })
+      .catch((error: unknown) => {
+        setRunError(getErrorMessage(error) || '取消 Agent 任务失败');
+        setRunStatus('error');
+      });
+  };
 
   const sendMessage = () => streamAgentMessage(input.trim());
 
@@ -578,6 +696,15 @@ export default function AgentPage() {
                 {runStatus === 'running' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                 {runStatus === 'running' ? 'Agent 执行中' : runStatus === 'completed' ? '再次运行' : runStatus === 'error' ? '重试执行' : '开始执行'}
               </button>
+              {runStatus === 'running' && (
+                <button
+                  onClick={cancelRun}
+                  className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm text-rose-600 dark:text-rose-300"
+                >
+                  <XCircle className="w-4 h-4" />
+                  取消执行
+                </button>
+              )}
               {(runStatus === 'completed' || runStatus === 'error') && (
                 <button onClick={() => { setRunStatus('idle'); setRunError(''); setRunNotice(''); setSources([]); setSteps(createInitialSteps()); }} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm">
                   <RotateCcw className="w-4 h-4" />

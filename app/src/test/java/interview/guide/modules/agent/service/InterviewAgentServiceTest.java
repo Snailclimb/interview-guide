@@ -19,7 +19,9 @@ import reactor.core.publisher.Flux;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -65,7 +67,7 @@ class InterviewAgentServiceTest {
         when(contextService.build(anyString(), any())).thenReturn(context);
         when(conversationService.loadHistory("session-1")).thenReturn(List.of());
         when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
-            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L));
+            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
         when(providerRegistry.resolveChatProviderCandidates("primary"))
             .thenReturn(List.of("primary", "backup"));
 
@@ -113,7 +115,7 @@ class InterviewAgentServiceTest {
         ));
         when(conversationService.loadHistory(anyString())).thenReturn(List.of());
         when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
-            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L));
+            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
         when(providerRegistry.resolveChatProviderCandidates("primary"))
             .thenReturn(List.of("primary"));
         ChatClient longRunningClient = mockStreamClient(Flux.never());
@@ -130,6 +132,129 @@ class InterviewAgentServiceTest {
         assertThat(second).anySatisfy(event -> assertThat(event.message())
             .contains("已有一个 Agent 任务正在执行"));
         firstSubscription.dispose();
+    }
+
+    @Test
+    @DisplayName("取消 Agent 任务时终止模型流并持久化取消状态")
+    void cancelsActiveModelStream() throws Exception {
+        when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {
+            String path = invocation.getArgument(0);
+            String template = path.contains("system")
+                ? "系统规则"
+                : path.contains("context")
+                    ? "固定上下文 {context} {skill}"
+                    : "目标 {goal}，资料 {rag}，问题 {question}";
+            return new ByteArrayResource(template.getBytes(StandardCharsets.UTF_8));
+        });
+        when(promptSanitizer.sanitize(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(promptSanitizer.wrapWithStableDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(contextService.build(anyString(), any())).thenReturn(new AgentContextService.AgentContext(
+            "报告", "skill", "skill", "无资料", "问题", List.of()
+        ));
+        when(conversationService.loadHistory(anyString())).thenReturn(List.of());
+        when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
+            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
+        when(providerRegistry.resolveChatProviderCandidates("primary"))
+            .thenReturn(List.of("primary"));
+        ChatClient longRunningClient = mockStreamClient(Flux.never());
+        when(providerRegistry.getAgentChatClient("primary")).thenReturn(longRunningClient);
+
+        InterviewAgentService service = new InterviewAgentService(
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader
+        );
+
+        reactor.core.Disposable subscription = service.stream(
+            "cancel-session", new AgentMessageRequest("review", "请复盘", List.of(), "primary")
+        ).subscribe();
+
+        assertThat(service.cancel("cancel-session")).isTrue();
+        verify(conversationService, timeout(1000))
+            .cancelMessage(10L, "");
+        subscription.dispose();
+    }
+
+    @Test
+    @DisplayName("模型流组装阶段异常时也关闭已创建的 Agent 任务")
+    void failsPreparedMessageWhenModelStreamAssemblyFails() throws Exception {
+        when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {
+            String path = invocation.getArgument(0);
+            String template = path.contains("system")
+                ? "系统规则"
+                : path.contains("context")
+                    ? "固定上下文 {context} {skill}"
+                    : "目标 {goal}，资料 {rag}，问题 {question}";
+            return new ByteArrayResource(template.getBytes(StandardCharsets.UTF_8));
+        });
+        when(promptSanitizer.sanitize(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(promptSanitizer.wrapWithStableDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(contextService.build(anyString(), any())).thenReturn(new AgentContextService.AgentContext(
+            "报告", "skill", "skill", "无资料", "问题", List.of()
+        ));
+        when(conversationService.loadHistory(anyString())).thenReturn(List.of());
+        when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
+            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
+        when(providerRegistry.resolveChatProviderCandidates("primary"))
+            .thenThrow(new IllegalStateException("provider registry unavailable"));
+
+        InterviewAgentService service = new InterviewAgentService(
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader
+        );
+
+        List<AgentStreamEvent> events = service.stream(
+            "assembly-failure-session", new AgentMessageRequest("review", "请复盘", List.of(), "primary")
+        ).collectList().block();
+
+        assertThat(events).isNotNull();
+        assertThat(events).anySatisfy(event -> assertThat(event.type()).isEqualTo("error"));
+        verify(conversationService).failMessage(10L, "", "AI 面试教练暂时不可用，请稍后重试");
+    }
+
+    @Test
+    @DisplayName("SSE 客户端断开时后台模型任务继续执行，不误标记为取消")
+    void keepsBackgroundTaskAfterClientDisconnect() throws Exception {
+        when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {
+            String path = invocation.getArgument(0);
+            String template = path.contains("system")
+                ? "系统规则"
+                : path.contains("context")
+                    ? "固定上下文 {context} {skill}"
+                    : "目标 {goal}，资料 {rag}，问题 {question}";
+            return new ByteArrayResource(template.getBytes(StandardCharsets.UTF_8));
+        });
+        when(promptSanitizer.sanitize(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(promptSanitizer.wrapWithStableDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(contextService.build(anyString(), any())).thenReturn(new AgentContextService.AgentContext(
+            "报告", "skill", "skill", "无资料", "问题", List.of()
+        ));
+        when(conversationService.loadHistory(anyString())).thenReturn(List.of());
+        when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
+            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
+        when(providerRegistry.resolveChatProviderCandidates("primary"))
+            .thenReturn(List.of("primary"));
+        ChatClient longRunningClient = mockStreamClient(Flux.never());
+        when(providerRegistry.getAgentChatClient("primary")).thenReturn(longRunningClient);
+
+        InterviewAgentService service = new InterviewAgentService(
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader
+        );
+
+        reactor.core.Disposable subscription = service.stream(
+            "disconnect-session", new AgentMessageRequest("review", "请复盘", List.of(), "primary")
+        ).subscribe();
+        subscription.dispose();
+
+        verify(conversationService, after(200).never()).cancelMessage(any(), anyString());
+        assertThat(service.cancel("disconnect-session")).isTrue();
+        verify(conversationService, timeout(1000)).cancelMessage(10L, "");
     }
 
     private ChatClient mockStreamClient(Flux<String> content) {
