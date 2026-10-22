@@ -4,6 +4,7 @@ import interview.guide.modules.agent.model.AgentChatMessageEntity;
 import interview.guide.modules.agent.model.AgentChatSessionEntity;
 import interview.guide.modules.agent.model.AgentConversationResponse;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
+import interview.guide.modules.agent.model.AgentSource;
 import interview.guide.modules.agent.repository.AgentChatMessageRepository;
 import interview.guide.modules.agent.repository.AgentChatSessionRepository;
 import java.util.List;
@@ -17,6 +18,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -32,6 +34,9 @@ class AgentConversationServiceTest {
 
     @Mock
     private AgentChatMessageRepository messageRepository;
+
+    @Mock
+    private ObjectMapper objectMapper;
 
     @InjectMocks
     private AgentConversationService service;
@@ -240,5 +245,39 @@ class AgentConversationServiceTest {
 
         assertThat(history).extracting(AgentHistoryMessage::content)
             .containsExactly("之前的回答");
+    }
+
+    @Test
+    @DisplayName("运行进度和来源只更新当前有效任务")
+    void persistsActiveRunProgressAndSourceSummary() {
+        AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+            .id(11L)
+            .interviewSessionId("interview-1")
+            .runStatus(interview.guide.modules.agent.model.AgentRunStatus.RUNNING)
+            .activeMessageId(22L)
+            .build();
+        AgentChatMessageEntity activeMessage = AgentChatMessageEntity.builder()
+            .id(22L)
+            .session(session)
+            .role(AgentChatMessageEntity.MessageRole.ASSISTANT)
+            .content("")
+            .sequenceNum(1)
+            .completed(false)
+            .build();
+        when(messageRepository.findById(22L)).thenReturn(Optional.of(activeMessage));
+        when(objectMapper.writeValueAsString(any())).thenReturn(
+            "[{\"kind\":\"rag\",\"title\":\"知识库片段\",\"score\":0.9,\"reference\":\"R1\"}]"
+        );
+
+        service.updateRunProgress(22L, "retrieval", "waiting", "正在等待检索资源");
+        service.updateRunSources(22L, List.of(
+            new AgentSource("rag", "知识库片段", 0.9, "R1")
+        ));
+
+        assertThat(session.getRunStep()).isEqualTo("retrieval");
+        assertThat(session.getRunStepStatus()).isEqualTo("waiting");
+        assertThat(session.getRunNotice()).isEqualTo("正在等待检索资源");
+        assertThat(session.getRunSourcesJson()).contains("知识库片段").doesNotContain("原始 RAG");
+        verify(sessionRepository, times(2)).save(session);
     }
 }

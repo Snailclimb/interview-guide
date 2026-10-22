@@ -4,6 +4,7 @@ import interview.guide.modules.agent.model.AgentChatMessageEntity;
 import interview.guide.modules.agent.model.AgentChatSessionEntity;
 import interview.guide.modules.agent.model.AgentConversationResponse;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
+import interview.guide.modules.agent.model.AgentSource;
 import interview.guide.modules.agent.model.AgentRunStatus;
 import interview.guide.modules.agent.repository.AgentChatMessageRepository;
 import interview.guide.modules.agent.repository.AgentChatSessionRepository;
@@ -16,6 +17,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Agent 对话存储服务。
@@ -30,9 +33,11 @@ public class AgentConversationService {
 
     private static final int MAX_PERSISTED_HISTORY_MESSAGES = 64;
     private static final int STALE_RUN_MINUTES = 15;
+    private static final int MAX_RUN_SOURCES_JSON_CHARS = 12_000;
 
     private final AgentChatSessionRepository sessionRepository;
     private final AgentChatMessageRepository messageRepository;
+    private final ObjectMapper objectMapper;
 
     @Transactional
     public PreparedMessage prepareMessage(
@@ -61,6 +66,10 @@ public class AgentConversationService {
         session.setRunStartedAt(LocalDateTime.now());
         session.setRunFinishedAt(null);
         session.setRunError(null);
+        session.setRunStep(null);
+        session.setRunStepStatus(null);
+        session.setRunNotice(null);
+        session.setRunSourcesJson(null);
         session = sessionRepository.save(session);
 
         int nextSequence = messageRepository.findTopBySessionIdOrderBySequenceNumDesc(session.getId())
@@ -149,6 +158,36 @@ public class AgentConversationService {
         return true;
     }
 
+    /** 持久化当前 Agent 编排阶段，供断线和页面刷新后恢复展示。 */
+    @Transactional
+    public void updateRunProgress(Long messageId, String step, String status, String notice) {
+        messageRepository.findById(messageId).ifPresent(message -> {
+            if (!isActiveMessage(message)) {
+                log.info("忽略已失效 Agent 进度事件: messageId={}", messageId);
+                return;
+            }
+            AgentChatSessionEntity session = message.getSession();
+            session.setRunStep(truncate(step, 32));
+            session.setRunStepStatus(truncate(status, 16));
+            session.setRunNotice(truncate(notice, 500));
+            sessionRepository.save(session);
+        });
+    }
+
+    /** 持久化本次 Agent 实际使用的来源摘要，不保存原始 RAG 文本。 */
+    @Transactional
+    public void updateRunSources(Long messageId, List<AgentSource> sources) {
+        String serialized = serializeSources(sources);
+        messageRepository.findById(messageId).ifPresent(message -> {
+            if (!isActiveMessage(message)) {
+                log.info("忽略已失效 Agent 来源事件: messageId={}", messageId);
+                return;
+            }
+            message.getSession().setRunSourcesJson(serialized);
+            sessionRepository.save(message.getSession());
+        });
+    }
+
     /**
      * 判断当前后台任务是否仍是该面试会话的有效运行任务。
      * 用于多实例部署时让执行任务感知另一实例发起的取消或超时回收。
@@ -169,7 +208,7 @@ public class AgentConversationService {
         if (session == null) {
             return new AgentConversationResponse(
                 interviewSessionId, null, null, null, AgentRunStatus.IDLE,
-                null, null, null, List.of()
+                null, null, null, null, null, null, List.of(), List.of()
             );
         }
         if (isStaleRun(session)) {
@@ -199,6 +238,10 @@ public class AgentConversationService {
             session.getRunStartedAt(),
             session.getRunFinishedAt(),
             session.getRunError(),
+            session.getRunStep(),
+            session.getRunStepStatus(),
+            session.getRunNotice(),
+            parseSources(session.getRunSourcesJson()),
             normalized
         );
     }
@@ -232,6 +275,37 @@ public class AgentConversationService {
         return value.substring(0, maxLength);
     }
 
+    private String serializeSources(List<AgentSource> sources) {
+        try {
+            List<AgentSource> safeSources = sources == null ? List.of() : sources;
+            for (int count = safeSources.size(); count >= 0; count--) {
+                String serialized = objectMapper.writeValueAsString(safeSources.subList(0, count));
+                if (serialized.length() <= MAX_RUN_SOURCES_JSON_CHARS) {
+                    return serialized;
+                }
+            }
+        } catch (RuntimeException error) {
+            log.warn("Agent 运行来源持久化失败", error);
+        }
+        return "[]";
+    }
+
+    private List<AgentSource> parseSources(String serialized) {
+        if (serialized == null || serialized.isBlank()) {
+            return List.of();
+        }
+        try {
+            List<AgentSource> sources = objectMapper.readValue(
+                serialized,
+                new TypeReference<List<AgentSource>>() {}
+            );
+            return sources == null ? List.of() : List.copyOf(sources);
+        } catch (RuntimeException error) {
+            log.warn("Agent 运行来源恢复失败", error);
+            return List.of();
+        }
+    }
+
     private void markRunFinished(AgentChatMessageEntity message, AgentRunStatus status, String error) {
         AgentChatSessionEntity session = message.getSession();
         if (session == null) {
@@ -245,6 +319,9 @@ public class AgentConversationService {
         session.setRunFinishedAt(LocalDateTime.now());
         session.setActiveMessageId(null);
         session.setRunError(truncate(error, 500));
+        session.setRunStepStatus(status == AgentRunStatus.COMPLETED ? "completed"
+            : status == AgentRunStatus.CANCELLED ? "cancelled" : "failed");
+        session.setRunNotice(null);
         sessionRepository.save(session);
     }
 

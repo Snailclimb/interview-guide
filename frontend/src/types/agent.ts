@@ -21,10 +21,14 @@ export interface AgentConversationResponse {
   runStartedAt?: string | null;
   runFinishedAt?: string | null;
   runError?: string | null;
+  runStep?: string | null;
+  runStepStatus?: AgentStepStatus | string | null;
+  runNotice?: string | null;
+  runSources?: AgentSource[];
   messages: AgentHistoryMessage[];
 }
 
-export type AgentStepStatus = 'pending' | 'running' | 'waiting' | 'completed';
+export type AgentStepStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
 
 export interface AgentSource {
   kind: 'skill' | 'rag';

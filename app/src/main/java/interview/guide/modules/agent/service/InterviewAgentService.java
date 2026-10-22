@@ -123,6 +123,9 @@ public class InterviewAgentService {
                 );
                 taskHandleRef.set(taskHandle);
                 activeTasks.put(sessionId, taskHandle);
+                persistRunProgress(
+                    preparedMessage.assistantMessageId(), "context", "running", null
+                );
 
                 Map<String, Object> fixedContextVariables = Map.of(
                     "context", promptSanitizer.wrapWithStableDelimiters(
@@ -172,6 +175,7 @@ public class InterviewAgentService {
                     ),
                     response
                 )
+                    .doOnNext(event -> persistRunProgress(preparedMessage.assistantMessageId(), event))
                     .takeUntilOther(Flux.merge(cancellationSignal.asMono(), remoteCancellation))
                     .doFinally(signal -> {
                         activeSessions.remove(sessionId);
@@ -258,6 +262,29 @@ public class InterviewAgentService {
             agentConversationService.failMessage(messageId, "", toAgentErrorMessage(error));
         } catch (Throwable persistenceError) {
             log.warn("Agent 任务失败状态持久化失败: messageId={}", messageId, persistenceError);
+        }
+    }
+
+    /** 进度写库失败不能中断模型主流程，数据库状态仅用于断线后的展示恢复。 */
+    private void persistRunProgress(Long assistantMessageId, AgentStreamEvent event) {
+        try {
+            if ("step".equals(event.type())) {
+                persistRunProgress(assistantMessageId, event.step(), event.status(), event.message());
+            } else if ("sources".equals(event.type())) {
+                agentConversationService.updateRunSources(assistantMessageId, event.sources());
+            }
+        } catch (Throwable persistenceError) {
+            log.warn("Agent 运行进度持久化失败: messageId={}, eventType={}",
+                assistantMessageId, event.type(), persistenceError);
+        }
+    }
+
+    private void persistRunProgress(Long assistantMessageId, String step, String status, String notice) {
+        try {
+            agentConversationService.updateRunProgress(assistantMessageId, step, status, notice);
+        } catch (Throwable persistenceError) {
+            log.warn("Agent 初始运行进度持久化失败: messageId={}, step={}",
+                assistantMessageId, step, persistenceError);
         }
     }
 
