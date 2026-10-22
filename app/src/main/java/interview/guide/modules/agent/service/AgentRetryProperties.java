@@ -33,4 +33,9 @@ public class AgentRetryProperties {
     @Min(value = 1, message = "Agent 重试心跳间隔必须大于 0 秒")
     @Max(value = 60, message = "Agent 重试心跳间隔不能超过 60 秒")
     private int retryHeartbeatIntervalSeconds = 10;
+
+    /** Agent 单次回答的输出 token 上限，按兼容网关常见的 3000 上限设置。 */
+    @Min(value = 256, message = "Agent 输出 token 上限不能低于 256")
+    @Max(value = 3000, message = "Agent 输出 token 上限不能超过 3000")
+    private int maxOutputTokens = 3000;
 }
