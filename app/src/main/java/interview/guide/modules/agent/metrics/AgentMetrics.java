@@ -21,6 +21,8 @@ public class AgentMetrics {
     public static final String RUN_DURATION = "app.agent.run.duration";
     public static final String RETRIES = "app.agent.retries";
     public static final String PROVIDER_ATTEMPTS = "app.agent.provider.attempts";
+    public static final String TOOL_CALLS = "app.agent.tool.calls";
+    public static final String TOOL_DURATION = "app.agent.tool.duration";
 
     private final MeterRegistry registry;
     private final boolean enabled;
@@ -68,6 +70,22 @@ public class AgentMetrics {
         if (enabled) {
             registry.counter(PROVIDER_ATTEMPTS, "role", role, "result", result).increment();
         }
+    }
+
+    /** 记录 Agent 只读工具调用，不记录工具参数或用户内容。 */
+    public void recordToolCall(String toolName, String result, Duration duration) {
+        if (!enabled) {
+            return;
+        }
+        String safeToolName = toolName == null || toolName.isBlank() ? "unknown" : toolName;
+        String safeResult = result == null || result.isBlank() ? "unknown" : result;
+        registry.counter(TOOL_CALLS, "tool", safeToolName, "result", safeResult).increment();
+        Timer.builder(TOOL_DURATION)
+            .tag("tool", safeToolName)
+            .tag("result", safeResult)
+            .publishPercentileHistogram()
+            .register(registry)
+            .record(duration == null ? Duration.ZERO : duration);
     }
 
     public static final class RunTracker {
