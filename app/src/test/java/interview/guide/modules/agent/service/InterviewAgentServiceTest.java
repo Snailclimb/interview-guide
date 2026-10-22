@@ -312,6 +312,32 @@ class InterviewAgentServiceTest {
         assertThat(upstreamCancelled).isTrue();
     }
 
+    @Test
+    @DisplayName("长重试退避期间发送心跳且不改变等待总时长")
+    void emitsRetryHeartbeatWithoutExtraRetry() throws Exception {
+        when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {
+            String path = invocation.getArgument(0);
+            String template = path.contains("system")
+                ? "系统规则"
+                : path.contains("context")
+                    ? "固定上下文 {context} {skill}"
+                    : "目标 {goal}，资料 {rag}，问题 {question}";
+            return new ByteArrayResource(template.getBytes(StandardCharsets.UTF_8));
+        });
+        InterviewAgentService service = new InterviewAgentService(
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics
+        );
+
+        List<AgentStreamEvent> events = service.retryWaitingEvents(
+            java.time.Duration.ofMillis(30), 2, java.time.Duration.ofMillis(10)
+        ).collectList().block(java.time.Duration.ofSeconds(2));
+
+        assertThat(events).hasSize(3);
+        assertThat(events).allMatch(event -> "waiting".equals(event.status()));
+        assertThat(events.get(0).message()).contains("预计还需约 1 秒");
+        assertThat(events.get(2).message()).contains("即将重试");
+    }
+
     private ChatClient mockStreamClient(Flux<String> content) {
         ChatClient client = mock(ChatClient.class);
         ChatClient.ChatClientRequestSpec requestSpec = mock(ChatClient.ChatClientRequestSpec.class);

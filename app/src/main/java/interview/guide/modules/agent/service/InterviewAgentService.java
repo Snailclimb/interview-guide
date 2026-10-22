@@ -46,6 +46,8 @@ import java.util.function.Supplier;
 public class InterviewAgentService {
     /** 最多等待并重试 6 次；退避时间合计约 90 秒，并通过 SSE 持续告知前端。 */
     private static final int MODEL_RETRY_ATTEMPTS = 6;
+    /** 重试退避期间最多每 10 秒发一次状态，避免 SSE 长时间没有数据被代理断开。 */
+    private static final Duration RETRY_HEARTBEAT_INTERVAL = Duration.ofSeconds(10);
     /** 保护 SSE、内存和数据库；正常面试复盘远低于此上限。 */
     private static final int MAX_AGENT_OUTPUT_CHARS = 32_000;
     private static final String OUTPUT_TRUNCATION_NOTICE = "\n\n[回答已达到展示上限，后续内容已截断]";
@@ -418,16 +420,62 @@ public class InterviewAgentService {
                             "模型服务暂时繁忙，正在等待资源（第 " + retryNumber + "/"
                                 + MODEL_RETRY_ATTEMPTS + " 次重试）"
                         )),
-                        Mono.delay(delay).thenMany(Flux.concat(
-                            Flux.just(AgentStreamEvent.step("insight", "running")),
-                            streamModelAttempt(
-                                modelStream, providerId, sessionId, modelOutputStarted, output, retryNumber
-                            )
-                        ))
+                        retryWaitingEvents(delay, retryNumber),
+                        Flux.just(AgentStreamEvent.step("insight", "running")),
+                        streamModelAttempt(
+                            modelStream, providerId, sessionId, modelOutputStarted, output, retryNumber
+                        )
                     );
                 }
                 return Flux.error(error);
             });
+    }
+
+    /**
+     * 在退避等待期间发送低频状态事件，同时严格保持原有退避总时长。
+     *
+     * <p>事件本身不触发重试，只有等待完整个 delay 后才会订阅下一次模型调用，
+     * 因此不会因为心跳而增加模型请求次数。</p>
+     */
+    Flux<AgentStreamEvent> retryWaitingEvents(Duration delay, int retryNumber) {
+        return retryWaitingEvents(delay, retryNumber, RETRY_HEARTBEAT_INTERVAL);
+    }
+
+    Flux<AgentStreamEvent> retryWaitingEvents(
+        Duration delay,
+        int retryNumber,
+        Duration heartbeatInterval
+    ) {
+        long delayMillis = Math.max(0, delay.toMillis());
+        long heartbeatMillis = Math.max(1, heartbeatInterval.toMillis());
+        Duration effectiveHeartbeatInterval = Duration.ofMillis(heartbeatMillis);
+        long heartbeatCount = delayMillis / heartbeatMillis;
+        long remainingMillis = delayMillis - heartbeatCount * heartbeatMillis;
+
+        Flux<AgentStreamEvent> heartbeats = heartbeatCount == 0
+            ? Flux.empty()
+            : Flux.interval(effectiveHeartbeatInterval)
+                .take(heartbeatCount)
+                .map(index -> {
+                    long remainingSeconds = Math.max(
+                        0, (delayMillis - (index + 1) * heartbeatMillis + 999) / 1000
+                    );
+                    String suffix = remainingSeconds == 0
+                        ? "即将重试"
+                        : "预计还需约 " + remainingSeconds + " 秒";
+                    return AgentStreamEvent.waiting(
+                        "insight",
+                        "模型服务暂时繁忙，正在等待资源（第 " + retryNumber + "/"
+                            + MODEL_RETRY_ATTEMPTS + " 次重试，" + suffix + "）"
+                    );
+                });
+
+        if (remainingMillis == 0) {
+            return heartbeats;
+        }
+        return heartbeats.concatWith(
+            Mono.delay(Duration.ofMillis(remainingMillis)).thenMany(Flux.empty())
+        );
     }
 
     private Duration retryDelay(int attempt) {
