@@ -150,6 +150,8 @@ public class InterviewAgentService {
                         return () -> {
                             ChatClient chatClient = llmProviderRegistry.getAgentChatClient(providerId);
                             var promptSpec = chatClient.prompt().system(prompt.systemPrompt());
+                            promptSpec = promptSpec.options(org.springframework.ai.openai.OpenAiChatOptions.builder()
+                                .maxTokens(retryProperties.getMaxOutputTokens()));
                             if (!prompt.history().isEmpty()) {
                                 promptSpec = promptSpec.messages(prompt.history());
                             }
