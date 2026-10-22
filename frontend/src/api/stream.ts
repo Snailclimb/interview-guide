@@ -268,18 +268,27 @@ async function readStream(response: Response, options: StreamSseOptions): Promis
 
   const decoder = new TextDecoder();
   let buffer = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
 
-  while (true) {
-    const { done, value } = await reader.read();
+      if (done) {
+        buffer += decoder.decode();
+        flushBuffer(buffer, true, options);
+        return;
+      }
 
-    if (done) {
-      buffer += decoder.decode();
-      flushBuffer(buffer, true, options);
-      return;
+      buffer += decoder.decode(value, { stream: true });
+      buffer = flushBuffer(buffer, false, options);
     }
-
-    buffer += decoder.decode(value, { stream: true });
-    buffer = flushBuffer(buffer, false, options);
+  } catch (error) {
+    // 解析失败、业务错误或读取异常都要释放底层长连接；正常 done 不需要 cancel。
+    try {
+      await reader.cancel();
+    } catch {
+      // 原始读取错误已经是调用方需要处理的原因，忽略清理阶段的次生错误。
+    }
+    throw error;
   }
 }
 

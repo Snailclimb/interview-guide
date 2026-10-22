@@ -94,3 +94,36 @@ test('SSE 建连阶段的 HTTP 错误保留状态码和服务端消息', async (
   assert.equal((errors[0] as StreamHttpError).status, 400);
   assert.equal(errors[0].message, '请求参数不合法');
 });
+
+test('SSE 解析异常时主动取消底层读取器', async () => {
+  const originalFetch = globalThis.fetch;
+  let cancelled = 0;
+  globalThis.fetch = async () => new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`data: ${agentErrorPayload}\n\n`));
+      },
+      cancel() {
+        cancelled += 1;
+      },
+    }),
+    { status: 200, headers: { 'content-type': 'text/event-stream' } },
+  );
+
+  const errors: Error[] = [];
+  try {
+    await streamSse({
+      url: '/rag',
+      init: { method: 'POST' },
+      parseMode: 'event',
+      onMessage: () => undefined,
+      onComplete: () => undefined,
+      onError: (error) => errors.push(error),
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(errors.length, 1);
+  assert.equal(cancelled, 1);
+});
