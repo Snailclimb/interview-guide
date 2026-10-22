@@ -107,11 +107,13 @@ public class InterviewAgentService {
             AgentMetrics.RunTracker runTracker = agentMetrics.startRun();
             AtomicReference<AgentTaskHandle> taskHandleRef = new AtomicReference<>();
             try {
-                AgentContextService.AgentContext context = agentContextService.build(sessionId, request);
                 String message = promptSanitizer.sanitize(request.message());
                 List<AgentHistoryMessage> persistedHistory = agentConversationService.loadHistory(sessionId);
                 List<AgentHistoryMessage> historyMessages = AgentHistoryPolicy.normalize(
                     persistedHistory.isEmpty() ? request.history() : persistedHistory
+                );
+                AgentContextService.AgentContext context = agentContextService.build(
+                    sessionId, request, historyMessages
                 );
 
                 AgentConversationService.PreparedMessage preparedMessage = agentConversationService.prepareMessage(

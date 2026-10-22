@@ -77,7 +77,7 @@ class InterviewAgentServiceTest {
         AgentContextService.AgentContext context = new AgentContextService.AgentContext(
             "面试报告", "java-backend", "Skill 资料", "暂无 RAG", "问题", List.of()
         );
-        when(contextService.build(anyString(), any())).thenReturn(context);
+        when(contextService.build(anyString(), any(), any())).thenReturn(context);
         when(conversationService.loadHistory("session-1")).thenReturn(List.of());
         when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
             .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
@@ -124,7 +124,7 @@ class InterviewAgentServiceTest {
             .thenAnswer(invocation -> invocation.getArgument(1));
         when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
             .thenAnswer(invocation -> invocation.getArgument(1));
-        when(contextService.build(anyString(), any())).thenReturn(new AgentContextService.AgentContext(
+        when(contextService.build(anyString(), any(), any())).thenReturn(new AgentContextService.AgentContext(
             "报告", "skill", "skill", "无资料", "问题", List.of()
         ));
         when(conversationService.loadHistory(anyString())).thenReturn(List.of());
@@ -166,7 +166,7 @@ class InterviewAgentServiceTest {
             .thenAnswer(invocation -> invocation.getArgument(1));
         when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
             .thenAnswer(invocation -> invocation.getArgument(1));
-        when(contextService.build(anyString(), any())).thenReturn(new AgentContextService.AgentContext(
+        when(contextService.build(anyString(), any(), any())).thenReturn(new AgentContextService.AgentContext(
             "报告", "skill", "skill", "无资料", "问题", List.of()
         ));
         when(conversationService.loadHistory(anyString())).thenReturn(List.of());
@@ -209,7 +209,7 @@ class InterviewAgentServiceTest {
             .thenAnswer(invocation -> invocation.getArgument(1));
         when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
             .thenAnswer(invocation -> invocation.getArgument(1));
-        when(contextService.build(anyString(), any())).thenReturn(new AgentContextService.AgentContext(
+        when(contextService.build(anyString(), any(), any())).thenReturn(new AgentContextService.AgentContext(
             "报告", "skill", "skill", "无资料", "问题", List.of()
         ));
         when(conversationService.loadHistory(anyString())).thenReturn(List.of());
@@ -249,7 +249,7 @@ class InterviewAgentServiceTest {
             .thenAnswer(invocation -> invocation.getArgument(1));
         when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
             .thenAnswer(invocation -> invocation.getArgument(1));
-        when(contextService.build(anyString(), any())).thenReturn(new AgentContextService.AgentContext(
+        when(contextService.build(anyString(), any(), any())).thenReturn(new AgentContextService.AgentContext(
             "报告", "skill", "skill", "无资料", "问题", List.of()
         ));
         when(conversationService.loadHistory(anyString())).thenReturn(List.of());
@@ -292,7 +292,7 @@ class InterviewAgentServiceTest {
             .thenAnswer(invocation -> invocation.getArgument(1));
         when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
             .thenAnswer(invocation -> invocation.getArgument(1));
-        when(contextService.build(anyString(), any())).thenReturn(new AgentContextService.AgentContext(
+        when(contextService.build(anyString(), any(), any())).thenReturn(new AgentContextService.AgentContext(
             "报告", "skill", "skill", "无资料", "问题", List.of()
         ));
         when(conversationService.loadHistory(anyString())).thenReturn(List.of());
@@ -396,7 +396,7 @@ class InterviewAgentServiceTest {
             .thenAnswer(invocation -> invocation.getArgument(1));
         when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
             .thenAnswer(invocation -> invocation.getArgument(1));
-        when(contextService.build(anyString(), any())).thenReturn(new AgentContextService.AgentContext(
+        when(contextService.build(anyString(), any(), any())).thenReturn(new AgentContextService.AgentContext(
             "报告", "skill", "skill", "无资料", "问题", List.of()
         ));
         when(conversationService.loadHistory(anyString())).thenReturn(List.of());

@@ -60,14 +60,18 @@ public class AgentContextService {
         this.objectMapper = objectMapper;
     }
 
-    public AgentContext build(String sessionId, AgentMessageRequest request) {
+    public AgentContext build(
+        String sessionId,
+        AgentMessageRequest request,
+        List<AgentHistoryMessage> effectiveHistory
+    ) {
         InterviewDetailDTO detail = interviewHistoryService.getInterviewDetail(sessionId);
         String report = serializeReport(detail);
         List<AgentSource> sources = new ArrayList<>();
 
         String skillReference = loadSkillReference(detail, sources);
         String retrievalQuery = buildRetrievalQuery(detail, request);
-        String ragContext = loadRagContext(detail, retrievalQuery, sources, buildRetrievalHistory(request.history()));
+        String ragContext = loadRagContext(detail, retrievalQuery, sources, buildRetrievalHistory(effectiveHistory));
 
         return new AgentContext(
             report,
