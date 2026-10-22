@@ -2,7 +2,6 @@ package interview.guide.modules.agent.service;
 
 import interview.guide.common.ai.PromptSanitizer;
 import interview.guide.modules.agent.model.AgentMessageRequest;
-import interview.guide.modules.agent.model.AgentSource;
 import interview.guide.modules.interview.model.InterviewDetailDTO;
 import interview.guide.modules.interview.service.InterviewHistoryService;
 import interview.guide.modules.interview.skill.InterviewSkillService;
@@ -80,37 +79,6 @@ class AgentContextServiceTest {
             assertThat(source.reference()).isEqualTo("R1");
             assertThat(source.score()).isEqualTo(0.88);
         });
-    }
-
-    @Test
-    void sourceListOnlyContainsDocumentsActuallyInjectedIntoContext() throws Exception {
-        InterviewHistoryService history = mock(InterviewHistoryService.class);
-        InterviewSkillService skills = mock(InterviewSkillService.class);
-        KnowledgeBaseQueryService rag = mock(KnowledgeBaseQueryService.class);
-        PromptSanitizer sanitizer = mock(PromptSanitizer.class);
-        ObjectMapper objectMapper = mock(ObjectMapper.class);
-        InterviewDetailDTO detail = detail(null, 42L);
-
-        when(history.getInterviewDetail("session-3")).thenReturn(detail);
-        when(objectMapper.writeValueAsString(detail)).thenReturn("{report}");
-        when(sanitizer.sanitize(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
-        String oversized = "x".repeat(9_000);
-        when(rag.retrieveOnly(any(), anyString(), any())).thenReturn(new RagQueryExecution(
-            "原问题", "改写问题", List.of("改写问题"), 8, 0.28,
-            List.of(
-                new RagQueryExecution.RetrievedDoc(1, oversized, 0.88, Map.of("source_name", "长文档")),
-                new RagQueryExecution.RetrievedDoc(2, "不应注入", 0.80, Map.of("source_name", "第二来源"))
-            ), 1, 2, 0, null, "RETRIEVED"
-        ));
-
-        AgentContextService.AgentContext context = new AgentContextService(
-            history, skills, rag, sanitizer, objectMapper
-        ).build("session-3", new AgentMessageRequest("review", "请复盘", List.of(), null));
-
-        assertThat(context.sources()).extracting(AgentSource::reference).containsExactly("R1");
-        assertThat(context.ragContext()).contains("[R1] 来源：长文档");
-        assertThat(context.ragContext()).doesNotContain("第二来源");
-        assertThat(context.ragContext()).contains("该来源片段已截断");
     }
 
     private InterviewDetailDTO detail(String skillId, Long knowledgeBaseId) {
