@@ -188,4 +188,21 @@ class AgentConversationServiceTest {
         assertThat(session.getActiveMessageId()).isNull();
         assertThat(activeMessage.getErrorMessage()).contains("超过最大执行时间");
     }
+
+    @Test
+    @DisplayName("只有同一个运行标识且状态仍为运行中时任务才有效")
+    void checksActiveRunIdentity() {
+        AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+            .interviewSessionId("interview-1")
+            .runId("run-1")
+            .runStatus(interview.guide.modules.agent.model.AgentRunStatus.RUNNING)
+            .build();
+        when(sessionRepository.findByInterviewSessionId("interview-1"))
+            .thenReturn(Optional.of(session));
+
+        assertThat(service.isRunActive("interview-1", "run-1")).isTrue();
+        assertThat(service.isRunActive("interview-1", "run-2")).isFalse();
+        session.setRunStatus(interview.guide.modules.agent.model.AgentRunStatus.CANCELLED);
+        assertThat(service.isRunActive("interview-1", "run-1")).isFalse();
+    }
 }

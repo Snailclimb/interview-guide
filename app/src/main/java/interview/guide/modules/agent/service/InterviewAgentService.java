@@ -19,6 +19,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
+import reactor.core.scheduler.Schedulers;
+import reactor.core.Disposable;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -53,6 +55,7 @@ public class InterviewAgentService {
     private final PromptTemplate userPromptTemplate;
     private final Set<String> activeSessions = ConcurrentHashMap.newKeySet();
     private final Map<String, Sinks.One<Void>> cancellationSignals = new ConcurrentHashMap<>();
+    private final Map<String, AgentTaskHandle> activeTasks = new ConcurrentHashMap<>();
 
     public InterviewAgentService(
         AgentContextService agentContextService,
@@ -139,6 +142,7 @@ public class InterviewAgentService {
                     preparedMessage.assistantMessageId(),
                     context.sources()
                 );
+                Flux<Boolean> remoteCancellation = monitorRemoteCancellation(sessionId, preparedMessage.runId());
 
                 Flux<AgentStreamEvent> workflow = Flux.concat(
                     Flux.just(
@@ -151,14 +155,19 @@ public class InterviewAgentService {
                     ),
                     response
                 )
-                    .takeUntilOther(cancellationSignal.asMono())
+                    .takeUntilOther(Flux.merge(cancellationSignal.asMono(), remoteCancellation))
                     .doFinally(signal -> {
                         activeSessions.remove(sessionId);
                         cancellationSignals.remove(sessionId, cancellationSignal);
+                        activeTasks.remove(sessionId);
                     });
                 // SSE 断开后不缓存全部 token；最终答案由 AgentConversationService 持久化。
+                AgentTaskHandle taskHandle = new AgentTaskHandle(
+                    preparedMessage.assistantMessageId(), cancellationSignal
+                );
+                activeTasks.put(sessionId, taskHandle);
                 return Flux.create(emitter -> {
-                    workflow.subscribe(
+                    taskHandle.subscription = workflow.subscribe(
                         emitter::next,
                         error -> {
                             log.error("面试教练 Agent 后台任务失败: sessionId={}", sessionId, error);
@@ -176,6 +185,7 @@ public class InterviewAgentService {
                 }
                 activeSessions.remove(sessionId);
                 cancellationSignals.remove(sessionId, cancellationSignal);
+                activeTasks.remove(sessionId);
                 return Flux.error(error);
             }
         })
@@ -191,8 +201,37 @@ public class InterviewAgentService {
 
     /** 发出服务端取消信号；如果任务不在当前实例，数据库取消仍由会话服务负责。 */
     public boolean cancel(String sessionId) {
+        AgentTaskHandle taskHandle = activeTasks.get(sessionId);
+        if (taskHandle != null) {
+            // 已订阅的模型流会通过 doOnCancel 持久化；尚未完成订阅时由这里兜底写状态。
+            if (!taskHandle.cancel()) {
+                agentConversationService.cancelMessage(taskHandle.assistantMessageId, "");
+            }
+            return true;
+        }
         Sinks.One<Void> signal = cancellationSignals.get(sessionId);
         return signal != null && signal.tryEmitEmpty().isSuccess();
+    }
+
+    private static final class AgentTaskHandle {
+        private final Long assistantMessageId;
+        private final Sinks.One<Void> cancellationSignal;
+        private volatile Disposable subscription;
+
+        private AgentTaskHandle(Long assistantMessageId, Sinks.One<Void> cancellationSignal) {
+            this.assistantMessageId = assistantMessageId;
+            this.cancellationSignal = cancellationSignal;
+        }
+
+        private boolean cancel() {
+            cancellationSignal.tryEmitEmpty();
+            Disposable current = subscription;
+            if (current != null) {
+                current.dispose();
+                return true;
+            }
+            return false;
+        }
     }
 
     private void failPreparedMessage(Long messageId, Throwable error) {
@@ -201,6 +240,18 @@ public class InterviewAgentService {
         } catch (Throwable persistenceError) {
             log.warn("Agent 任务失败状态持久化失败: messageId={}", messageId, persistenceError);
         }
+    }
+
+    private Flux<Boolean> monitorRemoteCancellation(String sessionId, String runId) {
+        return Flux.interval(Duration.ofSeconds(2))
+            .flatMap(ignored -> Mono.fromCallable(() ->
+                    agentConversationService.isRunActive(sessionId, runId)
+                )
+                .subscribeOn(Schedulers.boundedElastic())
+                // 数据库瞬时异常时继续执行，避免监测故障误杀模型任务。
+                .onErrorReturn(true)
+            )
+            .filter(active -> !active);
     }
 
     private Flux<AgentStreamEvent> streamModelWithRetry(

@@ -149,6 +149,19 @@ public class AgentConversationService {
         return true;
     }
 
+    /**
+     * 判断当前后台任务是否仍是该面试会话的有效运行任务。
+     * 用于多实例部署时让执行任务感知另一实例发起的取消或超时回收。
+     */
+    @Transactional
+    public boolean isRunActive(String interviewSessionId, String runId) {
+        return sessionRepository.findByInterviewSessionId(interviewSessionId)
+            .map(session -> session.getRunStatus() == AgentRunStatus.RUNNING
+                && runId != null
+                && runId.equals(session.getRunId()))
+            .orElse(false);
+    }
+
     @Transactional
     public AgentConversationResponse getConversation(String interviewSessionId) {
         AgentChatSessionEntity session = sessionRepository.findByInterviewSessionId(interviewSessionId)
