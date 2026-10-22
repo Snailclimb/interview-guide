@@ -204,7 +204,25 @@ public class AgentConversationService {
     }
 
     public List<AgentHistoryMessage> loadHistory(String interviewSessionId) {
-        return getConversation(interviewSessionId).messages();
+        AgentConversationResponse conversation = getConversation(interviewSessionId);
+        List<AgentHistoryMessage> messages = conversation.messages();
+        if (conversation.runStatus() != AgentRunStatus.FAILED
+            && conversation.runStatus() != AgentRunStatus.CANCELLED) {
+            return messages;
+        }
+        return removeDanglingUserMessage(messages);
+    }
+
+    /** 失败或取消的任务没有可配对的 assistant 回复，不把悬空问题再次送入下一轮模型上下文。 */
+    private List<AgentHistoryMessage> removeDanglingUserMessage(List<AgentHistoryMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return List.of();
+        }
+        AgentHistoryMessage last = messages.getLast();
+        if (!"user".equals(last.role())) {
+            return messages;
+        }
+        return List.copyOf(messages.subList(0, messages.size() - 1));
     }
 
     private String truncate(String value, int maxLength) {
