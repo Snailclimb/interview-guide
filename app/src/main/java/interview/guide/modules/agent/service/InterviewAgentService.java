@@ -655,6 +655,9 @@ public class InterviewAgentService {
     }
 
     String toAgentErrorMessage(Throwable error) {
+        if (isOutputTokenLimitError(error)) {
+            return "当前模型限制单次输出长度（常见上限为 3000 tokens），请缩短本次请求、分段发送，或切换其他模型；这不是面试消息字符限制";
+        }
         if (isContextLimitError(error)) {
             return "本次上下文过长，模型无法处理；请清空部分对话、缩短问题，或分多次发送后重试";
         }
@@ -677,6 +680,13 @@ public class InterviewAgentService {
         return containsErrorMessage(error,
             "context length", "maximum context", "context window", "too many tokens",
             "prompt is too long", "input is too long", "token limit", "request entity too large", "413"
+        );
+    }
+
+    private boolean isOutputTokenLimitError(Throwable error) {
+        return containsErrorMessage(error,
+            "max_tokens", "max completion tokens", "maximum output tokens",
+            "output tokens", "between 0 and 3000", "must be between 0 and"
         );
     }
 
