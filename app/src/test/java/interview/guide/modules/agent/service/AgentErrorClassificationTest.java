@@ -28,6 +28,16 @@ class AgentErrorClassificationTest {
     }
 
     @Test
+    @DisplayName("模型输出 token 上限给出分段或切换模型建议")
+    void explainsOutputTokenLimit() throws Exception {
+        InterviewAgentService service = service();
+
+        assertThat(service.toAgentErrorMessage(new IllegalStateException(
+            "max_tokens must be between 0 and 3000"
+        ))).contains("输出长度").contains("分段发送").contains("不是面试消息字符限制");
+    }
+
+    @Test
     @DisplayName("认证失败给出 API Key 和权限建议")
     void explainsAuthenticationFailure() throws Exception {
         InterviewAgentService service = service();
