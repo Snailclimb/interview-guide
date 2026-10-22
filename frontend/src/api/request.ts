@@ -1,4 +1,4 @@
-import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
+import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
 
 declare module 'axios' {
   interface AxiosRequestConfig {
@@ -18,7 +18,8 @@ export interface Result<T = unknown> {
 const SUCCESS_CODE = 200;
 const RESULT_BLOB_PARSE_LIMIT = 64 * 1024;
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
+// Vite 会提供 import.meta.env；Node 下的纯函数测试环境可能没有该对象。
+export const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL ?? '';
 
 const instance: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,

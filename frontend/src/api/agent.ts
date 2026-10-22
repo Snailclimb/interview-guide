@@ -37,8 +37,10 @@ export const agentApi = {
         signal,
       },
       parseMode: 'event',
-      trimDataPrefixSpace: false,
+      // Agent 事件载荷是 JSON，去掉 SSE data: 后的协议分隔空格，避免回调拿到多余前缀。
+      trimDataPrefixSpace: true,
       dataJoiner: '',
+      preserveBusinessErrorEvents: true,
       onMessage: (chunk) => {
         try {
           handlers.onEvent(JSON.parse(chunk) as AgentStreamEvent);

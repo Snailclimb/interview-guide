@@ -1,4 +1,4 @@
-import { API_BASE_URL, getErrorMessage, getResultError, parseResultPayload } from './request';
+import { API_BASE_URL, getErrorMessage, getResultError, parseResultPayload } from './request.ts';
 
 type SseParseMode = 'line' | 'event';
 
@@ -12,6 +12,8 @@ interface StreamSseOptions {
   trimDataPrefixSpace?: boolean;
   unescapeEscapedNewlines?: boolean;
   dataJoiner?: string;
+  /** 某些业务 SSE 需要把 error 作为正常事件交给调用方处理。 */
+  preserveBusinessErrorEvents?: boolean;
 }
 
 function toApiUrl(url: string): string {
@@ -148,7 +150,9 @@ function readDataLine(line: string, trimDataPrefixSpace: boolean): string | null
 }
 
 function emitContent(content: string, options: StreamSseOptions): void {
-  assertNoBusinessError(content);
+  if (!options.preserveBusinessErrorEvents) {
+    assertNoBusinessError(content);
+  }
   const output = options.unescapeEscapedNewlines
     ? content.replace(/\\n/g, '\n').replace(/\\r/g, '\r')
     : content;
