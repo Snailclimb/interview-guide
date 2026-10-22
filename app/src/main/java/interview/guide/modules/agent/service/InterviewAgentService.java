@@ -470,10 +470,10 @@ public class InterviewAgentService {
                             "insight", "本次上下文较长，正在压缩较早对话后重试"
                         )),
                         streamProviderAttempt(
-                            // Context-limit fallback keeps the current provider;
-                            // it does not consume the normal transient retry budget.
+                            // Context-limit fallback starts from the current provider;
+                            // its caller still retains the complete candidate chain.
                             modelStreamFactory,
-                            List.of(providerId),
+                            providerCandidatesFromCurrent(providerId),
                             0,
                             sessionId,
                             assistantMessageId,
@@ -483,7 +483,7 @@ public class InterviewAgentService {
                         )
                     );
                 }
-                if (isProviderSwitchableError(error)) {
+                if (isProviderSwitchableError(error) && !isContextLimitError(error)) {
                     llmProviderRegistry.markChatProviderFailure(providerId);
                 }
                 if (!modelOutputStarted.get()
@@ -519,6 +519,12 @@ public class InterviewAgentService {
                 }
                 return Flux.error(error);
             });
+    }
+
+    private List<String> providerCandidatesFromCurrent(String providerId) {
+        List<String> candidates = llmProviderRegistry.resolveChatProviderCandidates(providerId);
+        int index = candidates.indexOf(providerId);
+        return index < 0 ? List.of(providerId) : List.copyOf(candidates.subList(index, candidates.size()));
     }
 
     /**
@@ -726,7 +732,7 @@ public class InterviewAgentService {
     }
 
     private boolean isProviderSwitchableError(Throwable error) {
-        if (isTransientModelError(error) || isProviderAccountUnavailable(error)) {
+        if (isContextLimitError(error) || isTransientModelError(error) || isProviderAccountUnavailable(error)) {
             return true;
         }
         return containsErrorMessage(error,
