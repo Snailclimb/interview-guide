@@ -38,4 +38,17 @@ class AgentHistoryPolicyTest {
         assertThat(normalized.getFirst().content()).startsWith("开头信息");
         assertThat(normalized.getFirst().content()).endsWith("结尾信息");
     }
+
+    @Test
+    void shouldSupportTighterHistoryBudgetForContextLimitRetry() {
+        List<AgentHistoryMessage> normalized = AgentHistoryPolicy.normalize(
+            List.of(new AgentHistoryMessage("user", "x".repeat(10_000))),
+            2_000,
+            1_000
+        );
+
+        assertThat(normalized).hasSize(1);
+        assertThat(normalized.getFirst().content()).hasSize(1_000);
+        assertThat(normalized.getFirst().content()).contains("[较早内容已压缩]");
+    }
 }

@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 /**
@@ -47,6 +48,11 @@ public class InterviewAgentService {
     /** 重试次数和等待策略由 AgentRetryProperties 控制，并通过 SSE 持续告知前端。 */
     /** 保护 SSE、内存和数据库；正常面试复盘远低于此上限。 */
     private static final int MAX_AGENT_OUTPUT_CHARS = 32_000;
+    private static final int CONTEXT_RETRY_HISTORY_CHARS = 8_000;
+    private static final int CONTEXT_RETRY_MESSAGE_CHARS = 4_000;
+    private static final int CONTEXT_RETRY_REPORT_CHARS = 6_000;
+    private static final int CONTEXT_RETRY_SKILL_CHARS = 3_000;
+    private static final int CONTEXT_RETRY_RAG_CHARS = 4_000;
     private static final String OUTPUT_TRUNCATION_NOTICE = "\n\n[回答已达到展示上限，后续内容已截断]";
 
     private final AgentContextService agentContextService;
@@ -132,35 +138,26 @@ public class InterviewAgentService {
                     preparedMessage.assistantMessageId(), "context", "running", null
                 );
 
-                Map<String, Object> fixedContextVariables = Map.of(
-                    "context", promptSanitizer.wrapWithStableDelimiters(
-                        "interview-report", context.interviewReport()),
-                    "skill", promptSanitizer.wrapWithStableDelimiters(
-                        "skill-reference", context.skillReference())
-                );
-                Map<String, Object> variables = Map.of(
-                    "goal", promptSanitizer.sanitize(request.goal()),
-                    "question", promptSanitizer.wrapWithDelimiters("user-message", message),
-                    "rag", promptSanitizer.wrapWithDelimiters("rag-context", context.ragContext())
-                );
-
-                String systemPrompt = systemPromptTemplate.render()
-                    + PromptSecurityConstants.ANTI_INJECTION_INSTRUCTION
-                    + "\n\n"
-                    + fixedContextPromptTemplate.render(fixedContextVariables);
-                String userPrompt = userPromptTemplate.render(variables);
                 List<Message> history = buildModelHistory(historyMessages);
-                Flux<AgentStreamEvent> response = streamModelWithRetry(
-                    providerId -> {
-                        ChatClient chatClient = llmProviderRegistry.getAgentChatClient(providerId);
+                List<Message> compactHistory = buildModelHistory(AgentHistoryPolicy.normalize(
+                    historyMessages, CONTEXT_RETRY_HISTORY_CHARS, CONTEXT_RETRY_MESSAGE_CHARS
+                ));
+                PromptVariant normalPrompt = buildPromptVariant(context, request, message, history, false);
+                PromptVariant compactPrompt = buildPromptVariant(context, request, message, compactHistory, true);
+                BiFunction<String, Boolean, Supplier<Flux<String>>> modelStreamFactory =
+                    (providerId, compacted) -> {
+                        PromptVariant prompt = compacted ? compactPrompt : normalPrompt;
                         return () -> {
-                            var promptSpec = chatClient.prompt().system(systemPrompt);
-                            if (!history.isEmpty()) {
-                                promptSpec = promptSpec.messages(history);
+                            ChatClient chatClient = llmProviderRegistry.getAgentChatClient(providerId);
+                            var promptSpec = chatClient.prompt().system(prompt.systemPrompt());
+                            if (!prompt.history().isEmpty()) {
+                                promptSpec = promptSpec.messages(prompt.history());
                             }
-                            return promptSpec.user(userPrompt).stream().content();
+                            return promptSpec.user(prompt.userPrompt()).stream().content();
                         };
-                    },
+                    };
+                Flux<AgentStreamEvent> response = streamModelWithRetry(
+                    modelStreamFactory,
                     request.providerId(),
                     sessionId,
                     preparedMessage.assistantMessageId(),
@@ -299,7 +296,7 @@ public class InterviewAgentService {
     }
 
     private Flux<AgentStreamEvent> streamModelWithRetry(
-        java.util.function.Function<String, Supplier<Flux<String>>> modelStreamFactory,
+        BiFunction<String, Boolean, Supplier<Flux<String>>> modelStreamFactory,
         String providerId,
         String sessionId,
         Long assistantMessageId,
@@ -318,7 +315,8 @@ public class InterviewAgentService {
             sessionId,
             assistantMessageId,
             modelOutputStarted,
-            output
+            output,
+            false
         );
         return providerStream
             .concatWith(Flux.defer(() -> {
@@ -362,23 +360,27 @@ public class InterviewAgentService {
     }
 
     private Flux<AgentStreamEvent> streamProviderAttempt(
-        java.util.function.Function<String, Supplier<Flux<String>>> modelStreamFactory,
+        BiFunction<String, Boolean, Supplier<Flux<String>>> modelStreamFactory,
         List<String> providers,
         int providerIndex,
         String sessionId,
         Long assistantMessageId,
         AtomicBoolean modelOutputStarted,
-        AtomicReference<StringBuilder> output
+        AtomicReference<StringBuilder> output,
+        boolean compacted
     ) {
         String currentProvider = providers.get(providerIndex);
         String providerRole = providerIndex == 0 ? "primary" : "fallback";
         return Flux.defer(() -> streamModelAttempt(
-                modelStreamFactory.apply(currentProvider),
+                modelStreamFactory,
+                modelStreamFactory.apply(currentProvider, compacted),
                 currentProvider,
                 sessionId,
+                assistantMessageId,
                 modelOutputStarted,
                 output,
-                0
+                0,
+                compacted
             )).doOnComplete(() -> agentMetrics.recordProviderAttempt(providerRole, "success"))
             .doOnError(error -> agentMetrics.recordProviderAttempt(providerRole, "failure"))
             .onErrorResume(error -> {
@@ -404,7 +406,8 @@ public class InterviewAgentService {
                         sessionId,
                         assistantMessageId,
                         modelOutputStarted,
-                        output
+                        output,
+                        compacted
                     )
                 );
             }
@@ -438,12 +441,15 @@ public class InterviewAgentService {
     }
 
     private Flux<AgentStreamEvent> streamModelAttempt(
+        BiFunction<String, Boolean, Supplier<Flux<String>>> modelStreamFactory,
         Supplier<Flux<String>> modelStream,
         String providerId,
         String sessionId,
+        Long assistantMessageId,
         AtomicBoolean modelOutputStarted,
         AtomicReference<StringBuilder> output,
-        int attempt
+        int attempt,
+        boolean compacted
     ) {
         Flux<AgentStreamEvent> attemptStream = Flux.defer(modelStream)
             .doOnNext(content -> {
@@ -457,6 +463,26 @@ public class InterviewAgentService {
             .map(AgentStreamEvent::delta);
         return withModelHeartbeat(attemptStream)
             .onErrorResume(error -> {
+                if (!modelOutputStarted.get() && isContextLimitError(error) && !compacted) {
+                    agentMetrics.recordRetry("context_limit");
+                    return Flux.concat(
+                        Flux.just(AgentStreamEvent.waiting(
+                            "insight", "本次上下文较长，正在压缩较早对话后重试"
+                        )),
+                        streamProviderAttempt(
+                            // Context-limit fallback keeps the current provider;
+                            // it does not consume the normal transient retry budget.
+                            modelStreamFactory,
+                            List.of(providerId),
+                            0,
+                            sessionId,
+                            assistantMessageId,
+                            modelOutputStarted,
+                            output,
+                            true
+                        )
+                    );
+                }
                 if (isProviderSwitchableError(error)) {
                     llmProviderRegistry.markChatProviderFailure(providerId);
                 }
@@ -479,7 +505,15 @@ public class InterviewAgentService {
                         retryWaitingEvents(delay, retryNumber),
                         Flux.just(AgentStreamEvent.step("insight", "running")),
                         streamModelAttempt(
-                            modelStream, providerId, sessionId, modelOutputStarted, output, retryNumber
+                            modelStreamFactory,
+                            modelStreamFactory.apply(providerId, compacted),
+                            providerId,
+                            sessionId,
+                            assistantMessageId,
+                            modelOutputStarted,
+                            output,
+                            retryNumber,
+                            compacted
                         )
                     );
                 }
@@ -571,6 +605,53 @@ public class InterviewAgentService {
         String visible = content.substring(0, remaining);
         target.append(visible).append(OUTPUT_TRUNCATION_NOTICE);
         return visible + OUTPUT_TRUNCATION_NOTICE;
+    }
+
+    private PromptVariant buildPromptVariant(
+        AgentContextService.AgentContext context,
+        AgentMessageRequest request,
+        String message,
+        List<Message> history,
+        boolean compacted
+    ) {
+        String report = compacted
+            ? compactPromptText(context.interviewReport(), CONTEXT_RETRY_REPORT_CHARS)
+            : context.interviewReport();
+        String skill = compacted
+            ? compactPromptText(context.skillReference(), CONTEXT_RETRY_SKILL_CHARS)
+            : context.skillReference();
+        String rag = compacted
+            ? compactPromptText(context.ragContext(), CONTEXT_RETRY_RAG_CHARS)
+            : context.ragContext();
+        Map<String, Object> fixedContextVariables = Map.of(
+            "context", promptSanitizer.wrapWithStableDelimiters(
+                "interview-report", report),
+            "skill", promptSanitizer.wrapWithStableDelimiters(
+                "skill-reference", skill)
+        );
+        Map<String, Object> variables = Map.of(
+            "goal", promptSanitizer.sanitize(request.goal()),
+            "question", promptSanitizer.wrapWithDelimiters("user-message", message),
+            "rag", promptSanitizer.wrapWithDelimiters("rag-context", rag)
+        );
+        String systemPrompt = systemPromptTemplate.render()
+            + PromptSecurityConstants.ANTI_INJECTION_INSTRUCTION
+            + "\n\n"
+            + fixedContextPromptTemplate.render(fixedContextVariables);
+        return new PromptVariant(systemPrompt, userPromptTemplate.render(variables), history);
+    }
+
+    private String compactPromptText(String value, int maxChars) {
+        if (value == null || value.length() <= maxChars) {
+            return value;
+        }
+        String marker = "\n[较早固定资料已压缩]\n";
+        int available = Math.max(0, maxChars - marker.length());
+        int headChars = (available + 1) / 2;
+        int tailChars = available - headChars;
+        return value.substring(0, headChars)
+            + marker
+            + value.substring(value.length() - tailChars);
     }
 
     String toAgentErrorMessage(Throwable error) {
@@ -672,5 +753,8 @@ public class InterviewAgentService {
             }
         }
         return result;
+    }
+
+    private record PromptVariant(String systemPrompt, String userPrompt, List<Message> history) {
     }
 }

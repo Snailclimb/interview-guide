@@ -435,6 +435,58 @@ class InterviewAgentServiceTest {
         verify(conversationService).completeMessage(10L, "重试后回答");
     }
 
+    @Test
+    @DisplayName("上下文超限时压缩较早历史后重试，不直接返回不可用")
+    void retriesWithCompactHistoryAfterContextLimit() throws Exception {
+        when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {
+            String path = invocation.getArgument(0);
+            String template = path.contains("system")
+                ? "系统规则"
+                : path.contains("context")
+                    ? "固定上下文 {context} {skill}"
+                    : "目标 {goal}，资料 {rag}，问题 {question}";
+            return new ByteArrayResource(template.getBytes(StandardCharsets.UTF_8));
+        });
+        when(promptSanitizer.sanitize(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(promptSanitizer.wrapWithStableDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(contextService.build(anyString(), any(), any())).thenReturn(new AgentContextService.AgentContext(
+            "报告", "skill", "skill", "无资料", "问题", List.of()
+        ));
+        when(conversationService.loadHistory(anyString())).thenReturn(List.of());
+        when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
+            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
+        when(providerRegistry.resolveChatProviderCandidates("primary"))
+            .thenReturn(List.of("primary"));
+        AtomicInteger attempts = new AtomicInteger();
+        Flux<String> modelOutput = Flux.defer(() -> {
+            if (attempts.incrementAndGet() == 1) {
+                return Flux.error(new IllegalStateException("maximum context length exceeded"));
+            }
+            return Flux.just("压缩后回答");
+        });
+        ChatClient contextLimitClient = mockStreamClient(modelOutput);
+        when(providerRegistry.getAgentChatClient("primary")).thenReturn(contextLimitClient);
+
+        InterviewAgentService service = new InterviewAgentService(
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
+            agentProgressWriter, retryProperties
+        );
+
+        List<AgentStreamEvent> events = service.stream(
+            "context-limit-session", new AgentMessageRequest("review", "请复盘", List.of(), "primary")
+        ).collectList().block(Duration.ofSeconds(5));
+
+        assertThat(events).isNotNull();
+        assertThat(attempts).hasValue(2);
+        assertThat(events).anySatisfy(event -> assertThat(event.message()).contains("压缩较早对话"));
+        assertThat(events).anySatisfy(event -> assertThat(event.content()).isEqualTo("压缩后回答"));
+        assertThat(events).anySatisfy(event -> assertThat(event.type()).isEqualTo("done"));
+        verify(conversationService).completeMessage(10L, "压缩后回答");
+    }
+
     private ChatClient mockStreamClient(Flux<String> content) {
         ChatClient client = mock(ChatClient.class);
         ChatClient.ChatClientRequestSpec requestSpec = mock(ChatClient.ChatClientRequestSpec.class);
