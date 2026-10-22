@@ -792,7 +792,7 @@ export default function AgentPage() {
               )}
               <span className="text-xs dark-text-muted inline-flex items-center gap-1.5">
                 <Clock3 className="w-3.5 h-3.5" />
-                预计 1 分钟内完成
+                通常 1–3 分钟完成，模型繁忙时会自动重试
               </span>
             </div>
             {runNotice && <p className="text-sm text-amber-600 dark:text-amber-300 mt-3">{runNotice}</p>}
