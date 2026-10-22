@@ -1,5 +1,5 @@
-import { streamSse } from './stream';
-import request from './request';
+import { streamSse } from './stream.ts';
+import request from './request.ts';
 import type { AgentMessageRequest, AgentStreamEvent } from '../types/agent';
 import type { AgentConversationResponse } from '../types/agent';
 
@@ -45,7 +45,8 @@ export const agentApi = {
         try {
           handlers.onEvent(JSON.parse(chunk) as AgentStreamEvent);
         } catch {
-          handlers.onError(new Error('Agent 返回了无法识别的事件'));
+          // 解析失败必须中断当前流；否则后续 onComplete 可能把页面状态覆盖成成功。
+          throw new Error('Agent 返回了无法识别的事件');
         }
       },
       onComplete: handlers.onComplete,
