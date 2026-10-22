@@ -31,6 +31,7 @@ import { StreamHttpError } from '../api/stream';
 import CodeBlock from '../components/CodeBlock';
 import { getRetryableRequest, removeLastRunMessages, type AgentRunMessageIds, type AgentRunRequest } from './agentRun';
 import { normalizeAgentMarkdown } from './agentMarkdown';
+import { isNearChatBottom } from './agentChatScroll';
 import type {
   AgentGoal,
   AgentConversationResponse,
@@ -158,6 +159,8 @@ export default function AgentPage() {
   const [input, setInput] = useState('');
   const abortRef = useRef<AbortController | null>(null);
   const reconciliationTimerRef = useRef<number | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const shouldFollowChatRef = useRef(true);
   const lastRunRequestRef = useRef<AgentRunRequest | null>(null);
   const lastRunMessageIdsRef = useRef<AgentRunMessageIds | null>(null);
 
@@ -563,6 +566,12 @@ export default function AgentPage() {
     }
   };
 
+  useEffect(() => {
+    const container = chatScrollRef.current;
+    if (!container || !shouldFollowChatRef.current) return;
+    container.scrollTo({ top: container.scrollHeight, behavior: runStatus === 'running' ? 'auto' : 'smooth' });
+  }, [messages, runStatus]);
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -812,7 +821,18 @@ export default function AgentPage() {
             <span className={`w-2 h-2 rounded-full ${runStatus === 'running' ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`} />
           </div>
 
-          <div className="h-[480px] overflow-y-auto scrollbar-thin p-6 space-y-4">
+          <div
+            ref={chatScrollRef}
+            onScroll={(event) => {
+              const container = event.currentTarget;
+              shouldFollowChatRef.current = isNearChatBottom(
+                container.scrollTop,
+                container.clientHeight,
+                container.scrollHeight,
+              );
+            }}
+            className="h-[480px] overflow-y-auto scrollbar-thin p-6 space-y-4"
+          >
             <AnimatePresence initial={false}>
               {messages.map((message) => (
                 <motion.div
