@@ -16,6 +16,17 @@ interface StreamSseOptions {
   preserveBusinessErrorEvents?: boolean;
 }
 
+/** 保留 SSE 建连阶段的 HTTP 状态，供页面区分参数/限流错误和连接中断。 */
+export class StreamHttpError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'StreamHttpError';
+    this.status = status;
+  }
+}
+
 function toApiUrl(url: string): string {
   if (/^https?:\/\//i.test(url)) {
     return url;
@@ -44,18 +55,18 @@ async function readResponsePayload(response: Response): Promise<unknown> {
   }
 }
 
-async function createHttpError(response: Response): Promise<Error> {
+async function createHttpError(response: Response): Promise<StreamHttpError> {
   const payload = await readResponsePayload(response);
   const result = await parseResultPayload(payload);
   if (result) {
-    return new Error(result.message || `请求失败 (${response.status})`);
+    return new StreamHttpError(result.message || `请求失败 (${response.status})`, response.status);
   }
 
   if (typeof payload === 'string' && payload.trim()) {
-    return new Error(payload.trim());
+    return new StreamHttpError(payload.trim(), response.status);
   }
 
-  return new Error(`请求失败 (${response.status})`);
+  return new StreamHttpError(`请求失败 (${response.status})`, response.status);
 }
 
 async function assertStreamResponse(response: Response): Promise<void> {
@@ -279,6 +290,6 @@ export async function streamSse(options: StreamSseOptions): Promise<void> {
     await readStream(response, options);
     options.onComplete();
   } catch (error) {
-    options.onError(new Error(getErrorMessage(error)));
+    options.onError(error instanceof Error ? error : new Error(getErrorMessage(error)));
   }
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { streamSse } from './stream.ts';
+import { StreamHttpError, streamSse } from './stream.ts';
 
 const agentErrorPayload = JSON.stringify({
   type: 'error',
@@ -67,4 +67,30 @@ test('普通流仍将业务错误作为解析异常处理', async () => {
 
   assert.equal(errors.length, 1);
   assert.equal(errors[0].message, '当前模型服务繁忙，请稍后重试');
+});
+
+test('SSE 建连阶段的 HTTP 错误保留状态码和服务端消息', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ code: 400, message: '请求参数不合法', data: null }),
+    { status: 400, headers: { 'content-type': 'application/json' } },
+  );
+
+  const errors: Error[] = [];
+  try {
+    await streamSse({
+      url: '/agent',
+      init: { method: 'POST' },
+      onMessage: () => undefined,
+      onComplete: () => undefined,
+      onError: (error) => errors.push(error),
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(errors.length, 1);
+  assert.ok(errors[0] instanceof StreamHttpError);
+  assert.equal((errors[0] as StreamHttpError).status, 400);
+  assert.equal(errors[0].message, '请求参数不合法');
 });
