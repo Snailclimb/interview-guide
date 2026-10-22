@@ -303,6 +303,8 @@ class AgentConversationServiceTest {
             .completed(false)
             .build();
         when(messageRepository.findById(22L)).thenReturn(Optional.of(activeMessage));
+        when(sessionRepository.findByInterviewSessionIdForUpdate("interview-1"))
+            .thenReturn(Optional.of(session));
         when(objectMapper.writeValueAsString(any())).thenReturn(
             "[{\"kind\":\"rag\",\"title\":\"知识库片段\",\"score\":0.9,\"reference\":\"R1\"}]"
         );
@@ -317,5 +319,39 @@ class AgentConversationServiceTest {
         assertThat(session.getRunNotice()).isEqualTo("正在等待检索资源");
         assertThat(session.getRunSourcesJson()).contains("知识库片段").doesNotContain("原始 RAG");
         verify(sessionRepository, times(2)).save(session);
+    }
+
+    @Test
+    @DisplayName("终态只允许写入一次，迟到的取消和进度事件不会覆盖完成结果")
+    void ignoresLateTerminalAndProgressEventsAfterCompletion() {
+        AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+            .id(11L)
+            .interviewSessionId("interview-1")
+            .runStatus(interview.guide.modules.agent.model.AgentRunStatus.RUNNING)
+            .activeMessageId(22L)
+            .build();
+        AgentChatMessageEntity message = AgentChatMessageEntity.builder()
+            .id(22L)
+            .session(session)
+            .role(AgentChatMessageEntity.MessageRole.ASSISTANT)
+            .content("")
+            .sequenceNum(1)
+            .completed(false)
+            .build();
+        when(messageRepository.findById(22L)).thenReturn(Optional.of(message));
+        when(sessionRepository.findByInterviewSessionIdForUpdate("interview-1"))
+            .thenReturn(Optional.of(session));
+
+        service.completeMessage(22L, "最终回答");
+        service.cancelMessage(22L, "迟到的取消");
+        service.updateRunProgress(22L, "action", "running", "迟到的进度");
+
+        assertThat(session.getRunStatus())
+            .isEqualTo(interview.guide.modules.agent.model.AgentRunStatus.COMPLETED);
+        assertThat(session.getActiveMessageId()).isNull();
+        assertThat(message.getContent()).isEqualTo("最终回答");
+        assertThat(message.getCompleted()).isTrue();
+        verify(messageRepository).save(message);
+        verify(sessionRepository).save(session);
     }
 }

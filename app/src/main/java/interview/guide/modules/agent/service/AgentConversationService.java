@@ -99,47 +99,37 @@ public class AgentConversationService {
 
     @Transactional
     public void completeMessage(Long messageId, String content) {
-        messageRepository.findById(messageId).ifPresent(message -> {
-            if (!isActiveMessage(message)) {
-                log.info("忽略已失效 Agent 完成事件: messageId={}", messageId);
-                return;
-            }
-            message.setContent(content == null ? "" : content);
-            message.setCompleted(true);
-            message.setErrorMessage(null);
-            messageRepository.save(message);
-            markRunFinished(message, AgentRunStatus.COMPLETED, null);
-        });
+        AgentChatMessageEntity message = lockActiveMessage(messageId);
+        if (message == null) {
+            log.info("忽略已失效 Agent 完成事件: messageId={}", messageId);
+            return;
+        }
+        updateTerminalMessage(message, content, true, null);
+        markRunFinished(message.getSession(), AgentRunStatus.COMPLETED, null);
     }
 
     @Transactional
     public void failMessage(Long messageId, String partialContent, String errorMessage) {
-        messageRepository.findById(messageId).ifPresent(message -> {
-            if (!isActiveMessage(message)) {
-                log.info("忽略已失效 Agent 失败事件: messageId={}", messageId);
-                return;
-            }
-            message.setContent(partialContent == null ? "" : partialContent);
-            message.setCompleted(false);
-            message.setErrorMessage(truncate(errorMessage, 500));
-            messageRepository.save(message);
-            markRunFinished(message, AgentRunStatus.FAILED, errorMessage);
-        });
+        String safeError = truncate(errorMessage, 500);
+        AgentChatMessageEntity message = lockActiveMessage(messageId);
+        if (message == null) {
+            log.info("忽略已失效 Agent 失败事件: messageId={}", messageId);
+            return;
+        }
+        updateTerminalMessage(message, partialContent, false, safeError);
+        markRunFinished(message.getSession(), AgentRunStatus.FAILED, safeError);
     }
 
     @Transactional
     public void cancelMessage(Long messageId, String partialContent) {
-        messageRepository.findById(messageId).ifPresent(message -> {
-            if (!isActiveMessage(message)) {
-                log.info("忽略已失效 Agent 取消事件: messageId={}", messageId);
-                return;
-            }
-            message.setContent(partialContent == null ? "" : partialContent);
-            message.setCompleted(false);
-            message.setErrorMessage("客户端中断了本次回答");
-            messageRepository.save(message);
-            markRunFinished(message, AgentRunStatus.CANCELLED, "客户端中断了本次回答");
-        });
+        String error = "客户端中断了本次回答";
+        AgentChatMessageEntity message = lockActiveMessage(messageId);
+        if (message == null) {
+            log.info("忽略已失效 Agent 取消事件: messageId={}", messageId);
+            return;
+        }
+        updateTerminalMessage(message, partialContent, false, error);
+        markRunFinished(message.getSession(), AgentRunStatus.CANCELLED, error);
     }
 
     @Transactional
@@ -161,31 +151,28 @@ public class AgentConversationService {
     /** 持久化当前 Agent 编排阶段，供断线和页面刷新后恢复展示。 */
     @Transactional
     public void updateRunProgress(Long messageId, String step, String status, String notice) {
-        messageRepository.findById(messageId).ifPresent(message -> {
-            if (!isActiveMessage(message)) {
-                log.info("忽略已失效 Agent 进度事件: messageId={}", messageId);
-                return;
-            }
-            AgentChatSessionEntity session = message.getSession();
-            session.setRunStep(truncate(step, 32));
-            session.setRunStepStatus(truncate(status, 16));
-            session.setRunNotice(truncate(notice, 500));
-            sessionRepository.save(session);
-        });
+        AgentChatSessionEntity session = lockActiveSession(messageId);
+        if (session == null) {
+            log.info("忽略已失效 Agent 进度事件: messageId={}", messageId);
+            return;
+        }
+        session.setRunStep(truncate(step, 32));
+        session.setRunStepStatus(truncate(status, 16));
+        session.setRunNotice(truncate(notice, 500));
+        sessionRepository.save(session);
     }
 
     /** 持久化本次 Agent 实际使用的来源摘要，不保存原始 RAG 文本。 */
     @Transactional
     public void updateRunSources(Long messageId, List<AgentSource> sources) {
         String serialized = serializeSources(sources);
-        messageRepository.findById(messageId).ifPresent(message -> {
-            if (!isActiveMessage(message)) {
-                log.info("忽略已失效 Agent 来源事件: messageId={}", messageId);
-                return;
-            }
-            message.getSession().setRunSourcesJson(serialized);
-            sessionRepository.save(message.getSession());
-        });
+        AgentChatSessionEntity session = lockActiveSession(messageId);
+        if (session == null) {
+            log.info("忽略已失效 Agent 来源事件: messageId={}", messageId);
+            return;
+        }
+        session.setRunSourcesJson(serialized);
+        sessionRepository.save(session);
     }
 
     /**
@@ -331,6 +318,48 @@ public class AgentConversationService {
             : status == AgentRunStatus.CANCELLED ? "cancelled" : "failed");
         session.setRunNotice(null);
         sessionRepository.save(session);
+    }
+
+    /** 锁住会话后再读取运行状态，避免异步进度落在终态之后。 */
+    private AgentChatSessionEntity lockActiveSession(Long messageId) {
+        if (messageId == null) {
+            return null;
+        }
+        return messageRepository.findById(messageId)
+            .map(AgentChatMessageEntity::getSession)
+            .map(AgentChatSessionEntity::getInterviewSessionId)
+            .flatMap(sessionRepository::findByInterviewSessionIdForUpdate)
+            .filter(session -> session.getRunStatus() == AgentRunStatus.RUNNING)
+            .filter(session -> messageId.equals(session.getActiveMessageId()))
+            .orElse(null);
+    }
+
+    /**
+     * 终态更新与进度更新共享同一把会话级数据库锁。
+     * 第二个并发终态拿到锁后会发现状态已不是 RUNNING，从而安全忽略。
+     */
+    private AgentChatMessageEntity lockActiveMessage(Long messageId) {
+        if (messageId == null) {
+            return null;
+        }
+        return messageRepository.findById(messageId)
+            .flatMap(message -> sessionRepository
+                .findByInterviewSessionIdForUpdate(message.getSession().getInterviewSessionId())
+                .map(lockedSession -> {
+                    message.setSession(lockedSession);
+                    return message;
+                }))
+            .filter(this::isActiveMessage)
+            .orElse(null);
+    }
+
+    private void updateTerminalMessage(
+        AgentChatMessageEntity message, String content, boolean completed, String error
+    ) {
+        message.setContent(content == null ? "" : content);
+        message.setCompleted(completed);
+        message.setErrorMessage(error);
+        messageRepository.save(message);
     }
 
     private boolean isActiveMessage(AgentChatMessageEntity message) {
