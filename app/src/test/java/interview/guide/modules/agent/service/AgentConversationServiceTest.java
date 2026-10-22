@@ -3,6 +3,7 @@ package interview.guide.modules.agent.service;
 import interview.guide.modules.agent.model.AgentChatMessageEntity;
 import interview.guide.modules.agent.model.AgentChatSessionEntity;
 import interview.guide.modules.agent.model.AgentConversationResponse;
+import interview.guide.modules.agent.model.AgentHistoryMessage;
 import interview.guide.modules.agent.repository.AgentChatMessageRepository;
 import interview.guide.modules.agent.repository.AgentChatSessionRepository;
 import java.util.List;
@@ -204,5 +205,40 @@ class AgentConversationServiceTest {
         assertThat(service.isRunActive("interview-1", "run-2")).isFalse();
         session.setRunStatus(interview.guide.modules.agent.model.AgentRunStatus.CANCELLED);
         assertThat(service.isRunActive("interview-1", "run-1")).isFalse();
+    }
+
+    @Test
+    @DisplayName("失败任务的悬空用户消息不会重复进入下一轮模型上下文")
+    void excludesDanglingUserMessageAfterFailedRun() {
+        AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+            .id(11L)
+            .interviewSessionId("interview-1")
+            .runStatus(interview.guide.modules.agent.model.AgentRunStatus.FAILED)
+            .runError("模型不可用")
+            .build();
+        AgentChatMessageEntity user = AgentChatMessageEntity.builder()
+            .session(session)
+            .role(AgentChatMessageEntity.MessageRole.USER)
+            .content("失败的问题")
+            .sequenceNum(2)
+            .completed(true)
+            .build();
+        AgentChatMessageEntity previousAssistant = AgentChatMessageEntity.builder()
+            .session(session)
+            .role(AgentChatMessageEntity.MessageRole.ASSISTANT)
+            .content("之前的回答")
+            .sequenceNum(1)
+            .completed(true)
+            .build();
+        when(sessionRepository.findByInterviewSessionId("interview-1"))
+            .thenReturn(Optional.of(session));
+        when(messageRepository.findBySessionIdAndCompletedTrueOrderBySequenceNumDesc(
+            org.mockito.ArgumentMatchers.eq(11L), any(Pageable.class)
+        )).thenReturn(List.of(user, previousAssistant));
+
+        List<AgentHistoryMessage> history = service.loadHistory("interview-1");
+
+        assertThat(history).extracting(AgentHistoryMessage::content)
+            .containsExactly("之前的回答");
     }
 }

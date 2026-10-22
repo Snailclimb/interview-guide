@@ -28,6 +28,7 @@ import { historyApi, type InterviewDetail } from '../api/history';
 import { llmProviderApi } from '../api/llmProvider';
 import { getErrorMessage } from '../api/request';
 import CodeBlock from '../components/CodeBlock';
+import { removeLastRunMessages, type AgentRunMessageIds, type AgentRunRequest } from './agentRun';
 import type {
   AgentGoal,
   AgentConversationResponse,
@@ -201,6 +202,8 @@ export default function AgentPage() {
   const [input, setInput] = useState('');
   const abortRef = useRef<AbortController | null>(null);
   const reconciliationTimerRef = useRef<number | null>(null);
+  const lastRunRequestRef = useRef<AgentRunRequest | null>(null);
+  const lastRunMessageIdsRef = useRef<AgentRunMessageIds | null>(null);
 
   const clearReconciliationTimer = useCallback(() => {
     if (reconciliationTimerRef.current !== null) {
@@ -394,13 +397,26 @@ export default function AgentPage() {
     });
   };
 
-  const streamAgentMessage = (content: string) => {
+  const streamAgentMessage = (
+    content: string,
+    options?: { goal?: AgentGoal; providerId?: string; retrying?: boolean },
+  ) => {
     if (!sessionId || !interview || !content || runStatus === 'running') {
       if (!sessionId || !interview) setRunError('请先从面试详情页进入，并加载一份面试报告');
       return;
     }
 
-    const history = buildAgentHistory(messages);
+    const runGoal = options?.goal ?? goal;
+    const runProviderId = options?.providerId ?? providerId;
+    const runRequest: AgentRunRequest = {
+      goal: runGoal,
+      message: content,
+      providerId: runProviderId || undefined,
+    };
+    const historyMessages = options?.retrying
+      ? removeLastRunMessages(messages, runRequest, lastRunMessageIdsRef.current)
+      : messages;
+    const history = buildAgentHistory(historyMessages);
     const userMessageId = Date.now();
     const assistantMessageId = userMessageId + 1;
     const controller = new AbortController();
@@ -418,14 +434,18 @@ export default function AgentPage() {
       status: index === 0 ? 'running' : 'pending',
     })));
     setMessages((current) => [
-      ...current,
+      ...(options?.retrying
+        ? removeLastRunMessages(current, runRequest, lastRunMessageIdsRef.current)
+        : current),
       { id: userMessageId, role: 'user', content },
       { id: assistantMessageId, role: 'assistant', content: '' },
     ]);
+    lastRunRequestRef.current = runRequest;
+    lastRunMessageIdsRef.current = { userMessageId, assistantMessageId };
 
     void agentApi.streamMessage(
       sessionId,
-      { goal, message: content, history, providerId: providerId || undefined },
+      { goal: runGoal, message: content, history, providerId: runProviderId || undefined },
       {
         onEvent: (event) => {
           updateStep(event);
@@ -474,7 +494,19 @@ export default function AgentPage() {
     );
   };
 
-  const startRun = () => streamAgentMessage(`开始${selectedGoal.title}`);
+  const startRun = () => {
+    if (runStatus === 'error' && lastRunRequestRef.current) {
+      const lastRequest = lastRunRequestRef.current;
+      setGoal(lastRequest.goal);
+      streamAgentMessage(lastRequest.message, {
+        goal: lastRequest.goal,
+        providerId: lastRequest.providerId,
+        retrying: true,
+      });
+      return;
+    }
+    streamAgentMessage(`开始${selectedGoal.title}`);
+  };
 
   const cancelRun = () => {
     if (!sessionId || runStatus !== 'running') return;
@@ -807,7 +839,7 @@ export default function AgentPage() {
                 <Send className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-2">Enter 发送，Shift + Enter 换行 · 回答使用系统默认模型</p>
+            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-2">Enter 发送，Shift + Enter 换行 · 使用所选模型，未选择时使用系统默认模型</p>
           </div>
         </section>
       </div>
