@@ -180,6 +180,8 @@ app:
     agent:
       # Agent 业务指标（app.agent.*）开关
       metrics-enabled: ${APP_AI_AGENT_METRICS_ENABLED:true}
+      # Agent 运行进度异步写库的合并窗口（毫秒）
+      progress-write-debounce-ms: ${APP_AI_AGENT_PROGRESS_WRITE_DEBOUNCE_MS:100}
     # 是否启用 Spring AI 2.0 entity schema validation retry（失败时仍受 structured-max-attempts 外层控制）
     structured-schema-validation-enabled: ${APP_AI_STRUCTURED_SCHEMA_VALIDATION_ENABLED:true}
     rag:
