@@ -3,6 +3,8 @@ package interview.guide.modules.agent.service;
 import interview.guide.modules.agent.model.AgentSource;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -11,6 +13,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @DisplayName("Agent 运行进度异步写入")
 class AgentProgressWriterTest {
@@ -83,5 +86,32 @@ class AgentProgressWriterTest {
 
         verify(conversationService).updateRunProgress(40L, "action", "running", "正在生成");
         verify(conversationService).updateRunSources(40L, sources);
+    }
+
+    @Test
+    @DisplayName("终态刷盘与延迟写入并发时保持写入顺序")
+    void serializesTerminalFlushAndDelayedDrain() throws Exception {
+        AgentConversationService conversationService = mock(AgentConversationService.class);
+        CountDownLatch firstWriteStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirstWrite = new CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            firstWriteStarted.countDown();
+            releaseFirstWrite.await(1, TimeUnit.SECONDS);
+            return null;
+        }).when(conversationService).updateRunProgress(50L, "context", "running", null);
+        AgentProgressWriter writer = new AgentProgressWriter(
+            conversationService, Duration.ZERO
+        );
+        writer.recordStep(50L, "context", "running", null);
+        assertThat(firstWriteStarted.await(1, TimeUnit.SECONDS)).isTrue();
+
+        writer.recordStep(50L, "action", "running", null);
+        Thread finishThread = new Thread(() -> writer.finish(50L));
+        finishThread.start();
+        releaseFirstWrite.countDown();
+        finishThread.join(1000);
+
+        verify(conversationService).updateRunProgress(50L, "context", "running", null);
+        verify(conversationService, never()).updateRunProgress(50L, "action", "running", null);
     }
 }

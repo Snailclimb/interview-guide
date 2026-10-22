@@ -79,7 +79,11 @@ public class AgentProgressWriter {
         if (state == null || state.finished.get()) {
             return;
         }
-        persistLatest(messageId, state);
+        synchronized (state.writeLock) {
+            if (!state.finished.get()) {
+                persistLatest(messageId, state);
+            }
+        }
     }
 
     /** 终态已经由会话服务落库后，丢弃所有迟到的旧进度。 */
@@ -88,11 +92,13 @@ public class AgentProgressWriter {
             return;
         }
         PendingProgress state = pending.computeIfAbsent(messageId, ignored -> new PendingProgress());
-        if (!state.finished.compareAndSet(false, true)) {
-            return;
+        synchronized (state.writeLock) {
+            if (!state.finished.compareAndSet(false, true)) {
+                return;
+            }
+            state.latestStep.set(null);
+            state.latestSources.set(null);
         }
-        state.latestStep.set(null);
-        state.latestSources.set(null);
         Mono.delay(FINISHED_STATE_TTL, Schedulers.boundedElastic())
             .subscribe(ignored -> pending.remove(messageId, state));
     }
@@ -114,7 +120,13 @@ public class AgentProgressWriter {
             return;
         }
 
-        persistLatest(messageId, state);
+        synchronized (state.writeLock) {
+            if (state.finished.get()) {
+                pending.remove(messageId, state);
+                return;
+            }
+            persistLatest(messageId, state);
+        }
         state.scheduled.set(false);
         if (state.finished.get()) {
             pending.remove(messageId, state);
@@ -145,6 +157,7 @@ public class AgentProgressWriter {
         private final AtomicReference<List<AgentSource>> latestSources = new AtomicReference<>();
         private final AtomicBoolean scheduled = new AtomicBoolean();
         private final AtomicBoolean finished = new AtomicBoolean();
+        private final Object writeLock = new Object();
     }
 
     private record StepProgress(String step, String status, String notice) {
