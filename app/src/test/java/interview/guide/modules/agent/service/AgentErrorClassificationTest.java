@@ -54,6 +54,24 @@ class AgentErrorClassificationTest {
             .contains("服务繁忙").contains("稍后重试");
     }
 
+    @Test
+    @DisplayName("网关和服务端短暂故障也给出可重试提示")
+    void explainsGatewayFailure() throws Exception {
+        InterviewAgentService service = service();
+
+        assertThat(service.toAgentErrorMessage(new IllegalStateException("502 Bad Gateway")))
+            .contains("服务繁忙").contains("稍后重试");
+    }
+
+    @Test
+    @DisplayName("连接超时归入可自动重试的模型故障")
+    void explainsConnectionTimeoutAsRetryable() throws Exception {
+        InterviewAgentService service = service();
+
+        assertThat(service.toAgentErrorMessage(new IllegalStateException("connect timeout")))
+            .contains("响应超时").contains("重试");
+    }
+
     private InterviewAgentService service() throws Exception {
         ResourceLoader resourceLoader = mock(ResourceLoader.class);
         when(resourceLoader.getResource(anyString())).thenReturn(
