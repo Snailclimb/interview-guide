@@ -65,6 +65,23 @@ public class AgentProgressWriter {
         schedule(messageId, state);
     }
 
+    /**
+     * 在任务终态落库前同步刷出尚未到合并窗口的最后一批进度。
+     *
+     * <p>正常事件仍由异步合并写入；这里仅用于完成、失败、取消前的关键收尾，避免
+     * 快速返回的模型在 100ms 延迟内结束，导致刷新页面后丢失来源或最后步骤。</p>
+     */
+    public void flush(Long messageId) {
+        if (messageId == null) {
+            return;
+        }
+        PendingProgress state = pending.get(messageId);
+        if (state == null || state.finished.get()) {
+            return;
+        }
+        persistLatest(messageId, state);
+    }
+
     /** 终态已经由会话服务落库后，丢弃所有迟到的旧进度。 */
     public void finish(Long messageId) {
         if (messageId == null) {
@@ -97,6 +114,18 @@ public class AgentProgressWriter {
             return;
         }
 
+        persistLatest(messageId, state);
+        state.scheduled.set(false);
+        if (state.finished.get()) {
+            pending.remove(messageId, state);
+        } else if (state.latestStep.get() != null || state.latestSources.get() != null) {
+            schedule(messageId, state);
+        } else {
+            pending.remove(messageId, state);
+        }
+    }
+
+    private void persistLatest(Long messageId, PendingProgress state) {
         StepProgress step = state.latestStep.getAndSet(null);
         List<AgentSource> sources = state.latestSources.getAndSet(null);
         try {
@@ -108,15 +137,6 @@ public class AgentProgressWriter {
             }
         } catch (Throwable error) {
             log.warn("Agent 运行进度异步持久化失败: messageId={}", messageId, error);
-        } finally {
-            state.scheduled.set(false);
-            if (state.finished.get()) {
-                pending.remove(messageId, state);
-            } else if (state.latestStep.get() != null || state.latestSources.get() != null) {
-                schedule(messageId, state);
-            } else {
-                pending.remove(messageId, state);
-            }
         }
     }
 

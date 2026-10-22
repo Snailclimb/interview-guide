@@ -67,4 +67,21 @@ class AgentProgressWriterTest {
         verify(conversationService, after(200).never())
             .updateRunSources(30L, List.of(new AgentSource("rag", "R1", 0.9, "R1")));
     }
+
+    @Test
+    @DisplayName("任务快速结束时终态刷出延迟窗口内的最新进度和来源")
+    void flushesPendingProgressBeforeTerminalPersistence() {
+        AgentConversationService conversationService = mock(AgentConversationService.class);
+        AgentProgressWriter writer = new AgentProgressWriter(
+            conversationService, Duration.ofSeconds(5)
+        );
+        List<AgentSource> sources = List.of(new AgentSource("rag", "R1", 0.9, "R1"));
+
+        writer.recordStep(40L, "action", "running", "正在生成");
+        writer.recordSources(40L, sources);
+        writer.flush(40L);
+
+        verify(conversationService).updateRunProgress(40L, "action", "running", "正在生成");
+        verify(conversationService).updateRunSources(40L, sources);
+    }
 }
