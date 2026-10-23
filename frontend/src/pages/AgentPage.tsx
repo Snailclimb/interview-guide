@@ -8,6 +8,7 @@ import {
   Bot,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Circle,
   Clock3,
@@ -32,6 +33,7 @@ import CodeBlock from '../components/CodeBlock';
 import { getRetryableRequest, removeLastRunMessages, resolveRetryProviderId, type AgentRunMessageIds, type AgentRunRequest } from './agentRun';
 import { normalizeAgentMarkdown } from './agentMarkdown';
 import { isNearChatBottom } from './agentChatScroll';
+import { getStoredAgentSessionId, rememberAgentSessionId, resolveAgentSessionId } from './agentSession';
 import type {
   AgentGoal,
   AgentConversationResponse,
@@ -137,8 +139,10 @@ function AgentMarkdown({ content }: { content: string }) {
 
 export default function AgentPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const sessionId = searchParams.get('sessionId');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const routeSessionId = searchParams.get('sessionId');
+  const storedSessionId = useMemo(() => getStoredAgentSessionId(), []);
+  const sessionId = resolveAgentSessionId(routeSessionId, storedSessionId);
   const [goal, setGoal] = useState<AgentGoal>('review');
   const [providerId, setProviderId] = useState('');
   const [providers, setProviders] = useState<ProviderItem[]>([]);
@@ -165,6 +169,17 @@ export default function AgentPage() {
   const shouldFollowChatRef = useRef(true);
   const lastRunRequestRef = useRef<AgentRunRequest | null>(null);
   const lastRunMessageIdsRef = useRef<AgentRunMessageIds | null>(null);
+
+  useEffect(() => {
+    if (routeSessionId) {
+      rememberAgentSessionId(routeSessionId);
+      return;
+    }
+    if (storedSessionId) {
+      // 让地址栏也恢复 sessionId，复制链接或刷新时仍然能打开同一份报告。
+      setSearchParams({ sessionId: storedSessionId }, { replace: true });
+    }
+  }, [routeSessionId, setSearchParams, storedSessionId]);
 
   const clearReconciliationTimer = useCallback(() => {
     if (reconciliationTimerRef.current !== null) {
@@ -610,20 +625,23 @@ export default function AgentPage() {
         <div className="flex flex-wrap items-center justify-end gap-2">
           <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
             <span className="text-xs dark-text-muted whitespace-nowrap">首选模型</span>
-            <select
-              value={providerId}
-              onChange={(event) => setProviderId(event.target.value)}
-              disabled={providers.length === 0 || runStatus === 'running'}
-              className="max-w-[190px] bg-transparent text-sm font-medium dark-text outline-none disabled:opacity-60"
-              aria-label="选择 Agent 首选模型"
-            >
-              {providers.length === 0 ? <option value="">使用默认模型</option> : null}
-              {providers.map((provider) => (
-                <option key={provider.id} value={provider.id}>
-                  {provider.id} · {provider.model}
-                </option>
-              ))}
-            </select>
+            <span className="relative inline-flex min-w-0 items-center">
+              <select
+                value={providerId}
+                onChange={(event) => setProviderId(event.target.value)}
+                disabled={providers.length === 0 || runStatus === 'running'}
+                className="w-[190px] appearance-none rounded-lg border border-slate-200 bg-slate-50 pl-3 pr-8 py-1.5 text-sm font-medium text-slate-700 outline-none transition-colors focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="选择 Agent 首选模型"
+              >
+                {providers.length === 0 ? <option value="">使用默认模型</option> : null}
+                {providers.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.id} · {provider.model}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 h-4 w-4 text-slate-400" />
+            </span>
           </label>
           <button onClick={() => navigate('/settings')} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm">
             <Settings2 className="w-4 h-4" />
