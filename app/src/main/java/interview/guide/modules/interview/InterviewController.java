@@ -6,6 +6,7 @@ import interview.guide.modules.interview.model.CreateInterviewRequest;
 import interview.guide.modules.interview.model.InterviewDetailDTO;
 import interview.guide.modules.interview.model.InterviewReportDTO;
 import interview.guide.modules.interview.model.InterviewSessionDTO;
+import interview.guide.modules.interview.model.RenameInterviewRequest;
 import interview.guide.modules.interview.model.SessionListItemDTO;
 import interview.guide.modules.interview.model.SubmitAnswerRequest;
 import interview.guide.modules.interview.model.SubmitAnswerResponse;
@@ -25,6 +26,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import jakarta.validation.Valid;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -75,6 +77,18 @@ public class InterviewController {
     public Result<InterviewSessionDTO> getSession(@PathVariable String sessionId) {
         InterviewSessionDTO session = sessionService.getSession(sessionId);
         return Result.success(session);
+    }
+
+    /**
+     * 修改面试记录名称。
+     */
+    @org.springframework.web.bind.annotation.PatchMapping("/api/interview/sessions/{sessionId}/title")
+    public Result<Void> renameInterview(
+        @PathVariable String sessionId,
+        @Valid @RequestBody RenameInterviewRequest request
+    ) {
+        persistenceService.renameSession(sessionId, request.title());
+        return Result.success(null);
     }
     
     /**

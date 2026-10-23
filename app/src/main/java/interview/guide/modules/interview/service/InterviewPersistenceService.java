@@ -295,6 +295,17 @@ public class InterviewPersistenceService {
         return sessionRepository.findBySessionId(sessionId);
     }
 
+    /**
+     * 修改面试记录名称。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void renameSession(String sessionId, String title) {
+        InterviewSessionEntity session = sessionRepository.findBySessionId(sessionId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND));
+        session.setTitle(title.trim());
+        sessionRepository.save(session);
+    }
+
     public Optional<InterviewSessionEntity> findByRequestId(String requestId) {
         return sessionRepository.findByRequestId(requestId);
     }

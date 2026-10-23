@@ -9,6 +9,7 @@ import java.util.List;
 public record InterviewDetailDTO(
     Long id,
     String sessionId,
+    String title,
     Integer totalQuestions,
     String status,
     String evaluateStatus,

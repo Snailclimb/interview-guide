@@ -35,6 +35,10 @@ public class InterviewSessionEntity {
     @Column(length = 64)
     private String skillId = "java-backend";
 
+    // 用户自定义的面试记录名称（可选，未命名时由前端使用面试主题作为兜底）
+    @Column(length = 120)
+    private String title;
+
     // 难度级别 (junior / mid / senior)
     @Column(length = 16)
     private String difficulty = "mid";
@@ -292,6 +296,14 @@ public class InterviewSessionEntity {
 
     public void setSkillId(String skillId) {
         this.skillId = skillId;
+    }
+
+    public String getTitle() {
+        return title;
+    }
+
+    public void setTitle(String title) {
+        this.title = title;
     }
 
     public String getDifficulty() {

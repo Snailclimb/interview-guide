@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 public record SessionListItemDTO(
     String sessionId,
     String skillId,
+    String title,
     String difficulty,
     Long resumeId,
     int totalQuestions,
@@ -28,6 +29,7 @@ public record SessionListItemDTO(
         return new SessionListItemDTO(
             e.getSessionId(),
             e.getSkillId(),
+            e.getTitle(),
             e.getDifficulty(),
             e.getResumeId(),
             e.getTotalQuestions() != null ? e.getTotalQuestions() : 0,

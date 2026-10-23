@@ -378,7 +378,7 @@ function InterviewDetailPageWrapper() {
           </svg>
         </button>
         <h1 className="text-xl font-bold text-slate-900 dark:text-white">
-          面试详情 #{sessionId!.slice(-8)}
+          {interview.title?.trim() || `面试详情 #${sessionId!.slice(-8)}`}
         </h1>
          <button
            onClick={() => navigate(`${ROUTES.agent}?sessionId=${encodeURIComponent(sessionId!)}`)}

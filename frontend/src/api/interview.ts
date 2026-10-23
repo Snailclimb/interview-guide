@@ -11,6 +11,7 @@ import type {
 export interface TextSessionMeta {
   sessionId: string;
   skillId: string;
+  title?: string | null;
   difficulty: string;
   resumeId: number | null;
   totalQuestions: number;

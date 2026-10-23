@@ -53,7 +53,7 @@ export default function InterviewHubPage() {
         ...textSessions.map(s => ({
           id: s.sessionId,
           type: 'text' as const,
-          title: getTemplateName(s.skillId, allSkills),
+          title: s.title?.trim() || getTemplateName(s.skillId, allSkills),
           status: s.status,
           evaluateStatus: s.evaluateStatus,
           overallScore: s.overallScore,
@@ -376,8 +376,9 @@ export default function InterviewHubPage() {
                   <select
                     value={config.resumeId || ''}
                     onChange={e => config.setResumeId(e.target.value ? parseInt(e.target.value) : undefined)}
+                    disabled={config.loadingResumes}
                     className="w-full px-4 py-2.5 rounded-lg border border-primary-200 dark:border-primary-700/50
-                      bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white
+                      bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white disabled:opacity-60
                       focus:outline-none focus:ring-2 focus:ring-primary-500/50 transition-shadow"
                   >
                     <option value="">不使用简历（通用提问）</option>
@@ -385,6 +386,23 @@ export default function InterviewHubPage() {
                       <option key={r.id} value={r.id}>{r.filename}</option>
                     ))}
                   </select>
+                  {config.loadingResumes ? (
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">正在加载简历列表...</p>
+                  ) : config.resumeLoadError ? (
+                    <div className="flex items-center justify-between gap-3 mt-2 text-xs text-rose-600 dark:text-rose-300">
+                      <span>{config.resumeLoadError}</span>
+                      <button type="button" onClick={() => void config.loadResumes()} className="shrink-0 hover:underline">
+                        重试
+                      </button>
+                    </div>
+                  ) : config.resumes.length === 0 ? (
+                    <div className="flex items-center justify-between gap-3 mt-2 text-xs text-amber-700 dark:text-amber-300">
+                      <span>当前没有已上传简历，只能进行通用提问。</span>
+                      <Link to={ROUTES.resumeUpload} className="shrink-0 font-medium hover:underline">
+                        去上传简历
+                      </Link>
+                    </div>
+                  ) : null}
                 </div>
 
                 {/* 文字面试 - 题目数 */}

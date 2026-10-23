@@ -149,7 +149,7 @@ export default function AgentSessionList({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
                       <p className={`text-sm font-medium truncate ${active ? 'text-primary-700 dark:text-primary-200' : 'dark-text'}`}>
-                        {session.skillId || '未命名面试'}
+                        {session.title?.trim() || session.skillId || '未命名面试'}
                       </p>
                       {active && <span className="w-1.5 h-1.5 rounded-full bg-primary-500 shrink-0" />}
                     </div>

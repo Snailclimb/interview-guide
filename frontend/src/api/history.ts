@@ -40,6 +40,7 @@ export interface AnalysisItem {
 export interface InterviewItem {
   id: number;
   sessionId: string;
+  title?: string | null;
   totalQuestions: number;
   status: string;
   sourceType?: string;
@@ -138,6 +139,13 @@ export const historyApi = {
    */
   async deleteInterview(sessionId: string): Promise<void> {
     return request.delete(`/api/interview/sessions/${sessionId}`);
+  },
+
+  /**
+   * 修改面试记录名称
+   */
+  async renameInterview(sessionId: string, title: string): Promise<void> {
+    return request.patch(`/api/interview/sessions/${encodeURIComponent(sessionId)}/title`, { title });
   },
 
   /**

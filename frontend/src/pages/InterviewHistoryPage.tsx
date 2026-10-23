@@ -30,6 +30,7 @@ import {
   Filter,
   Loader2,
   Mic,
+  Pencil,
   PlayCircle,
   RefreshCw,
   RotateCcw,
@@ -38,6 +39,7 @@ import {
   Trash2,
   TrendingUp,
   Users,
+  XCircle,
 } from 'lucide-react';
 
 type InterviewType = 'all' | 'text' | 'voice';
@@ -235,6 +237,9 @@ export default function InterviewHistoryPage({
   const [deleteItem, setDeleteItem] = useState<UnifiedInterviewItem | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
   const [retryingVoiceSessionId, setRetryingVoiceSessionId] = useState<number | null>(null);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [savingRename, setSavingRename] = useState(false);
   const pollingRef = useRef<number | null>(null);
   const skillsRef = useRef<SkillDTO[]>([]);
   const skillsLoadedRef = useRef(false);
@@ -292,9 +297,9 @@ export default function InterviewHistoryPage({
         id: session.sessionId,
         type: 'text' as const,
         sourceType: session.sourceType,
-        title: session.sourceType === 'KNOWLEDGE_BASE'
+        title: session.title?.trim() || (session.sourceType === 'KNOWLEDGE_BASE'
           ? `${getTemplateName(session.skillId, skills)} · 知识库面试`
-          : getTemplateName(session.skillId, skills),
+          : getTemplateName(session.skillId, skills)),
         sessionId: session.sessionId,
         status: session.status,
         evaluateStatus: session.evaluateStatus ?? undefined,
@@ -367,6 +372,51 @@ export default function InterviewHistoryPage({
       } else {
         navigate(`/voice-interview/${item.voiceSessionId}/evaluation`);
       }
+    }
+  };
+
+  const handleRenameStart = (item: UnifiedInterviewItem, event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (item.type !== 'text') return;
+    setRenamingSessionId(item.sessionId);
+    setRenameValue(item.title);
+  };
+
+  const handleRenameCancel = (event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    if (savingRename) return;
+    setRenamingSessionId(null);
+    setRenameValue('');
+  };
+
+  const handleRenameSave = async (item: UnifiedInterviewItem, event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    const title = renameValue.trim();
+    if (!title) {
+      alert('面试记录名称不能为空');
+      return;
+    }
+    if (title.length > 120) {
+      alert('面试记录名称不能超过120个字符');
+      return;
+    }
+    if (title === item.title) {
+      handleRenameCancel();
+      return;
+    }
+
+    setSavingRename(true);
+    try {
+      await historyApi.renameInterview(item.sessionId, title);
+      setItems(current => current.map(currentItem => currentItem.sessionId === item.sessionId
+        ? { ...currentItem, title }
+        : currentItem));
+      setRenamingSessionId(null);
+      setRenameValue('');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '修改名称失败，请稍后重试');
+    } finally {
+      setSavingRename(false);
     }
   };
 
@@ -732,7 +782,55 @@ export default function InterviewHistoryPage({
                         )}
                         <div>
                           <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-medium text-slate-800 dark:text-white">{item.title}</p>
+                            {renamingSessionId === item.sessionId && item.type === 'text' ? (
+                              <div className="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
+                                <input
+                                  autoFocus
+                                  value={renameValue}
+                                  maxLength={120}
+                                  onChange={(event) => setRenameValue(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter') void handleRenameSave(item);
+                                    if (event.key === 'Escape') handleRenameCancel();
+                                  }}
+                                  disabled={savingRename}
+                                  className="w-48 px-2 py-1 rounded-lg border border-primary-300 dark:border-primary-600 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-primary-500/20"
+                                  aria-label="面试记录名称"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={(event) => void handleRenameSave(item, event)}
+                                  disabled={savingRename}
+                                  className="p-1 text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded disabled:opacity-50"
+                                  title="保存名称"
+                                >
+                                  {savingRename ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleRenameCancel}
+                                  disabled={savingRename}
+                                  className="p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded disabled:opacity-50"
+                                  title="取消修改"
+                                >
+                                  <XCircle className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <p className="font-medium text-slate-800 dark:text-white">{item.title}</p>
+                                {item.type === 'text' && (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => handleRenameStart(item, event)}
+                                    className="p-1 text-slate-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/30 rounded transition-colors"
+                                    title="修改面试记录名称"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </>
+                            )}
                             {isKnowledgeBaseView && item.type === 'text' && (
                               <span
                                 className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded text-xs font-medium"

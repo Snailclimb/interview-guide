@@ -26,6 +26,8 @@ export interface InterviewConfigState {
   showMore: boolean;
   resumeId: number | undefined;
   resumes: ResumeListItem[];
+  loadingResumes: boolean;
+  resumeLoadError: string;
   llmProvider: string;
   questionCount: number;
   plannedDuration: number;
@@ -52,6 +54,8 @@ export function useInterviewConfig(options?: {
   const [showMore, setShowMore] = useState(false);
   const [resumeId, setResumeId] = useState<number | undefined>(undefined);
   const [resumes, setResumes] = useState<ResumeListItem[]>([]);
+  const [loadingResumes, setLoadingResumes] = useState(false);
+  const [resumeLoadError, setResumeLoadError] = useState('');
   const [questionCount, setQuestionCount] = useState<number>(6);
   const [plannedDuration, setPlannedDuration] = useState(30);
   const [llmProvider, setLlmProvider] = useState(DEFAULT_LLM_PROVIDER);
@@ -80,11 +84,16 @@ export function useInterviewConfig(options?: {
   };
 
   const loadResumes = async () => {
+    setLoadingResumes(true);
+    setResumeLoadError('');
     try {
       const data = await historyApi.getResumes();
       setResumes(data);
     } catch (err) {
       console.error('Failed to load resumes:', err);
+      setResumeLoadError('简历列表加载失败，请刷新后重试');
+    } finally {
+      setLoadingResumes(false);
     }
   };
 
@@ -128,6 +137,8 @@ export function useInterviewConfig(options?: {
     showMore, setShowMore,
     resumeId, setResumeId,
     resumes,
+    loadingResumes,
+    resumeLoadError,
     questionCount, setQuestionCount,
     plannedDuration, setPlannedDuration,
     llmProvider, setLlmProvider,
