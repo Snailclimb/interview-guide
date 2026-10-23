@@ -9,6 +9,7 @@ import interview.guide.modules.resume.model.SaveResumeEditorRequest;
 import interview.guide.modules.resume.service.ResumeDeleteService;
 import interview.guide.modules.resume.service.ResumeEditorService;
 import interview.guide.modules.resume.service.ResumeHistoryService;
+import interview.guide.modules.resume.service.ResumeFileExportService;
 import interview.guide.modules.resume.service.ResumeUploadService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -45,6 +46,7 @@ public class ResumeController {
     private final ResumeDeleteService deleteService;
     private final ResumeHistoryService historyService;
     private final ResumeEditorService editorService;
+    private final ResumeFileExportService fileExportService;
 
     /**
      * 上传简历并获取分析结果
@@ -112,6 +114,26 @@ public class ResumeController {
     @PostMapping("/api/resumes/{id}/editor/apply")
     public Result<ResumeEditorDTO> applyEditor(@PathVariable Long id) {
         return Result.success(editorService.applyToInterview(id));
+    }
+
+    /** 导出当前简历编辑版为 PDF。 */
+    @GetMapping("/api/resumes/{id}/editor/export/pdf")
+    public ResponseEntity<byte[]> exportResumePdf(@PathVariable Long id) {
+        return attachment(fileExportService.exportPdf(id));
+    }
+
+    /** 导出当前简历编辑版为 Word。 */
+    @GetMapping("/api/resumes/{id}/editor/export/docx")
+    public ResponseEntity<byte[]> exportResumeDocx(@PathVariable Long id) {
+        return attachment(fileExportService.exportDocx(id));
+    }
+
+    private ResponseEntity<byte[]> attachment(ResumeFileExportService.ExportResult result) {
+        String filename = URLEncoder.encode(result.filename(), StandardCharsets.UTF_8);
+        return ResponseEntity.ok()
+            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + filename)
+            .contentType(MediaType.parseMediaType(result.contentType()))
+            .body(result.bytes());
     }
 
     /**

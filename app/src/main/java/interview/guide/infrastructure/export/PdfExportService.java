@@ -21,6 +21,7 @@ import interview.guide.modules.interview.model.InterviewAnswerEntity;
 import interview.guide.modules.interview.model.InterviewSessionEntity;
 import interview.guide.modules.interview.model.ResumeAnalysisResponse;
 import interview.guide.modules.resume.model.ResumeEntity;
+import interview.guide.modules.resume.model.ResumeEditorContent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -173,6 +174,73 @@ public class PdfExportService {
         
         document.close();
         return baos.toByteArray();
+    }
+
+    /** 导出当前保存的简历编辑版为适合投递的 PDF。 */
+    public byte[] exportResume(ResumeEditorContent content, String title) {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        PdfWriter writer = new PdfWriter(baos);
+        PdfDocument pdfDoc = new PdfDocument(writer);
+        Document document = new Document(pdfDoc);
+        configureFonts(document);
+
+        document.add(new Paragraph(sanitizeText(title))
+            .setFontSize(24)
+            .setBold()
+            .setTextAlignment(TextAlignment.CENTER));
+
+        String contact = joinNonBlank(content.email(), content.phone(), content.location());
+        if (!contact.isBlank()) {
+            document.add(new Paragraph(sanitizeText(contact)).setTextAlignment(TextAlignment.CENTER));
+        }
+        if (content.targetPosition() != null && !content.targetPosition().isBlank()) {
+            document.add(new Paragraph(sanitizeText(content.targetPosition()))
+                .setTextAlignment(TextAlignment.CENTER));
+        }
+
+        addResumeSection(document, "专业技能", content.skills());
+        addResumeSection(document, "工作经历", content.workExperience());
+        addResumeSection(document, "项目经历", content.projects());
+        addResumeSection(document, "教育经历", content.education());
+        addResumeSection(document, "个人评价", content.selfEvaluation());
+        if (isStructuredEmpty(content) && content.rawText() != null && !content.rawText().isBlank()) {
+            addResumeLines(document, content.rawText());
+        }
+
+        document.close();
+        return baos.toByteArray();
+    }
+
+    private boolean isStructuredEmpty(ResumeEditorContent content) {
+        return joinNonBlank(content.name(), content.email(), content.phone(), content.location(),
+            content.targetPosition(), content.skills(), content.workExperience(), content.projects(),
+            content.education(), content.selfEvaluation()).isBlank();
+    }
+
+    private void addResumeSection(Document document, String title, String value) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        document.add(new Paragraph("\n"));
+        document.add(createSectionTitle(title));
+        addResumeLines(document, value);
+    }
+
+    private void addResumeLines(Document document, String value) {
+        for (String line : value.split("\\R")) {
+            String text = line.trim();
+            if (!text.isEmpty()) {
+                document.add(new Paragraph(sanitizeText(text)));
+            }
+        }
+    }
+
+    private String joinNonBlank(String... values) {
+        return java.util.Arrays.stream(values)
+            .filter(value -> value != null && !value.isBlank())
+            .map(String::trim)
+            .reduce((left, right) -> left + "  |  " + right)
+            .orElse("");
     }
     
     /**

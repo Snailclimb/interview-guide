@@ -204,4 +204,12 @@ export const historyApi = {
   async applyResumeEditor(id: number): Promise<ResumeEditor> {
     return request.post<ResumeEditor>(`/api/resumes/${id}/editor/apply`);
   },
+
+  async exportResumePdf(id: number): Promise<Blob> {
+    return request.download(`/api/resumes/${id}/editor/export/pdf`);
+  },
+
+  async exportResumeDocx(id: number): Promise<Blob> {
+    return request.download(`/api/resumes/${id}/editor/export/docx`);
+  },
 };

@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useState} from 'react';
 import {motion} from 'framer-motion';
-import {Check, FileText, Loader2, Save, Sparkles, WandSparkles} from 'lucide-react';
+import {Check, Download, FileText, FileType, Loader2, Save, Sparkles, WandSparkles} from 'lucide-react';
 import type {ResumeEditor, ResumeEditorContent} from '../api/history';
 
 interface ResumeEditorPanelProps {
@@ -13,6 +13,8 @@ interface ResumeEditorPanelProps {
   onSave: (content: ResumeEditorContent) => Promise<void>;
   onOptimize: (content: ResumeEditorContent) => Promise<void>;
   onApply: () => Promise<void>;
+  exporting?: 'pdf' | 'docx' | null;
+  onExport: (format: 'pdf' | 'docx') => Promise<void>;
 }
 
 const emptyContent: ResumeEditorContent = {
@@ -54,6 +56,8 @@ export default function ResumeEditorPanel({
   onSave,
   onOptimize,
   onApply,
+  exporting = null,
+  onExport,
 }: ResumeEditorPanelProps) {
   const [content, setContent] = useState<ResumeEditorContent>(emptyContent);
   const [savedContent, setSavedContent] = useState<ResumeEditorContent>(emptyContent);
@@ -104,6 +108,24 @@ export default function ResumeEditorPanel({
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <motion.button
+              onClick={() => void onExport('pdf')}
+              disabled={!editor || dirty || saving || optimizing || applying || exporting !== null}
+              className="px-4 py-2 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 flex items-center gap-2"
+              whileTap={{scale: 0.98}}
+            >
+              {exporting === 'pdf' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              {exporting === 'pdf' ? '导出中…' : '导出 PDF'}
+            </motion.button>
+            <motion.button
+              onClick={() => void onExport('docx')}
+              disabled={!editor || dirty || saving || optimizing || applying || exporting !== null}
+              className="px-4 py-2 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 flex items-center gap-2"
+              whileTap={{scale: 0.98}}
+            >
+              {exporting === 'docx' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileType className="w-4 h-4" />}
+              {exporting === 'docx' ? '导出中…' : '导出 Word'}
+            </motion.button>
             <motion.button
               onClick={optimize}
               disabled={saving || optimizing || applying}
