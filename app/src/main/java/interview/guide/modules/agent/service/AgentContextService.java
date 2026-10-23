@@ -12,6 +12,7 @@ import interview.guide.modules.knowledgebase.service.KnowledgeBaseQueryService;
 import interview.guide.modules.knowledgebase.service.RagQueryExecution;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
@@ -61,6 +62,7 @@ public class AgentContextService {
         );
     }
 
+    @Autowired
     public AgentContextService(
         InterviewHistoryService interviewHistoryService,
         InterviewSkillService interviewSkillService,

@@ -207,6 +207,62 @@ class InterviewAgentServiceTest {
     }
 
     @Test
+    @DisplayName("不同面试会话可以并行执行 Agent 任务")
+    void allowsDifferentSessionsToRunConcurrently() throws Exception {
+        when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {
+            String path = invocation.getArgument(0);
+            String template = path.contains("system")
+                ? "系统规则"
+                : path.contains("context")
+                    ? "固定上下文 {context} {skill}"
+                    : "目标 {goal}，资料 {rag}，问题 {question}";
+            return new ByteArrayResource(template.getBytes(StandardCharsets.UTF_8));
+        });
+        when(promptSanitizer.sanitize(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(promptSanitizer.wrapWithStableDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(contextService.build(anyString(), any(), any())).thenReturn(new AgentContextService.AgentContext(
+            "报告", "skill", "skill", "无资料", "问题", List.of()
+        ));
+        when(conversationService.loadHistory(anyString())).thenReturn(List.of());
+        when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
+            .thenAnswer(invocation -> new AgentConversationService.PreparedMessage(
+                invocation.getArgument(0).equals("session-a") ? 10L : 11L,
+                1L,
+                invocation.getArgument(0) + "-run"
+            ));
+        when(providerRegistry.resolveChatProviderCandidates("primary"))
+            .thenReturn(List.of("primary"));
+        ChatClient longRunningClient = mockStreamClient(Flux.never());
+        when(providerRegistry.getAgentChatClient("primary")).thenReturn(longRunningClient);
+
+        InterviewAgentService service = new InterviewAgentService(
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
+            agentProgressWriter, retryProperties
+        );
+        AgentMessageRequest request = new AgentMessageRequest("review", "请复盘", List.of(), "primary");
+        AtomicBoolean sessionAReceivedError = new AtomicBoolean();
+        AtomicBoolean sessionBReceivedError = new AtomicBoolean();
+
+        reactor.core.Disposable sessionASubscription = service.stream("session-a", request)
+            .subscribe(event -> sessionAReceivedError.compareAndSet(false, "error".equals(event.type())));
+        reactor.core.Disposable sessionBSubscription = service.stream("session-b", request)
+            .subscribe(event -> sessionBReceivedError.compareAndSet(false, "error".equals(event.type())));
+
+        assertThat(service.isLocallyActive("session-a")).isTrue();
+        assertThat(service.isLocallyActive("session-b")).isTrue();
+        assertThat(sessionAReceivedError).isFalse();
+        assertThat(sessionBReceivedError).isFalse();
+
+        assertThat(service.cancel("session-a")).isTrue();
+        assertThat(service.cancel("session-b")).isTrue();
+        sessionASubscription.dispose();
+        sessionBSubscription.dispose();
+    }
+
+    @Test
     @DisplayName("取消 Agent 任务时终止模型流并持久化取消状态")
     void cancelsActiveModelStream() throws Exception {
         when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {
