@@ -29,6 +29,7 @@ public class AgentProgressWriter {
     private final Duration debounce;
     private final ConcurrentHashMap<Long, PendingProgress> pending = new ConcurrentHashMap<>();
 
+    @org.springframework.beans.factory.annotation.Autowired
     public AgentProgressWriter(
         AgentConversationService conversationService,
         @Value("${app.ai.agent.progress-write-debounce-ms:100}") long debounceMillis
