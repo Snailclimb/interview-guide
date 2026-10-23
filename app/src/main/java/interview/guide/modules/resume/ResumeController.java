@@ -3,11 +3,15 @@ package interview.guide.modules.resume;
 import interview.guide.common.annotation.RateLimit;
 import interview.guide.common.result.Result;
 import interview.guide.modules.resume.model.ResumeDetailDTO;
+import interview.guide.modules.resume.model.ResumeEditorDTO;
 import interview.guide.modules.resume.model.ResumeListItemDTO;
+import interview.guide.modules.resume.model.SaveResumeEditorRequest;
 import interview.guide.modules.resume.service.ResumeDeleteService;
+import interview.guide.modules.resume.service.ResumeEditorService;
 import interview.guide.modules.resume.service.ResumeHistoryService;
 import interview.guide.modules.resume.service.ResumeUploadService;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -17,6 +21,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
@@ -39,6 +44,7 @@ public class ResumeController {
     private final ResumeUploadService uploadService;
     private final ResumeDeleteService deleteService;
     private final ResumeHistoryService historyService;
+    private final ResumeEditorService editorService;
 
     /**
      * 上传简历并获取分析结果
@@ -74,6 +80,38 @@ public class ResumeController {
     public Result<ResumeDetailDTO> getResumeDetail(@PathVariable Long id) {
         ResumeDetailDTO detail = historyService.getResumeDetail(id);
         return Result.success(detail);
+    }
+
+    /** 获取简历编辑版；首次打开时返回原始文本作为可编辑起点。 */
+    @GetMapping("/api/resumes/{id}/editor")
+    public Result<ResumeEditorDTO> getEditor(@PathVariable Long id) {
+        return Result.success(editorService.getEditor(id));
+    }
+
+    /** 保存手动编辑的简历草稿，不会覆盖原始上传文件。 */
+    @org.springframework.web.bind.annotation.PutMapping("/api/resumes/{id}/editor")
+    public Result<ResumeEditorDTO> saveEditor(
+        @PathVariable Long id,
+        @Valid @RequestBody SaveResumeEditorRequest request
+    ) {
+        return Result.success(editorService.save(id, request));
+    }
+
+    /** 根据原文、当前草稿和最新分析建议生成可继续编辑的 AI 草稿。 */
+    @PostMapping("/api/resumes/{id}/editor/ai-optimize")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 3)
+    @RateLimit(dimension = RateLimit.Dimension.IP, count = 3)
+    public Result<ResumeEditorDTO> optimizeEditor(
+        @PathVariable Long id,
+        @RequestBody(required = false) @Valid SaveResumeEditorRequest request
+    ) {
+        return Result.success(editorService.optimize(id, request));
+    }
+
+    /** 显式将编辑版应用为后续模拟面试使用的简历文本。 */
+    @PostMapping("/api/resumes/{id}/editor/apply")
+    public Result<ResumeEditorDTO> applyEditor(@PathVariable Long id) {
+        return Result.success(editorService.applyToInterview(id));
     }
 
     /**

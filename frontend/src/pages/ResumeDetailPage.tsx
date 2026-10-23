@@ -1,12 +1,13 @@
 import {useCallback, useEffect, useState} from 'react';
 import {useLocation} from 'react-router-dom';
 import {AnimatePresence, motion} from 'framer-motion';
-import {historyApi, InterviewDetail, ResumeDetail} from '../api/history';
+import {historyApi, InterviewDetail, ResumeDetail, ResumeEditor, ResumeEditorContent} from '../api/history';
 import AnalysisPanel from '../components/AnalysisPanel';
 import InterviewPanel from '../components/InterviewPanel';
 import InterviewDetailPanel from '../components/InterviewDetailPanel';
+import ResumeEditorPanel from '../components/ResumeEditorPanel';
 import {formatDateOnly} from '../utils/date';
-import {CheckSquare, ChevronLeft, Clock, Download, MessageSquare, Mic} from 'lucide-react';
+import {CheckSquare, ChevronLeft, Clock, Download, MessageSquare, Mic, PencilLine} from 'lucide-react';
 
 interface ResumeDetailPageProps {
   resumeId: number;
@@ -14,7 +15,7 @@ interface ResumeDetailPageProps {
   onStartInterview: (resumeId: number) => void;
 }
 
-type TabType = 'analysis' | 'interview';
+type TabType = 'analysis' | 'editor' | 'interview';
 type DetailViewType = 'list' | 'interviewDetail';
 
 export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }: ResumeDetailPageProps) {
@@ -28,6 +29,12 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
   const [selectedInterview, setSelectedInterview] = useState<InterviewDetail | null>(null);
   const [loadingInterview, setLoadingInterview] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
+  const [editor, setEditor] = useState<ResumeEditor | null>(null);
+  const [editorLoading, setEditorLoading] = useState(false);
+  const [editorSaving, setEditorSaving] = useState(false);
+  const [editorOptimizing, setEditorOptimizing] = useState(false);
+  const [editorApplying, setEditorApplying] = useState(false);
+  const [editorError, setEditorError] = useState<string | null>(null);
 
   // 静默加载数据（用于轮询）
   const loadResumeDetailSilent = useCallback(async () => {
@@ -54,6 +61,29 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
   useEffect(() => {
     loadResumeDetail();
   }, [loadResumeDetail]);
+
+  const loadEditor = useCallback(async () => {
+    setEditorLoading(true);
+    setEditorError(null);
+    try {
+      setEditor(await historyApi.getResumeEditor(resumeId));
+    } catch (err) {
+      setEditorError(err instanceof Error ? err.message : '加载简历编辑版失败');
+    } finally {
+      setEditorLoading(false);
+    }
+  }, [resumeId]);
+
+  useEffect(() => {
+    if (activeTab === 'editor' && !editor && !editorLoading) {
+      loadEditor();
+    }
+  }, [activeTab, editor, editorLoading, loadEditor]);
+
+  useEffect(() => {
+    setEditor(null);
+    setEditorError(null);
+  }, [resumeId]);
 
   // 轮询：当分析状态为待处理时，每5秒刷新一次
   // 待处理判断：显式的 PENDING/PROCESSING 状态，或状态未定义且无分析结果
@@ -83,6 +113,43 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
       console.error('重新分析失败', err);
     } finally {
       setReanalyzing(false);
+    }
+  };
+
+  const handleSaveEditor = async (content: ResumeEditorContent) => {
+    setEditorSaving(true);
+    setEditorError(null);
+    try {
+      setEditor(await historyApi.saveResumeEditor(resumeId, content));
+    } catch (err) {
+      setEditorError(err instanceof Error ? err.message : '保存编辑版失败');
+    } finally {
+      setEditorSaving(false);
+    }
+  };
+
+  const handleOptimizeEditor = async (content: ResumeEditorContent) => {
+    setEditorOptimizing(true);
+    setEditorError(null);
+    try {
+      setEditor(await historyApi.optimizeResumeEditor(resumeId, content));
+    } catch (err) {
+      setEditorError(err instanceof Error ? err.message : 'AI 优化失败，请稍后重试');
+    } finally {
+      setEditorOptimizing(false);
+    }
+  };
+
+  const handleApplyEditor = async () => {
+    setEditorApplying(true);
+    setEditorError(null);
+    try {
+      setEditor(await historyApi.applyResumeEditor(resumeId));
+      await loadResumeDetailSilent();
+    } catch (err) {
+      setEditorError(err instanceof Error ? err.message : '应用编辑版失败');
+    } finally {
+      setEditorApplying(false);
     }
   };
 
@@ -176,7 +243,7 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
   };
 
   const handleTabChange = (tab: TabType) => {
-    const newPage = tab === 'analysis' ? 0 : 1;
+    const newPage = tab === 'analysis' ? 0 : tab === 'editor' ? 1 : 2;
     setPage([newPage, newPage > page ? 1 : -1]);
     setActiveTab(tab);
     setDetailView('list');
@@ -222,6 +289,7 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
   const latestAnalysis = resume.analyses?.[0];
   const tabs = [
     { id: 'analysis' as const, label: '简历分析', icon: CheckSquare },
+    { id: 'editor' as const, label: '编辑与优化', icon: PencilLine },
     { id: 'interview' as const, label: '面试记录', icon: MessageSquare, count: resume.interviews?.length || 0 },
   ];
 
@@ -339,6 +407,18 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
                   exporting={exporting === 'analysis'}
                   onReanalyze={handleReanalyze}
                   reanalyzing={reanalyzing}
+                />
+              ) : activeTab === 'editor' ? (
+                <ResumeEditorPanel
+                  editor={editor}
+                  loading={editorLoading}
+                  saving={editorSaving}
+                  optimizing={editorOptimizing}
+                  applying={editorApplying}
+                  error={editorError}
+                  onSave={handleSaveEditor}
+                  onOptimize={handleOptimizeEditor}
+                  onApply={handleApplyEditor}
                 />
               ) : (
                   <InterviewPanel

@@ -44,6 +44,10 @@ public class ResumeEntity {
     // 解析后的简历文本
     @Column(columnDefinition = "TEXT")
     private String resumeText;
+
+    /** 首次解析得到的原始文本，编辑版应用后仍保留用于恢复和对照。 */
+    @Column(name = "original_resume_text", columnDefinition = "TEXT")
+    private String originalResumeText;
     
     // 上传时间
     @Column(nullable = false)
@@ -152,6 +156,14 @@ public class ResumeEntity {
     
     public void setResumeText(String resumeText) {
         this.resumeText = resumeText;
+    }
+
+    public String getOriginalResumeText() {
+        return originalResumeText;
+    }
+
+    public void setOriginalResumeText(String originalResumeText) {
+        this.originalResumeText = originalResumeText;
     }
     
     public LocalDateTime getUploadedAt() {

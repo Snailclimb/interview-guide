@@ -85,6 +85,33 @@ export interface ResumeDetail {
   interviews: InterviewItem[];
 }
 
+export interface ResumeEditorContent {
+  name: string;
+  email: string;
+  phone: string;
+  location: string;
+  targetPosition: string;
+  skills: string;
+  workExperience: string;
+  projects: string;
+  education: string;
+  selfEvaluation: string;
+  rawText: string;
+}
+
+export type ResumeEditorSource = 'ORIGINAL' | 'AI_DRAFT' | 'MANUAL' | 'APPLIED';
+
+export interface ResumeEditor {
+  resumeId: number;
+  version: number;
+  source: ResumeEditorSource;
+  updatedAt: string;
+  content: ResumeEditorContent;
+  originalText: string;
+  appliedToInterview: boolean;
+  analysisOutdated: boolean;
+}
+
 export interface InterviewDetail extends InterviewItem {
   evaluateStatus?: EvaluateStatus;
   evaluateError?: string;
@@ -160,5 +187,21 @@ export const historyApi = {
    */
   async reanalyze(id: number): Promise<void> {
     return request.post(`/api/resumes/${id}/reanalyze`);
+  },
+
+  async getResumeEditor(id: number): Promise<ResumeEditor> {
+    return request.get<ResumeEditor>(`/api/resumes/${id}/editor`);
+  },
+
+  async saveResumeEditor(id: number, content: ResumeEditorContent): Promise<ResumeEditor> {
+    return request.put<ResumeEditor>(`/api/resumes/${id}/editor`, {content});
+  },
+
+  async optimizeResumeEditor(id: number, content: ResumeEditorContent): Promise<ResumeEditor> {
+    return request.post<ResumeEditor>(`/api/resumes/${id}/editor/ai-optimize`, {content});
+  },
+
+  async applyResumeEditor(id: number): Promise<ResumeEditor> {
+    return request.post<ResumeEditor>(`/api/resumes/${id}/editor/apply`);
   },
 };

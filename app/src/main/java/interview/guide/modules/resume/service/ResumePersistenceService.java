@@ -79,6 +79,7 @@ public class ResumePersistenceService {
             resume.setStorageKey(storageKey);
             resume.setStorageUrl(storageUrl);
             resume.setResumeText(resumeText);
+            resume.setOriginalResumeText(resumeText);
             // 进展时间初始化：NULL 会被 stale 扫描的阈值比较排除
             resume.setAnalyzeUpdatedAt(java.time.LocalDateTime.now());
 
@@ -100,6 +101,9 @@ public class ResumePersistenceService {
         ResumeEntity resume = resumeRepository.findById(resumeId)
             .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
         resume.setResumeText(resumeText);
+        if (resume.getOriginalResumeText() == null || resume.getOriginalResumeText().isBlank()) {
+            resume.setOriginalResumeText(resumeText);
+        }
         resumeRepository.save(resume);
     }
 
