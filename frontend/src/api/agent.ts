@@ -1,8 +1,8 @@
 import { streamSse } from './stream.ts';
 import request from './request.ts';
-import type { AgentMessageRequest, AgentStreamEvent } from '../types/agent';
-import type { AgentConversationResponse } from '../types/agent';
-import { getAgentMemoryKey } from '../utils/clientIdentity';
+import type { AgentMessageRequest, AgentStreamEvent } from '../types/agent.ts';
+import type { AgentConversationResponse } from '../types/agent.ts';
+import { getAgentMemoryKey } from '../utils/clientIdentity.ts';
 
 function agentHeaders() {
   return { 'X-User-Id': getAgentMemoryKey() };
