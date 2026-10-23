@@ -45,6 +45,7 @@ public enum ErrorCode {
     
     // ========== 导出模块错误 5xxx ==========
     EXPORT_PDF_FAILED(5001, "PDF导出失败"),
+    EXPORT_DOCUMENT_FAILED(5002, "文档导出失败"),
     
     // ========== 知识库模块错误 6xxx ==========
     KNOWLEDGE_BASE_NOT_FOUND(6001, "知识库不存在"),

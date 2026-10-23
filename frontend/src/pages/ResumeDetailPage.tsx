@@ -35,6 +35,7 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
   const [editorOptimizing, setEditorOptimizing] = useState(false);
   const [editorApplying, setEditorApplying] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [editorExporting, setEditorExporting] = useState<'pdf' | 'docx' | null>(null);
 
   // 静默加载数据（用于轮询）
   const loadResumeDetailSilent = useCallback(async () => {
@@ -150,6 +151,28 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
       setEditorError(err instanceof Error ? err.message : '应用编辑版失败');
     } finally {
       setEditorApplying(false);
+    }
+  };
+
+  const handleExportEditor = async (format: 'pdf' | 'docx') => {
+    setEditorExporting(format);
+    setEditorError(null);
+    try {
+      const blob = format === 'pdf'
+        ? await historyApi.exportResumePdf(resumeId)
+        : await historyApi.exportResumeDocx(resumeId);
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = format === 'pdf' ? '简历编辑版.pdf' : '简历编辑版.docx';
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setEditorError(err instanceof Error ? err.message : '简历导出失败，请稍后重试');
+    } finally {
+      setEditorExporting(null);
     }
   };
 
@@ -416,6 +439,8 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
                   optimizing={editorOptimizing}
                   applying={editorApplying}
                   error={editorError}
+                  exporting={editorExporting}
+                  onExport={handleExportEditor}
                   onSave={handleSaveEditor}
                   onOptimize={handleOptimizeEditor}
                   onApply={handleApplyEditor}
