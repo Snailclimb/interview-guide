@@ -33,8 +33,9 @@ class AgentErrorClassificationTest {
         InterviewAgentService service = service();
 
         assertThat(service.toAgentErrorMessage(new IllegalStateException(
-            "max_tokens must be between 0 and 3000"
-        ))).contains("输出长度").contains("分段发送").contains("不是面试消息字符限制");
+            "max_tokens is not supported by this provider"
+        ))).contains("输出长度").contains("切换可用模型")
+            .contains("分段发送").contains("不是面试消息字符限制");
     }
 
     @Test
