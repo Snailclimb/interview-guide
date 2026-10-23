@@ -25,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.after;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
@@ -105,6 +106,62 @@ class InterviewAgentServiceTest {
         assertThat(events).anySatisfy(event -> assertThat(event.content()).isEqualTo("备用模型回答"));
         assertThat(events).anySatisfy(event -> assertThat(event.type()).isEqualTo("done"));
         verify(conversationService).completeMessage(10L, "备用模型回答");
+    }
+
+    @Test
+    @DisplayName("Agent 默认不发送输出 token 限制")
+    void omitsOutputTokenLimitByDefault() throws Exception {
+        when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {
+            String path = invocation.getArgument(0);
+            String template = path.contains("system")
+                ? "系统规则"
+                : path.contains("context")
+                    ? "固定上下文 {context} {skill}"
+                    : "目标 {goal}，资料 {rag}，问题 {question}";
+            return new ByteArrayResource(template.getBytes(StandardCharsets.UTF_8));
+        });
+        when(promptSanitizer.sanitize(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(promptSanitizer.wrapWithStableDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(contextService.build(anyString(), any(), any())).thenReturn(new AgentContextService.AgentContext(
+            "报告", "skill", "skill", "无资料", "问题", List.of()
+        ));
+        when(conversationService.loadHistory(anyString())).thenReturn(List.of());
+        when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
+            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
+        when(providerRegistry.resolveChatProviderCandidates("primary"))
+            .thenReturn(List.of("primary"));
+
+        ChatClient client = mock(ChatClient.class);
+        ChatClient.ChatClientRequestSpec requestSpec = mock(ChatClient.ChatClientRequestSpec.class);
+        ChatClient.StreamResponseSpec streamResponse = mock(ChatClient.StreamResponseSpec.class);
+        AtomicInteger optionsCalls = new AtomicInteger();
+        when(client.prompt()).thenReturn(requestSpec);
+        when(requestSpec.system(anyString())).thenReturn(requestSpec);
+        lenient().when(requestSpec.options(any())).thenAnswer(invocation -> {
+            optionsCalls.incrementAndGet();
+            return requestSpec;
+        });
+        when(requestSpec.user(anyString())).thenReturn(requestSpec);
+        when(requestSpec.stream()).thenReturn(streamResponse);
+        when(streamResponse.content()).thenReturn(Flux.just("不设置输出上限的回答"));
+        when(providerRegistry.getAgentChatClient("primary")).thenReturn(client);
+
+        InterviewAgentService service = new InterviewAgentService(
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
+            agentProgressWriter, retryProperties
+        );
+
+        List<AgentStreamEvent> events = service.stream(
+            "output-limit-session", new AgentMessageRequest("review", "请复盘", List.of(), "primary")
+        ).collectList().block(Duration.ofSeconds(5));
+
+        assertThat(events).isNotNull();
+        assertThat(optionsCalls).hasValue(0);
+        assertThat(events).anySatisfy(event -> assertThat(event.content()).isEqualTo("不设置输出上限的回答"));
+        verify(conversationService).completeMessage(10L, "不设置输出上限的回答");
     }
 
     @Test
@@ -538,7 +595,7 @@ class InterviewAgentServiceTest {
         ChatClient.StreamResponseSpec streamResponse = mock(ChatClient.StreamResponseSpec.class);
         when(client.prompt()).thenReturn(requestSpec);
         when(requestSpec.system(anyString())).thenReturn(requestSpec);
-        when(requestSpec.options(any())).thenReturn(requestSpec);
+        lenient().when(requestSpec.options(any())).thenReturn(requestSpec);
         when(requestSpec.user(anyString())).thenReturn(requestSpec);
         when(requestSpec.stream()).thenReturn(streamResponse);
         when(streamResponse.content()).thenReturn(content);
