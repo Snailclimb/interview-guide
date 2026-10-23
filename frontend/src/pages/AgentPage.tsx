@@ -614,10 +614,6 @@ export default function AgentPage() {
 
   const selectAgentSession = (nextSessionId: string) => {
     if (nextSessionId === sessionId) return;
-    if (runStatus === 'running') {
-      setRunNotice('当前会话正在执行，请等待任务结束后再切换会话。');
-      return;
-    }
     setSearchParams({ sessionId: nextSessionId });
   };
 
@@ -691,7 +687,6 @@ export default function AgentPage() {
       <div className="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-6 items-start">
         <AgentSessionList
           selectedSessionId={sessionId}
-          disabled={runStatus === 'running'}
           onSelect={selectAgentSession}
           onCreate={() => navigate('/interviews')}
         />

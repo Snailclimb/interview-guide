@@ -94,7 +94,7 @@ export default function AgentSessionList({
         </button>
       </div>
       <p className="text-xs dark-text-muted mt-2 leading-relaxed">
-        每份文字面试报告对应一个独立会话，切换后会恢复各自的对话和任务状态。
+        每份文字面试报告对应一个独立会话，多个会话可以并行执行，切换后会恢复各自的对话和任务状态。
       </p>
 
       <button
