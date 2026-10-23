@@ -15,6 +15,7 @@ import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.core.io.ResourceLoader;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
@@ -39,8 +40,8 @@ import java.util.function.Supplier;
 /**
  * 面试教练 Agent 编排服务。
  *
- * <p>当前采用可观察的确定性工作流：读取面试上下文 -> 组织分析任务 -> 流式生成建议。
- * 对话记录由独立的 Agent 会话服务持久化，不改变既有面试和 RAG 会话。</p>
+ * <p>采用有边界的 Agent Loop：读取上下文 -> 规划 -> 通过只读 Skill/RAG 工具观察 ->
+ * 流式执行最终回答。对话记录由独立的 Agent 会话服务持久化，不改变既有面试和 RAG 会话。</p>
  */
 @Slf4j
 @Service
@@ -65,6 +66,7 @@ public class InterviewAgentService {
     private final AgentMetrics agentMetrics;
     private final AgentProgressWriter agentProgressWriter;
     private final AgentRetryProperties retryProperties;
+    private final AgentLoopPlanner agentLoopPlanner;
     private final Set<String> activeSessions = ConcurrentHashMap.newKeySet();
     private final Map<String, Sinks.One<Void>> cancellationSignals = new ConcurrentHashMap<>();
     private final Map<String, AgentTaskHandle> activeTasks = new ConcurrentHashMap<>();
@@ -79,6 +81,24 @@ public class InterviewAgentService {
         AgentProgressWriter agentProgressWriter,
         AgentRetryProperties retryProperties
     ) throws IOException {
+        this(
+            agentContextService, agentConversationService, llmProviderRegistry, promptSanitizer,
+            resourceLoader, agentMetrics, agentProgressWriter, retryProperties, null
+        );
+    }
+
+    @Autowired
+    public InterviewAgentService(
+        AgentContextService agentContextService,
+        AgentConversationService agentConversationService,
+        LlmProviderRegistry llmProviderRegistry,
+        PromptSanitizer promptSanitizer,
+        ResourceLoader resourceLoader,
+        AgentMetrics agentMetrics,
+        AgentProgressWriter agentProgressWriter,
+        AgentRetryProperties retryProperties,
+        AgentLoopPlanner agentLoopPlanner
+    ) throws IOException {
         this.agentContextService = agentContextService;
         this.agentConversationService = agentConversationService;
         this.llmProviderRegistry = llmProviderRegistry;
@@ -86,6 +106,7 @@ public class InterviewAgentService {
         this.agentMetrics = agentMetrics;
         this.agentProgressWriter = agentProgressWriter;
         this.retryProperties = retryProperties;
+        this.agentLoopPlanner = agentLoopPlanner;
         this.systemPromptTemplate = new PromptTemplate(resourceLoader
             .getResource("classpath:prompts/agent-interview-coach-system.st")
             .getContentAsString(StandardCharsets.UTF_8));
@@ -122,11 +143,8 @@ public class InterviewAgentService {
                     sessionId, request, historyMessages
                 );
 
-                AgentConversationService.PreparedMessage preparedMessage = agentConversationService.prepareMessage(
-                    sessionId,
-                    promptSanitizer.sanitize(request.goal()),
-                    request.providerId(),
-                    message
+                AgentConversationService.PreparedMessage preparedMessage = prepareMessage(
+                    sessionId, request, message
                 );
                 preparedAssistantMessageId = preparedMessage.assistantMessageId();
                 AgentTaskHandle taskHandle = new AgentTaskHandle(
@@ -138,53 +156,10 @@ public class InterviewAgentService {
                     preparedMessage.assistantMessageId(), "context", "running", null
                 );
 
-                List<Message> history = buildModelHistory(historyMessages);
-                List<Message> compactHistory = buildModelHistory(AgentHistoryPolicy.normalize(
-                    historyMessages, CONTEXT_RETRY_HISTORY_CHARS, CONTEXT_RETRY_MESSAGE_CHARS
-                ));
-                PromptVariant normalPrompt = buildPromptVariant(context, request, message, history, false);
-                PromptVariant compactPrompt = buildPromptVariant(context, request, message, compactHistory, true);
-                BiFunction<String, Boolean, Supplier<Flux<String>>> modelStreamFactory =
-                    (providerId, compacted) -> {
-                        PromptVariant prompt = compacted ? compactPrompt : normalPrompt;
-                        return () -> {
-                            ChatClient chatClient = llmProviderRegistry.getAgentChatClient(providerId);
-                            var promptSpec = chatClient.prompt().system(prompt.systemPrompt());
-                            if (!prompt.history().isEmpty()) {
-                                promptSpec = promptSpec.messages(prompt.history());
-                            }
-                            return promptSpec.user(prompt.userPrompt()).stream().content();
-                        };
-                    };
-                Flux<AgentStreamEvent> response = streamModelWithRetry(
-                    modelStreamFactory,
-                    request.providerId(),
-                    sessionId,
-                    preparedMessage.assistantMessageId(),
-                    context.sources(),
-                    runTracker
+                Flux<AgentStreamEvent> workflow = buildWorkflow(
+                    sessionId, request, message, historyMessages, context, preparedMessage,
+                    cancellationSignal, taskHandle, runTracker
                 );
-                Flux<Boolean> remoteCancellation = monitorRemoteCancellation(sessionId, preparedMessage.runId());
-
-                Flux<AgentStreamEvent> workflow = Flux.concat(
-                    Flux.just(
-                        AgentStreamEvent.step("context", "completed"),
-                        AgentStreamEvent.step("insight", "running"),
-                        AgentStreamEvent.step("retrieval", "running"),
-                        AgentStreamEvent.step("retrieval", "completed"),
-                        AgentStreamEvent.sources(context.sources()),
-                        AgentStreamEvent.step("action", "running")
-                    ),
-                    response
-                )
-                    .doOnNext(event -> persistRunProgress(preparedMessage.assistantMessageId(), event))
-                    .takeUntilOther(Flux.merge(cancellationSignal.asMono(), remoteCancellation))
-                    .doFinally(signal -> {
-                        agentProgressWriter.finish(preparedMessage.assistantMessageId());
-                        activeSessions.remove(sessionId);
-                        cancellationSignals.remove(sessionId, cancellationSignal);
-                        activeTasks.remove(sessionId, taskHandle);
-                    });
                 // SSE 断开后不缓存全部 token；最终答案由 AgentConversationService 持久化。
                 return Flux.create(emitter -> {
                     taskHandle.subscription = workflow.subscribe(
@@ -226,24 +201,173 @@ public class InterviewAgentService {
         });
     }
 
+    /** 启动恢复任务复用同一条 Agent Loop，不新建重复的用户/助手消息。 */
+    public void recoverRun(AgentConversationService.RecoveredRun recoveredRun) {
+        if (recoveredRun == null || !activeSessions.add(recoveredRun.interviewSessionId())) {
+            return;
+        }
+        Mono.fromRunnable(() -> {
+            Sinks.One<Void> cancellationSignal = Sinks.one();
+            cancellationSignals.put(recoveredRun.interviewSessionId(), cancellationSignal);
+            AgentMetrics.RunTracker runTracker = agentMetrics.startRun();
+            AgentTaskHandle taskHandle = new AgentTaskHandle(recoveredRun.assistantMessageId(), cancellationSignal);
+            activeTasks.put(recoveredRun.interviewSessionId(), taskHandle);
+            try {
+                String message = promptSanitizer.sanitize(recoveredRun.userContent());
+                List<AgentHistoryMessage> historyMessages = AgentHistoryPolicy.normalize(
+                    removeCurrentUser(agentConversationService.loadHistory(recoveredRun.interviewSessionId()))
+                );
+                AgentMessageRequest request = new AgentMessageRequest(
+                    recoveredRun.goal() == null || recoveredRun.goal().isBlank() ? "review" : recoveredRun.goal(),
+                    message, historyMessages, recoveredRun.providerId(), recoveredRun.memoryKey()
+                );
+                AgentContextService.AgentContext context = agentContextService.build(
+                    recoveredRun.interviewSessionId(), request, historyMessages
+                );
+                AgentConversationService.PreparedMessage prepared = new AgentConversationService.PreparedMessage(
+                    recoveredRun.assistantMessageId(), null, recoveredRun.runId()
+                );
+                persistRunProgress(recoveredRun.assistantMessageId(), "context", "running", "应用重启后自动恢复中");
+                Flux<AgentStreamEvent> workflow = buildWorkflow(
+                    recoveredRun.interviewSessionId(), request, message, historyMessages, context,
+                    prepared, cancellationSignal, taskHandle, runTracker
+                );
+                taskHandle.subscription = workflow.subscribe(
+                    ignored -> { },
+                    error -> log.error("Agent 启动恢复任务失败: sessionId={}", recoveredRun.interviewSessionId(), error),
+                    () -> log.info("Agent 启动恢复任务完成: sessionId={}", recoveredRun.interviewSessionId())
+                );
+            } catch (Throwable error) {
+                failPreparedMessage(recoveredRun.assistantMessageId(), error);
+                agentProgressWriter.finish(recoveredRun.assistantMessageId());
+                agentMetrics.finishRun(runTracker, "failure");
+                activeSessions.remove(recoveredRun.interviewSessionId());
+                cancellationSignals.remove(recoveredRun.interviewSessionId(), cancellationSignal);
+                activeTasks.remove(recoveredRun.interviewSessionId(), taskHandle);
+                log.warn("Agent 启动恢复准备失败: sessionId={}", recoveredRun.interviewSessionId(), error);
+            }
+        }).subscribeOn(Schedulers.boundedElastic()).subscribe();
+    }
+
+    private Flux<AgentStreamEvent> buildWorkflow(
+        String sessionId,
+        AgentMessageRequest request,
+        String message,
+        List<AgentHistoryMessage> historyMessages,
+        AgentContextService.AgentContext context,
+        AgentConversationService.PreparedMessage preparedMessage,
+        Sinks.One<Void> cancellationSignal,
+        AgentTaskHandle taskHandle,
+        AgentMetrics.RunTracker runTracker
+    ) {
+        Flux<String> planFlux = agentLoopPlanner == null
+            ? Flux.just(AgentLoopPlanner.DEFAULT_PLAN)
+            : Mono.fromCallable(() -> agentLoopPlanner.plan(context, request, message, historyMessages))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flux();
+        return Flux.concat(
+            Flux.just(
+                AgentStreamEvent.step("context", "completed"),
+                AgentStreamEvent.step("planning", "running")
+            ),
+            planFlux.flatMap(plan -> {
+                    List<Message> history = buildModelHistory(historyMessages);
+                    List<Message> compactHistory = buildModelHistory(AgentHistoryPolicy.normalize(
+                        historyMessages, CONTEXT_RETRY_HISTORY_CHARS, CONTEXT_RETRY_MESSAGE_CHARS
+                    ));
+                    PromptVariant normalPrompt = buildPromptVariant(context, request, message, history, plan, false);
+                    PromptVariant compactPrompt = buildPromptVariant(context, request, message, compactHistory, plan, true);
+                    BiFunction<String, Boolean, Supplier<Flux<String>>> modelStreamFactory =
+                        (providerId, compacted) -> {
+                            PromptVariant prompt = compacted ? compactPrompt : normalPrompt;
+                            return () -> {
+                                ChatClient chatClient = llmProviderRegistry.getAgentChatClient(providerId);
+                                var promptSpec = chatClient.prompt().system(prompt.systemPrompt());
+                                if (!prompt.history().isEmpty()) {
+                                    promptSpec = promptSpec.messages(prompt.history());
+                                }
+                                return promptSpec.user(prompt.userPrompt()).stream().content();
+                            };
+                        };
+                    Flux<AgentStreamEvent> response = streamModelWithRetry(
+                        modelStreamFactory, request.providerId(), sessionId,
+                        preparedMessage.assistantMessageId(), context.sources(), runTracker, taskHandle
+                    );
+                    return Flux.concat(
+                        Flux.just(
+                            AgentStreamEvent.step("planning", "completed"),
+                            AgentStreamEvent.step("insight", "running"),
+                            AgentStreamEvent.step("retrieval", "running"),
+                            AgentStreamEvent.step("retrieval", "completed"),
+                            AgentStreamEvent.sources(context.sources()),
+                            AgentStreamEvent.step("action", "running")
+                        ),
+                        response
+                    );
+                })
+        )
+            .doOnNext(event -> persistRunProgress(preparedMessage.assistantMessageId(), event))
+            .doOnError(error -> failPreparedMessage(preparedMessage.assistantMessageId(), error))
+            .takeUntilOther(Flux.merge(cancellationSignal.asMono(), monitorRemoteCancellation(sessionId, preparedMessage.runId())))
+            .doFinally(signal -> {
+                agentProgressWriter.finish(preparedMessage.assistantMessageId());
+                activeSessions.remove(sessionId);
+                cancellationSignals.remove(sessionId, cancellationSignal);
+                activeTasks.remove(sessionId, taskHandle);
+            });
+    }
+
+    private List<AgentHistoryMessage> removeCurrentUser(List<AgentHistoryMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return List.of();
+        }
+        AgentHistoryMessage last = messages.getLast();
+        if ("user".equals(last.role())) {
+            return List.copyOf(messages.subList(0, messages.size() - 1));
+        }
+        return messages;
+    }
+
+    private AgentConversationService.PreparedMessage prepareMessage(
+        String sessionId, AgentMessageRequest request, String message
+    ) {
+        String goal = promptSanitizer.sanitize(request.goal());
+        if (request.memoryKey() == null || request.memoryKey().isBlank()) {
+            // 兼容旧的嵌入式调用方和单元测试；有记忆键时才走新增重载。
+            return agentConversationService.prepareMessage(sessionId, goal, request.providerId(), message);
+        }
+        return agentConversationService.prepareMessage(
+            sessionId, goal, request.providerId(), message, request.memoryKey()
+        );
+    }
+
     /** 发出服务端取消信号；如果任务不在当前实例，数据库取消仍由会话服务负责。 */
     public boolean cancel(String sessionId) {
         AgentTaskHandle taskHandle = activeTasks.get(sessionId);
         if (taskHandle != null) {
-            // 已订阅的模型流会通过 doOnCancel 持久化；尚未完成订阅时由这里兜底写状态。
-            if (!taskHandle.cancel()) {
+            // 规划阶段也可能尚未进入模型流，因此取消必须在这里持久化一次；
+            // 会话服务会用运行状态栅栏忽略后续迟到的取消事件。
+            boolean shouldPersistCancellation = taskHandle.markCancellationPersisted();
+            taskHandle.cancel();
+            if (shouldPersistCancellation) {
                 agentConversationService.cancelMessage(taskHandle.assistantMessageId, "");
-                agentProgressWriter.finish(taskHandle.assistantMessageId);
             }
+            agentProgressWriter.finish(taskHandle.assistantMessageId);
             return true;
         }
         Sinks.One<Void> signal = cancellationSignals.get(sessionId);
         return signal != null && signal.tryEmitEmpty().isSuccess();
     }
 
+    /** 恢复扫描前排除本实例仍在正常执行的任务，避免本地任务被自己换发 runId。 */
+    public boolean isLocallyActive(String sessionId) {
+        return sessionId != null && activeSessions.contains(sessionId);
+    }
+
     private static final class AgentTaskHandle {
         private final Long assistantMessageId;
         private final Sinks.One<Void> cancellationSignal;
+        private final AtomicBoolean cancellationPersisted = new AtomicBoolean();
         private volatile Disposable subscription;
 
         private AgentTaskHandle(Long assistantMessageId, Sinks.One<Void> cancellationSignal) {
@@ -259,6 +383,10 @@ public class InterviewAgentService {
                 return true;
             }
             return false;
+        }
+
+        private boolean markCancellationPersisted() {
+            return cancellationPersisted.compareAndSet(false, true);
         }
     }
 
@@ -301,7 +429,8 @@ public class InterviewAgentService {
         String sessionId,
         Long assistantMessageId,
         List<interview.guide.modules.agent.model.AgentSource> sources,
-        AgentMetrics.RunTracker runTracker
+        AgentMetrics.RunTracker runTracker,
+        AgentTaskHandle taskHandle
     ) {
         AtomicBoolean modelOutputStarted = new AtomicBoolean();
         AtomicReference<StringBuilder> output = new AtomicReference<>(new StringBuilder());
@@ -351,10 +480,9 @@ public class InterviewAgentService {
             })
             .doOnCancel(() -> {
                 agentProgressWriter.flush(assistantMessageId);
-                agentConversationService.cancelMessage(
-                    assistantMessageId,
-                    output.get().toString()
-                );
+                if (taskHandle == null || taskHandle.markCancellationPersisted()) {
+                    agentConversationService.cancelMessage(assistantMessageId, output.get().toString());
+                }
                 agentMetrics.finishRun(runTracker, "cancelled");
             });
     }
@@ -618,6 +746,7 @@ public class InterviewAgentService {
         AgentMessageRequest request,
         String message,
         List<Message> history,
+        String plan,
         boolean compacted
     ) {
         String report = compacted
@@ -629,16 +758,22 @@ public class InterviewAgentService {
         String rag = compacted
             ? compactPromptText(context.ragContext(), CONTEXT_RETRY_RAG_CHARS)
             : context.ragContext();
+        String memory = compacted
+            ? compactPromptText(context.longTermMemory(), 2_000)
+            : context.longTermMemory();
         Map<String, Object> fixedContextVariables = Map.of(
             "context", promptSanitizer.wrapWithStableDelimiters(
                 "interview-report", report),
             "skill", promptSanitizer.wrapWithStableDelimiters(
-                "skill-reference", skill)
+                "skill-reference", skill),
+            "memory", promptSanitizer.wrapWithStableDelimiters(
+                "long-term-memory", memory)
         );
         Map<String, Object> variables = Map.of(
             "goal", promptSanitizer.sanitize(request.goal()),
             "question", promptSanitizer.wrapWithDelimiters("user-message", message),
-            "rag", promptSanitizer.wrapWithDelimiters("rag-context", rag)
+            "rag", promptSanitizer.wrapWithDelimiters("rag-context", rag),
+            "plan", promptSanitizer.wrapWithStableDelimiters("agent-loop-plan", plan)
         );
         String systemPrompt = systemPromptTemplate.render()
             + PromptSecurityConstants.ANTI_INJECTION_INSTRUCTION

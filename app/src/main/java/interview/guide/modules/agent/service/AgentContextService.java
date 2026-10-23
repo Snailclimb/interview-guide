@@ -4,6 +4,7 @@ import interview.guide.common.ai.PromptSanitizer;
 import interview.guide.modules.agent.model.AgentMessageRequest;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
 import interview.guide.modules.agent.model.AgentSource;
+import interview.guide.modules.agent.model.AgentMemorySnapshot;
 import interview.guide.modules.interview.model.InterviewDetailDTO;
 import interview.guide.modules.interview.service.InterviewHistoryService;
 import interview.guide.modules.interview.skill.InterviewSkillService;
@@ -25,8 +26,8 @@ import org.springframework.ai.chat.messages.UserMessage;
 /**
  * 面试教练 Agent 的只读上下文编排。
  *
- * <p>负责把已有的面试报告、Skill references 和知识库检索结果整理成一次模型调用所需的上下文。
- * 不保存数据，也不改变既有面试和 RAG 会话。</p>
+ * <p>负责把已有的面试报告、Skill references、长期记忆和知识库检索结果整理成 Agent Loop
+ * 所需的上下文；不改变既有面试和 RAG 会话。</p>
  */
 @Slf4j
 @Service
@@ -45,6 +46,7 @@ public class AgentContextService {
     private final KnowledgeBaseQueryService knowledgeBaseQueryService;
     private final PromptSanitizer promptSanitizer;
     private final ObjectMapper objectMapper;
+    private final AgentMemoryService agentMemoryService;
 
     public AgentContextService(
         InterviewHistoryService interviewHistoryService,
@@ -53,11 +55,26 @@ public class AgentContextService {
         PromptSanitizer promptSanitizer,
         ObjectMapper objectMapper
     ) {
+        this(
+            interviewHistoryService, interviewSkillService, knowledgeBaseQueryService,
+            promptSanitizer, objectMapper, null
+        );
+    }
+
+    public AgentContextService(
+        InterviewHistoryService interviewHistoryService,
+        InterviewSkillService interviewSkillService,
+        KnowledgeBaseQueryService knowledgeBaseQueryService,
+        PromptSanitizer promptSanitizer,
+        ObjectMapper objectMapper,
+        AgentMemoryService agentMemoryService
+    ) {
         this.interviewHistoryService = interviewHistoryService;
         this.interviewSkillService = interviewSkillService;
         this.knowledgeBaseQueryService = knowledgeBaseQueryService;
         this.promptSanitizer = promptSanitizer;
         this.objectMapper = objectMapper;
+        this.agentMemoryService = agentMemoryService;
     }
 
     public AgentContext build(
@@ -72,6 +89,7 @@ public class AgentContextService {
         String skillReference = loadSkillReference(detail, sources);
         String retrievalQuery = buildRetrievalQuery(detail, request);
         String ragContext = loadRagContext(detail, retrievalQuery, sources, buildRetrievalHistory(effectiveHistory));
+        AgentMemorySnapshot memory = loadAndUpdateMemory(detail, request);
 
         return new AgentContext(
             report,
@@ -79,8 +97,41 @@ public class AgentContextService {
             skillReference,
             ragContext,
             retrievalQuery,
-            List.copyOf(sources)
+            List.copyOf(sources),
+            memory.toPrompt(),
+            extractWeaknesses(detail)
         );
+    }
+
+    private AgentMemorySnapshot loadAndUpdateMemory(InterviewDetailDTO detail, AgentMessageRequest request) {
+        if (agentMemoryService == null) {
+            return AgentMemorySnapshot.empty(request.memoryKey());
+        }
+        return agentMemoryService.remember(
+            request.memoryKey(),
+            detail.skillId(),
+            extractWeaknesses(detail),
+            request.goal()
+        );
+    }
+
+    private List<String> extractWeaknesses(InterviewDetailDTO detail) {
+        List<String> weaknesses = new ArrayList<>();
+        if (detail.improvements() != null) {
+            detail.improvements().stream()
+                .filter(item -> item != null && !item.isBlank())
+                .limit(MAX_WEAK_ANSWERS)
+                .forEach(item -> weaknesses.add(promptSanitizer.sanitize(item)));
+        }
+        if (detail.answers() != null) {
+            detail.answers().stream()
+                .filter(answer -> answer.score() != null && answer.score() < WEAK_SCORE_THRESHOLD)
+                .limit(MAX_WEAK_ANSWERS)
+                .forEach(answer -> weaknesses.add(
+                    promptSanitizer.sanitize(answer.category() + "：" + answer.question())
+                ));
+        }
+        return weaknesses.stream().filter(item -> item != null && !item.isBlank()).distinct().limit(8).toList();
     }
 
     private String loadSkillReference(InterviewDetailDTO detail, List<AgentSource> sources) {
@@ -248,7 +299,26 @@ public class AgentContextService {
         String skillReference,
         String ragContext,
         String retrievalQuery,
-        List<AgentSource> sources
+        List<AgentSource> sources,
+        String longTermMemory,
+        List<String> weaknesses
     ) {
+        public AgentContext(
+            String interviewReport,
+            String skillId,
+            String skillReference,
+            String ragContext,
+            String retrievalQuery,
+            List<AgentSource> sources
+        ) {
+            this(interviewReport, skillId, skillReference, ragContext, retrievalQuery, sources,
+                "暂无长期记忆", List.of());
+        }
+
+        public AgentContext {
+            longTermMemory = longTermMemory == null ? "暂无长期记忆" : longTermMemory;
+            weaknesses = weaknesses == null ? List.of() : List.copyOf(weaknesses);
+            sources = sources == null ? List.of() : List.copyOf(sources);
+        }
     }
 }

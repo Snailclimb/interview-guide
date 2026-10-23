@@ -43,6 +43,9 @@ public class AgentChatSessionEntity {
     @Column(name = "provider_id", length = 64)
     private String providerId;
 
+    @Column(name = "memory_key", length = 64)
+    private String memoryKey;
+
     @Column(name = "run_id", length = 36)
     private String runId;
 

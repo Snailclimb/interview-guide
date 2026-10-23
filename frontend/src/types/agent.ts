@@ -10,6 +10,7 @@ export interface AgentMessageRequest {
   message: string;
   history: AgentHistoryMessage[];
   providerId?: string;
+  memoryKey?: string;
 }
 
 export interface AgentConversationResponse {

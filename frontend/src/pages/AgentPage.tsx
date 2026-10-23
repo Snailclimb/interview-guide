@@ -69,6 +69,7 @@ const goalOptions: Array<{ id: AgentGoal; title: string; description: string }> 
 
 const createInitialSteps = (): AgentStep[] => [
   { id: 'context', title: '整理面试上下文', description: '读取本场面试的问题、回答和评分', status: 'pending' },
+  { id: 'planning', title: '规划处理路径', description: '确定是否需要 Skill 或知识库资料支持', status: 'pending' },
   { id: 'insight', title: '识别表现模式', description: '归纳回答中的优势、风险和知识盲区', status: 'pending' },
   { id: 'retrieval', title: '检索相关知识', description: '结合 Skill 和知识库补充训练依据', status: 'pending' },
   { id: 'action', title: '生成下一步建议', description: '给出可执行的训练任务和追问方向', status: 'pending' },
@@ -149,6 +150,7 @@ export default function AgentPage() {
   const [steps, setSteps] = useState<AgentStep[]>(createInitialSteps);
   const [sources, setSources] = useState<AgentSource[]>([]);
   const [runNotice, setRunNotice] = useState('');
+  const [memoryNotice, setMemoryNotice] = useState('');
   const [messages, setMessages] = useState<AgentMessage[]>([
     {
       id: 1,
@@ -511,6 +513,13 @@ export default function AgentPage() {
     );
   };
 
+  const clearLongTermMemory = () => {
+    if (runStatus === 'running' || !window.confirm('确定清除当前浏览器保存的 Agent 长期记忆吗？')) return;
+    void agentApi.clearMemory()
+      .then(() => setMemoryNotice('长期记忆已清除'))
+      .catch(() => setMemoryNotice('长期记忆清除失败，请稍后重试'));
+  };
+
   const startRun = () => {
     if (runStatus === 'error' && lastRunRequestRef.current) {
       const lastRequest = lastRunRequestRef.current;
@@ -620,8 +629,17 @@ export default function AgentPage() {
             <Settings2 className="w-4 h-4" />
             模型设置
           </button>
+          <button
+            onClick={clearLongTermMemory}
+            disabled={runStatus === 'running'}
+            className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm disabled:opacity-50"
+          >
+            <RotateCcw className="w-4 h-4" />
+            清除记忆
+          </button>
         </div>
       </div>
+      {memoryNotice ? <p className="text-xs text-slate-500 dark:text-slate-400 text-right">{memoryNotice}</p> : null}
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)] gap-6 items-start">
         <div className="space-y-6">

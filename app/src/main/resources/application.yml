@@ -188,6 +188,10 @@ app:
       retry-max-delay-seconds: ${APP_AI_AGENT_RETRY_MAX_DELAY_SECONDS:30}
       # 模型等待首 token 或重试等待期间的 SSE 心跳间隔（秒）
       retry-heartbeat-interval-seconds: ${APP_AI_AGENT_RETRY_HEARTBEAT_INTERVAL_SECONDS:10}
+      loop-enabled: ${APP_AI_AGENT_LOOP_ENABLED:true}
+      recovery-enabled: ${APP_AI_AGENT_RECOVERY_ENABLED:true}
+      recovery-min-age-seconds: ${APP_AI_AGENT_RECOVERY_MIN_AGE_SECONDS:30}
+      recovery-scan-interval-ms: ${APP_AI_AGENT_RECOVERY_SCAN_INTERVAL_MS:10000}
     # 是否启用 Spring AI 2.0 entity schema validation retry（失败时仍受 structured-max-attempts 外层控制）
     structured-schema-validation-enabled: ${APP_AI_STRUCTURED_SCHEMA_VALIDATION_ENABLED:true}
     rag:

@@ -19,6 +19,17 @@ public record AgentMessageRequest(
     @Size(max = 32, message = "历史消息最多保留 32 条")
     List<@Valid AgentHistoryMessage> history,
     @Size(max = 64)
-    String providerId
+    String providerId,
+    @Size(max = 64)
+    String memoryKey
 ) {
+    /** 兼容已有调用方；长期记忆是新增的可选能力。 */
+    public AgentMessageRequest(
+        String goal,
+        String message,
+        List<AgentHistoryMessage> history,
+        String providerId
+    ) {
+        this(goal, message, history, providerId, null);
+    }
 }

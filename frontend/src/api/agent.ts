@@ -2,6 +2,11 @@ import { streamSse } from './stream.ts';
 import request from './request.ts';
 import type { AgentMessageRequest, AgentStreamEvent } from '../types/agent';
 import type { AgentConversationResponse } from '../types/agent';
+import { getAgentMemoryKey } from '../utils/clientIdentity';
+
+function agentHeaders() {
+  return { 'X-User-Id': getAgentMemoryKey() };
+}
 
 interface AgentStreamHandlers {
   onEvent: (event: AgentStreamEvent) => void;
@@ -13,13 +18,20 @@ export const agentApi = {
   getConversation(sessionId: string): Promise<AgentConversationResponse> {
     return request.get<AgentConversationResponse>(
       `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversation`,
+      { headers: agentHeaders() },
     );
   },
 
   cancelRun(sessionId: string): Promise<AgentConversationResponse> {
     return request.post<AgentConversationResponse>(
       `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/cancel`,
+      undefined,
+      { headers: agentHeaders() },
     );
+  },
+
+  clearMemory(): Promise<void> {
+    return request.delete<void>('/api/agent/memory', { headers: agentHeaders() });
   },
 
   streamMessage(
@@ -32,8 +44,12 @@ export const agentApi = {
       url: `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/messages/stream`,
       init: {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-        body: JSON.stringify(request),
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+          ...agentHeaders(),
+        },
+        body: JSON.stringify({ ...request, memoryKey: request.memoryKey ?? getAgentMemoryKey() }),
         signal,
       },
       parseMode: 'event',

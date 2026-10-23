@@ -5,6 +5,7 @@ import interview.guide.modules.agent.model.AgentMessageRequest;
 import interview.guide.modules.agent.model.AgentConversationResponse;
 import interview.guide.modules.agent.model.AgentStreamEvent;
 import interview.guide.modules.agent.service.AgentConversationService;
+import interview.guide.modules.agent.service.AgentMemoryService;
 import interview.guide.modules.agent.service.InterviewAgentService;
 import interview.guide.common.result.Result;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -23,6 +24,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.support.WebExchangeBindException;
@@ -41,11 +44,15 @@ import java.util.stream.Collectors;
 public class AgentController {
     private final InterviewAgentService agentService;
     private final AgentConversationService conversationService;
+    private final AgentMemoryService memoryService;
     private final ObjectMapper objectMapper;
 
     @GetMapping("/api/agent/interview-sessions/{sessionId}/conversation")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
-    public Result<AgentConversationResponse> getConversation(@PathVariable String sessionId) {
+    public Result<AgentConversationResponse> getConversation(
+        @PathVariable String sessionId,
+        @RequestHeader(value = "X-User-Id", required = false) String memoryKey
+    ) {
         return Result.success(conversationService.getConversation(sessionId));
     }
 
@@ -55,6 +62,15 @@ public class AgentController {
         agentService.cancel(sessionId);
         conversationService.cancelRun(sessionId);
         return Result.success(conversationService.getConversation(sessionId));
+    }
+
+    @DeleteMapping("/api/agent/memory")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
+    public Result<Void> clearMemory(
+        @RequestHeader(value = "X-User-Id", required = false) String memoryKey
+    ) {
+        memoryService.clear(memoryKey);
+        return Result.success(null);
     }
 
     /**

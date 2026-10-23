@@ -34,4 +34,15 @@ public class AgentRetryProperties {
     @Max(value = 60, message = "Agent 重试心跳间隔不能超过 60 秒")
     private int retryHeartbeatIntervalSeconds = 10;
 
+    /** 是否启用受控 Agent Loop；关闭时回退到现有单次回答流程。 */
+    private boolean loopEnabled = true;
+
+    /** 启动恢复扫描是否启用。 */
+    private boolean recoveryEnabled = true;
+
+    /** 运行超过该时长仍为 RUNNING 才允许被新实例接管。 */
+    @Min(value = 10, message = "Agent 恢复最小年龄不能小于 10 秒")
+    @Max(value = 3600, message = "Agent 恢复最小年龄不能超过 3600 秒")
+    private int recoveryMinAgeSeconds = 30;
+
 }

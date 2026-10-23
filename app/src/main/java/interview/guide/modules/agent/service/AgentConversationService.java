@@ -46,6 +46,17 @@ public class AgentConversationService {
         String providerId,
         String userContent
     ) {
+        return prepareMessage(interviewSessionId, goal, providerId, userContent, null);
+    }
+
+    @Transactional
+    public PreparedMessage prepareMessage(
+        String interviewSessionId,
+        String goal,
+        String providerId,
+        String userContent,
+        String memoryKey
+    ) {
         AgentChatSessionEntity session = sessionRepository.findByInterviewSessionIdForUpdate(interviewSessionId)
             .orElseGet(() -> sessionRepository.findByInterviewSessionId(interviewSessionId)
                 .orElseGet(() -> AgentChatSessionEntity.builder()
@@ -58,6 +69,9 @@ public class AgentConversationService {
 
         String runId = UUID.randomUUID().toString();
         session.setGoal(goal);
+        if (memoryKey != null && !memoryKey.isBlank()) {
+            session.setMemoryKey(memoryKey.trim());
+        }
         if (providerId != null && !providerId.isBlank()) {
             session.setProviderId(providerId);
         }
@@ -186,6 +200,62 @@ public class AgentConversationService {
                 && runId != null
                 && runId.equals(session.getRunId()))
             .orElse(false);
+    }
+
+    /**
+     * 启动恢复的数据库栅栏：锁住一条过期 RUNNING 会话，并立即换发新的 runId。
+     * 这样多个实例同时扫描时只有一个实例能接管任务。
+     */
+    @Transactional
+    public RecoveredRun claimRecoverableRun(String interviewSessionId, LocalDateTime staleBefore) {
+        AgentChatSessionEntity session = sessionRepository.findByInterviewSessionIdForUpdate(interviewSessionId)
+            .orElse(null);
+        if (session == null
+            || session.getRunStatus() != AgentRunStatus.RUNNING
+            || session.getRunStartedAt() == null
+            || session.getRunStartedAt().isAfter(staleBefore)
+            || session.getActiveMessageId() == null) {
+            return null;
+        }
+
+        AgentChatMessageEntity assistant = messageRepository.findById(session.getActiveMessageId()).orElse(null);
+        if (assistant == null || assistant.getCompleted()) {
+            return null;
+        }
+        AgentChatMessageEntity user = messageRepository
+            .findBySessionIdAndCompletedTrueOrderBySequenceNumAsc(session.getId())
+            .stream()
+            .filter(item -> item.getRole() == AgentChatMessageEntity.MessageRole.USER)
+            .filter(item -> item.getSequenceNum() < assistant.getSequenceNum())
+            .reduce((first, second) -> second)
+            .orElse(null);
+        if (user == null || user.getContent() == null || user.getContent().isBlank()) {
+            return null;
+        }
+
+        String runId = UUID.randomUUID().toString();
+        session.setRunId(runId);
+        session.setRunStartedAt(LocalDateTime.now());
+        session.setRunFinishedAt(null);
+        session.setRunError(null);
+        session.setRunStep("context");
+        session.setRunStepStatus("running");
+        session.setRunNotice("应用重启后自动恢复中");
+        session.setRunSourcesJson(null);
+        assistant.setContent("");
+        assistant.setCompleted(false);
+        assistant.setErrorMessage(null);
+        messageRepository.save(assistant);
+        sessionRepository.save(session);
+        return new RecoveredRun(
+            session.getInterviewSessionId(),
+            session.getGoal(),
+            session.getProviderId(),
+            session.getMemoryKey(),
+            user.getContent(),
+            assistant.getId(),
+            session.getRunId()
+        );
     }
 
     @Transactional
@@ -398,5 +468,16 @@ public class AgentConversationService {
     }
 
     public record PreparedMessage(Long assistantMessageId, Long sessionId, String runId) {
+    }
+
+    public record RecoveredRun(
+        String interviewSessionId,
+        String goal,
+        String providerId,
+        String memoryKey,
+        String userContent,
+        Long assistantMessageId,
+        String runId
+    ) {
     }
 }
