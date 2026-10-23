@@ -42,6 +42,7 @@ import type {
   AgentStreamEvent,
 } from '../types/agent';
 import type { ProviderItem } from '../types/llmProvider';
+import AgentSessionList from '../components/AgentSessionList';
 type RunStatus = 'idle' | 'running' | 'completed' | 'error' | 'cancelled';
 type StepStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
 
@@ -68,6 +69,12 @@ const goalOptions: Array<{ id: AgentGoal; title: string; description: string }> 
   { id: 'practice', title: '针对性训练', description: '围绕薄弱知识点生成练习题' },
   { id: 'plan', title: '制定训练计划', description: '拆解目标，安排下一步行动' },
 ];
+
+const createWelcomeMessage = (): AgentMessage => ({
+  id: 1,
+  role: 'assistant',
+  content: '你好，我是你的 AI 面试教练。选择一个目标后，我会基于当前面试上下文帮你整理下一步。',
+});
 
 const createInitialSteps = (): AgentStep[] => [
   { id: 'context', title: '整理面试上下文', description: '读取本场面试的问题、回答和评分', status: 'pending' },
@@ -155,13 +162,7 @@ export default function AgentPage() {
   const [sources, setSources] = useState<AgentSource[]>([]);
   const [runNotice, setRunNotice] = useState('');
   const [memoryNotice, setMemoryNotice] = useState('');
-  const [messages, setMessages] = useState<AgentMessage[]>([
-    {
-      id: 1,
-      role: 'assistant',
-      content: '你好，我是你的 AI 面试教练。选择一个目标后，我会基于当前面试上下文帮你整理下一步。',
-    },
-  ]);
+  const [messages, setMessages] = useState<AgentMessage[]>([createWelcomeMessage()]);
   const [input, setInput] = useState('');
   const abortRef = useRef<AbortController | null>(null);
   const reconciliationTimerRef = useRef<number | null>(null);
@@ -296,6 +297,25 @@ export default function AgentPage() {
 
     poll();
   }, [clearReconciliationTimer, rememberRetryableRequest, restoreConversationMessages, restoreRunProgress]);
+
+  useEffect(() => {
+    // 同一个页面内切换会话时，先清掉上一份报告的本地状态，避免旧消息和步骤闪现到新会话。
+    abortRef.current?.abort();
+    abortRef.current = null;
+    clearReconciliationTimer();
+    lastRunRequestRef.current = null;
+    lastRunMessageIdsRef.current = null;
+    setInterview(null);
+    setContextError('');
+    setLoadingContext(Boolean(sessionId));
+    setRunStatus('idle');
+    setRunError('');
+    setRunNotice('');
+    setSources([]);
+    setSteps(createInitialSteps());
+    setMessages([createWelcomeMessage()]);
+    setInput('');
+  }, [clearReconciliationTimer, sessionId]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -592,6 +612,15 @@ export default function AgentPage() {
     }
   };
 
+  const selectAgentSession = (nextSessionId: string) => {
+    if (nextSessionId === sessionId) return;
+    if (runStatus === 'running') {
+      setRunNotice('当前会话正在执行，请等待任务结束后再切换会话。');
+      return;
+    }
+    setSearchParams({ sessionId: nextSessionId });
+  };
+
   useEffect(() => {
     const container = chatScrollRef.current;
     if (!container || !shouldFollowChatRef.current) return;
@@ -659,8 +688,16 @@ export default function AgentPage() {
       </div>
       {memoryNotice ? <p className="text-xs text-slate-500 dark:text-slate-400 text-right">{memoryNotice}</p> : null}
 
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)] gap-6 items-start">
-        <div className="space-y-6">
+      <div className="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-6 items-start">
+        <AgentSessionList
+          selectedSessionId={sessionId}
+          disabled={runStatus === 'running'}
+          onSelect={selectAgentSession}
+          onCreate={() => navigate('/interviews')}
+        />
+
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)] gap-6 items-start min-w-0">
+        <div className="space-y-6 min-w-0">
           <section className="dark-card p-6">
             <div className="flex items-start justify-between gap-4 mb-5">
               <div>
@@ -845,7 +882,7 @@ export default function AgentPage() {
           </section>
         </div>
 
-        <section className="dark-card overflow-hidden xl:sticky xl:top-10">
+        <section className="dark-card overflow-hidden xl:sticky xl:top-10 min-w-0">
           <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-300 flex items-center justify-center">
@@ -936,6 +973,7 @@ export default function AgentPage() {
             </p>
           </div>
         </section>
+        </div>
       </div>
     </div>
   );
