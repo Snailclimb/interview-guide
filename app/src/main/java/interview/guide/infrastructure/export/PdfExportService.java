@@ -89,7 +89,8 @@ public class PdfExportService {
     private String sanitizeText(String text) {
         if (text == null) return "";
         // 移除可能导致问题的特殊字符（如 emoji）
-        return text.replaceAll("[\\p{So}\\p{Cs}]", "").trim();
+        return text.replace('｜', '|')
+            .replaceAll("[\\p{So}\\p{Cs}]", "").trim();
     }
     
     /**
