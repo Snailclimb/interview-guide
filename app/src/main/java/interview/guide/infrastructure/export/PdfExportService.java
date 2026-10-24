@@ -7,14 +7,18 @@ import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfOutline;
 import com.itextpdf.kernel.pdf.PdfWriter;
 import com.itextpdf.kernel.pdf.navigation.PdfStringDestination;
+import com.itextpdf.layout.borders.Border;
+import com.itextpdf.layout.borders.SolidBorder;
 import com.itextpdf.layout.Document;
 import com.itextpdf.layout.element.Cell;
 import com.itextpdf.layout.element.Paragraph;
 import com.itextpdf.layout.element.Table;
+import com.itextpdf.layout.element.Text;
 import com.itextpdf.layout.font.FontProvider;
 import com.itextpdf.layout.font.selectorstrategy.BestMatchFontSelectorStrategy.BestMatchFontSelectorStrategyFactory;
 import com.itextpdf.layout.properties.TextAlignment;
 import com.itextpdf.layout.properties.UnitValue;
+import com.itextpdf.layout.properties.VerticalAlignment;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.interview.model.InterviewAnswerEntity;
@@ -45,6 +49,10 @@ public class PdfExportService {
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DeviceRgb HEADER_COLOR = new DeviceRgb(41, 128, 185);
     private static final DeviceRgb SECTION_COLOR = new DeviceRgb(52, 73, 94);
+    private static final DeviceRgb RESUME_INK = new DeviceRgb(31, 48, 65);
+    private static final DeviceRgb RESUME_MUTED = new DeviceRgb(92, 108, 122);
+    private static final DeviceRgb RESUME_ACCENT = new DeviceRgb(37, 99, 152);
+    private static final DeviceRgb RESUME_TINT = new DeviceRgb(239, 246, 252);
     private static final String QUESTIONS_DESTINATION = "interview-questions";
     
     private final ObjectMapper objectMapper;
@@ -184,20 +192,9 @@ public class PdfExportService {
         PdfDocument pdfDoc = new PdfDocument(writer);
         Document document = new Document(pdfDoc);
         configureFonts(document);
+        document.setMargins(38, 46, 42, 46);
 
-        document.add(new Paragraph(sanitizeText(title))
-            .setFontSize(24)
-            .setBold()
-            .setTextAlignment(TextAlignment.CENTER));
-
-        String contact = joinNonBlank(content.email(), content.phone(), content.location());
-        if (!contact.isBlank()) {
-            document.add(new Paragraph(sanitizeText(contact)).setTextAlignment(TextAlignment.CENTER));
-        }
-        if (content.targetPosition() != null && !content.targetPosition().isBlank()) {
-            document.add(new Paragraph(sanitizeText(content.targetPosition()))
-                .setTextAlignment(TextAlignment.CENTER));
-        }
+        document.add(createResumeHeader(content, title));
 
         addResumeSection(document, "专业技能", content.skills());
         addResumeSection(document, "工作经历", content.workExperience());
@@ -212,6 +209,56 @@ public class PdfExportService {
         return baos.toByteArray();
     }
 
+    private Table createResumeHeader(ResumeEditorContent content, String title) {
+        Table header = new Table(UnitValue.createPercentArray(new float[]{68, 32}))
+            .useAllAvailableWidth()
+            .setMarginBottom(8);
+
+        Cell identity = new Cell()
+            .setBorder(Border.NO_BORDER)
+            .setPadding(0)
+            .setVerticalAlignment(VerticalAlignment.BOTTOM);
+        identity.add(new Paragraph(sanitizeText(title))
+            .setFontSize(25)
+            .setBold()
+            .setFontColor(RESUME_INK)
+            .setMargin(0));
+        if (content.targetPosition() != null && !content.targetPosition().isBlank()) {
+            identity.add(new Paragraph(sanitizeText(content.targetPosition()))
+                .setFontSize(10.5f)
+                .setFontColor(RESUME_ACCENT)
+                .setMarginTop(3)
+                .setMarginBottom(0));
+        }
+        header.addCell(identity);
+
+        Cell contact = new Cell()
+            .setBorder(Border.NO_BORDER)
+            .setPadding(0)
+            .setTextAlignment(TextAlignment.RIGHT)
+            .setVerticalAlignment(VerticalAlignment.BOTTOM);
+        String contactText = joinNonBlank(content.email(), content.phone(), content.location());
+        if (!contactText.isBlank()) {
+            contact.add(new Paragraph(sanitizeText(contactText.replace("  |  ", "  ·  ")))
+                .setFontSize(9)
+                .setFontColor(RESUME_MUTED)
+                .setMargin(0)
+                .setFixedLeading(13));
+        }
+        header.addCell(contact);
+
+        Table rule = new Table(UnitValue.createPercentArray(new float[]{1}))
+            .useAllAvailableWidth()
+            .setMarginBottom(7);
+        rule.addCell(new Cell()
+            .setBorder(Border.NO_BORDER)
+            .setBackgroundColor(RESUME_ACCENT)
+            .setHeight(2.5f)
+            .setPadding(0));
+        header.addCell(new Cell(1, 2).add(rule).setBorder(Border.NO_BORDER).setPadding(0));
+        return header;
+    }
+
     private boolean isStructuredEmpty(ResumeEditorContent content) {
         return joinNonBlank(content.name(), content.email(), content.phone(), content.location(),
             content.targetPosition(), content.skills(), content.workExperience(), content.projects(),
@@ -222,8 +269,7 @@ public class PdfExportService {
         if (value == null || value.isBlank()) {
             return;
         }
-        document.add(new Paragraph("\n"));
-        document.add(createSectionTitle(title));
+        document.add(createResumeSectionTitle(title));
         addResumeLines(document, value);
     }
 
@@ -231,9 +277,61 @@ public class PdfExportService {
         for (String line : value.split("\\R")) {
             String text = line.trim();
             if (!text.isEmpty()) {
-                document.add(new Paragraph(sanitizeText(text)));
+                boolean bullet = isResumeBullet(text);
+                String body = bullet ? normalizeResumeBullet(text) : text;
+                Paragraph paragraph = new Paragraph()
+                    .setFontSize(10.2f)
+                    .setFontColor(RESUME_INK)
+                    .setFixedLeading(14.5f)
+                    .setMargin(0)
+                    .setMarginBottom(3);
+                if (bullet) {
+                    paragraph.add(new Text("· ").setFontColor(RESUME_ACCENT).setBold());
+                }
+                paragraph.add(sanitizeText(body));
+                document.add(paragraph);
             }
         }
+    }
+
+    private Table createResumeSectionTitle(String title) {
+        Table section = new Table(UnitValue.createPercentArray(new float[]{1, 99}))
+            .useAllAvailableWidth()
+            .setMarginTop(12)
+            .setMarginBottom(5);
+        section.addCell(new Cell()
+            .setBorder(Border.NO_BORDER)
+            .setBackgroundColor(RESUME_ACCENT)
+            .setHeight(17)
+            .setPadding(0));
+        section.addCell(new Cell()
+            .setBorder(Border.NO_BORDER)
+            .setBorderBottom(new SolidBorder(RESUME_ACCENT, 0.7f))
+            .setBackgroundColor(RESUME_TINT)
+            .setPaddingLeft(8)
+            .setPaddingTop(1)
+            .setPaddingBottom(3)
+            .add(new Paragraph(sanitizeText(title))
+                .setFontSize(11.5f)
+                .setBold()
+                .setFontColor(RESUME_ACCENT)
+                .setMargin(0)));
+        return section;
+    }
+
+    private boolean isResumeBullet(String value) {
+        return value.startsWith("·") || value.startsWith("•") || value.startsWith("-")
+            || value.startsWith("*") || value.matches("^\\d+[.)].*");
+    }
+
+    private String normalizeResumeBullet(String value) {
+        if (value.startsWith("·") || value.startsWith("•")) {
+            return value.substring(1).trim();
+        }
+        if (value.startsWith("- ") || value.startsWith("* ")) {
+            return value.substring(2).trim();
+        }
+        return value;
     }
 
     private String joinNonBlank(String... values) {
