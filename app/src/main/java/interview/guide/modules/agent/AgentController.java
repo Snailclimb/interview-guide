@@ -6,6 +6,7 @@ import interview.guide.modules.agent.model.AgentConversationResponse;
 import interview.guide.modules.agent.model.AgentConversationSummary;
 import interview.guide.modules.agent.model.AgentStreamEvent;
 import interview.guide.modules.agent.model.CreateAgentConversationRequest;
+import interview.guide.modules.agent.model.RenameAgentConversationRequest;
 import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.AgentMemoryService;
 import interview.guide.modules.agent.service.InterviewAgentService;
@@ -25,6 +26,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -54,46 +56,83 @@ public class AgentController {
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
     public Result<AgentConversationResponse> getConversation(
         @PathVariable String sessionId,
-        @RequestHeader(value = "X-User-Id", required = false) String memoryKey,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey,
         @RequestParam(value = "agentSessionId", required = false) String agentSessionId
     ) {
-        return Result.success(conversationService.getConversation(sessionId, agentSessionId));
+        String identity = conversationService.requireOwnerKey(ownerKey);
+        conversationService.assertAccess(sessionId, agentSessionId, identity);
+        return Result.success(conversationService.getConversation(sessionId, agentSessionId, identity));
     }
 
     @GetMapping("/api/agent/interview-sessions/{sessionId}/conversations")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
-    public Result<List<AgentConversationSummary>> listConversations(@PathVariable String sessionId) {
-        return Result.success(conversationService.listConversations(sessionId));
+    public Result<List<AgentConversationSummary>> listConversations(
+        @PathVariable String sessionId,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        String identity = conversationService.requireOwnerKey(ownerKey);
+        return Result.success(conversationService.listConversations(sessionId, identity));
     }
 
     @PostMapping("/api/agent/interview-sessions/{sessionId}/conversations")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
     public Result<AgentConversationSummary> createConversation(
         @PathVariable String sessionId,
-        @Valid @RequestBody(required = false) CreateAgentConversationRequest request
+        @Valid @RequestBody(required = false) CreateAgentConversationRequest request,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
     ) {
+        String identity = conversationService.requireOwnerKey(ownerKey);
         return Result.success(conversationService.createConversation(
-            sessionId, request == null ? null : request.title()
+            sessionId, request == null ? null : request.title(), identity
         ));
+    }
+
+    @PatchMapping("/api/agent/interview-sessions/{sessionId}/conversations/{agentSessionId}")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
+    public Result<AgentConversationSummary> renameConversation(
+        @PathVariable String sessionId,
+        @PathVariable String agentSessionId,
+        @Valid @RequestBody RenameAgentConversationRequest request,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        String identity = conversationService.requireOwnerKey(ownerKey);
+        return Result.success(conversationService.renameConversation(
+            sessionId, agentSessionId, request.title(), identity
+        ));
+    }
+
+    @DeleteMapping("/api/agent/interview-sessions/{sessionId}/conversations/{agentSessionId}")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
+    public Result<Void> archiveConversation(
+        @PathVariable String sessionId,
+        @PathVariable String agentSessionId,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        String identity = conversationService.requireOwnerKey(ownerKey);
+        conversationService.archiveConversation(sessionId, agentSessionId, identity);
+        return Result.success(null);
     }
 
     @PostMapping("/api/agent/interview-sessions/{sessionId}/cancel")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
     public Result<AgentConversationResponse> cancelRun(
         @PathVariable String sessionId,
-        @RequestParam(value = "agentSessionId", required = false) String agentSessionId
+        @RequestParam(value = "agentSessionId", required = false) String agentSessionId,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
     ) {
+        String identity = conversationService.requireOwnerKey(ownerKey);
+        conversationService.assertAccess(sessionId, agentSessionId, identity);
         agentService.cancel(agentSessionId == null || agentSessionId.isBlank() ? sessionId : agentSessionId);
-        conversationService.cancelRun(sessionId, agentSessionId);
-        return Result.success(conversationService.getConversation(sessionId, agentSessionId));
+        conversationService.cancelRun(sessionId, agentSessionId, identity);
+        return Result.success(conversationService.getConversation(sessionId, agentSessionId, identity));
     }
 
     @DeleteMapping("/api/agent/memory")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
     public Result<Void> clearMemory(
-        @RequestHeader(value = "X-User-Id", required = false) String memoryKey
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
     ) {
-        memoryService.clear(memoryKey);
+        memoryService.clear(conversationService.requireOwnerKey(ownerKey));
         return Result.success(null);
     }
 
@@ -106,11 +145,13 @@ public class AgentController {
     @RateLimit(dimension = RateLimit.Dimension.IP, count = 5)
     public Flux<ServerSentEvent<AgentStreamEvent>> streamMessage(
         @PathVariable String sessionId,
-        @Valid @RequestBody AgentMessageRequest request
+        @Valid @RequestBody AgentMessageRequest request,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
     ) {
+        String identity = conversationService.requireOwnerKey(ownerKey);
         log.info("收到面试教练 Agent 请求: sessionId={}, goal={}, messageLength={}",
             sessionId, request.goal(), request.message().length());
-        return agentService.stream(sessionId, request)
+        return agentService.stream(sessionId, request, identity)
             .map(event -> ServerSentEvent.<AgentStreamEvent>builder()
                 // Keep the transport event name distinct from the generic SSE error event.
                 .event("agent-" + event.type())

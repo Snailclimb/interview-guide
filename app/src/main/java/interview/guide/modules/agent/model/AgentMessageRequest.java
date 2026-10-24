@@ -44,4 +44,8 @@ public record AgentMessageRequest(
     ) {
         this(goal, message, history, providerId, memoryKey, null);
     }
+
+    public AgentMessageRequest withMemoryKey(String nextMemoryKey) {
+        return new AgentMessageRequest(goal, message, history, providerId, nextMemoryKey, agentSessionId);
+    }
 }

@@ -35,12 +35,14 @@ export function getRetryableRequest(conversation: AgentConversationResponse): Ag
     .find((message) => message.role === 'user' && message.content.trim().length > 0);
   if (!lastUserMessage) return null;
 
-  return {
+  const request: AgentRunRequest = {
     goal: isAgentGoal(conversation.goal) ? conversation.goal : 'review',
     message: lastUserMessage.content,
     providerId: conversation.providerId || undefined,
-    agentSessionId: conversation.agentSessionId || undefined,
   };
+  return conversation.agentSessionId
+    ? { ...request, agentSessionId: conversation.agentSessionId }
+    : request;
 }
 
 /**

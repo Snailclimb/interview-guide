@@ -371,6 +371,78 @@ class AgentConversationServiceTest {
     }
 
     @Test
+    @DisplayName("不同身份不能读取或修改 Agent 对话线程")
+    void isolatesConversationByOwnerKey() {
+        AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+            .id(20L)
+            .interviewSessionId("interview-1")
+            .agentSessionId("thread-owner")
+            .ownerKey("browser-a")
+            .memoryKey("browser-a")
+            .title("我的线程")
+            .runStatus(AgentRunStatus.IDLE)
+            .build();
+        when(sessionRepository.findByAgentSessionId("thread-owner")).thenReturn(Optional.of(session));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            service.assertAccess("interview-1", "thread-owner", "browser-b")
+        ).isInstanceOf(interview.guide.common.exception.BusinessException.class)
+            .hasMessage("无权访问该 Agent 会话");
+
+        when(sessionRepository.findByInterviewSessionIdOrderByUpdatedAtDesc("interview-1"))
+            .thenReturn(List.of(session));
+        assertThat(service.listConversations("interview-1", "browser-b")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("会话名称修改会保留线程 ID 和归属身份")
+    void renamesOwnedConversation() {
+        AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+            .id(21L)
+            .interviewSessionId("interview-1")
+            .agentSessionId("thread-owner")
+            .ownerKey("browser-a")
+            .title("旧名称")
+            .runStatus(AgentRunStatus.IDLE)
+            .build();
+        when(sessionRepository.findByAgentSessionId("thread-owner")).thenReturn(Optional.of(session));
+        when(sessionRepository.findByAgentSessionIdForUpdate("thread-owner"))
+            .thenReturn(Optional.of(session));
+        when(sessionRepository.save(any(AgentChatSessionEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AgentConversationSummary renamed = service.renameConversation(
+            "interview-1", "thread-owner", "新的复盘线程", "browser-a"
+        );
+
+        assertThat(renamed.agentSessionId()).isEqualTo("thread-owner");
+        assertThat(renamed.title()).isEqualTo("新的复盘线程");
+        assertThat(session.getOwnerKey()).isEqualTo("browser-a");
+    }
+
+    @Test
+    @DisplayName("归档会话只隐藏列表，不删除已有消息")
+    void archivesOwnedConversationWithoutDeletingData() {
+        AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+            .id(22L)
+            .interviewSessionId("interview-1")
+            .agentSessionId("thread-archive")
+            .ownerKey("browser-a")
+            .title("待归档")
+            .runStatus(AgentRunStatus.COMPLETED)
+            .build();
+        when(sessionRepository.findByAgentSessionId("thread-archive")).thenReturn(Optional.of(session));
+        when(sessionRepository.findByAgentSessionIdForUpdate("thread-archive"))
+            .thenReturn(Optional.of(session));
+        when(sessionRepository.save(any(AgentChatSessionEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.archiveConversation("interview-1", "thread-archive", "browser-a");
+
+        assertThat(session.isArchived()).isTrue();
+    }
+
+    @Test
     @DisplayName("按 Agent 线程 ID 读取时不会回退到另一份面试对话")
     void readsConversationByExplicitThreadId() {
         AgentChatSessionEntity session = AgentChatSessionEntity.builder()
