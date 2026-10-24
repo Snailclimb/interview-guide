@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FileText, Loader2, MessageSquare, Plus, RefreshCw } from 'lucide-react';
+import { Archive, FileText, Loader2, MessageSquare, Pencil, Plus, RefreshCw } from 'lucide-react';
 import { agentApi } from '../api/agent';
 import { interviewApi, type TextSessionMeta } from '../api/interview';
 import type { AgentConversationSummary } from '../types/agent';
@@ -12,6 +12,7 @@ interface AgentSessionListProps {
   selectedAgentSessionId?: string | null;
   onSelectAgentConversation?: (agentSessionId: string) => void;
   onCreateAgentConversation?: () => void;
+  onClearAgentConversation?: () => void;
 }
 
 function formatSessionDate(value: string) {
@@ -51,6 +52,7 @@ export default function AgentSessionList({
   selectedAgentSessionId = null,
   onSelectAgentConversation,
   onCreateAgentConversation,
+  onClearAgentConversation,
 }: AgentSessionListProps) {
   const [sessions, setSessions] = useState<TextSessionMeta[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,6 +103,39 @@ export default function AgentSessionList({
       cancelled = true;
     };
   }, [selectedAgentSessionId, selectedSessionId]);
+
+  const renameConversation = async (conversation: AgentConversationSummary) => {
+    const currentTitle = conversation.title?.trim() || '新 Agent 对话';
+    const nextTitle = window.prompt('请输入 Agent 会话名称', currentTitle)?.trim();
+    if (!nextTitle || nextTitle === currentTitle) return;
+    try {
+      const updated = await agentApi.renameConversation(
+        conversation.interviewSessionId,
+        conversation.agentSessionId,
+        nextTitle,
+      );
+      setConversations((current) => current.map((item) => (
+        item.agentSessionId === updated.agentSessionId ? updated : item
+      )));
+    } catch {
+      window.alert('Agent 会话名称修改失败，请稍后重试');
+    }
+  };
+
+  const archiveConversation = async (conversation: AgentConversationSummary) => {
+    if (!window.confirm(`确定归档“${conversation.title?.trim() || '新 Agent 对话'}”吗？归档后不会删除历史数据。`)) return;
+    try {
+      await agentApi.archiveConversation(conversation.interviewSessionId, conversation.agentSessionId);
+      setConversations((current) => current.filter((item) => item.agentSessionId !== conversation.agentSessionId));
+      if (conversation.agentSessionId === selectedAgentSessionId) {
+        const next = conversations.find((item) => item.agentSessionId !== conversation.agentSessionId);
+        if (next) onSelectAgentConversation?.(next.agentSessionId);
+        else onClearAgentConversation?.();
+      }
+    } catch {
+      window.alert('Agent 会话归档失败，请稍后重试');
+    }
+  };
 
   return (
     <aside className="dark-card p-4 xl:sticky xl:top-6">
@@ -241,6 +276,46 @@ export default function AgentSessionList({
                         {conversation.title?.trim() || '新 Agent 对话'}
                       </p>
                       {running && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />}
+                      <span
+                        role="button"
+                        tabIndex={disabled ? -1 : 0}
+                        aria-label={`重命名 ${conversation.title || 'Agent 对话'}`}
+                        title="重命名对话"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (!disabled) void renameConversation(conversation);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            if (!disabled) void renameConversation(conversation);
+                          }
+                        }}
+                        className="ml-auto p-0.5 rounded text-slate-400 hover:text-primary-500 shrink-0"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </span>
+                      <span
+                        role="button"
+                        tabIndex={disabled ? -1 : 0}
+                        aria-label={`归档 ${conversation.title || 'Agent 对话'}`}
+                        title="归档对话"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (!disabled) void archiveConversation(conversation);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            if (!disabled) void archiveConversation(conversation);
+                          }
+                        }}
+                        className="p-0.5 rounded text-slate-400 hover:text-rose-500 shrink-0"
+                      >
+                        <Archive className="w-3 h-3" />
+                      </span>
                     </div>
                     <p className="text-[10px] dark-text-muted mt-1 pl-5">
                       {conversation.runStatus === 'COMPLETED' ? '已完成' : running ? '执行中' : conversation.runStatus === 'FAILED' ? '执行失败' : '待执行'}

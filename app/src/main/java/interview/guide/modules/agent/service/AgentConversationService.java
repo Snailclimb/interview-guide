@@ -9,6 +9,8 @@ import interview.guide.modules.agent.model.AgentSource;
 import interview.guide.modules.agent.model.AgentRunStatus;
 import interview.guide.modules.agent.repository.AgentChatMessageRepository;
 import interview.guide.modules.agent.repository.AgentChatSessionRepository;
+import interview.guide.common.exception.BusinessException;
+import interview.guide.common.exception.ErrorCode;
 import jakarta.transaction.Transactional;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,6 +38,7 @@ public class AgentConversationService {
     private static final int MAX_PERSISTED_HISTORY_MESSAGES = 64;
     private static final int STALE_RUN_MINUTES = 15;
     private static final int MAX_RUN_SOURCES_JSON_CHARS = 12_000;
+    private static final int MAX_OWNER_KEY_LENGTH = 64;
 
     private final AgentChatSessionRepository sessionRepository;
     private final AgentChatMessageRepository messageRepository;
@@ -71,13 +74,20 @@ public class AgentConversationService {
         String userContent,
         String memoryKey
     ) {
+        String ownerKey = normalizeOwnerKey(memoryKey, false);
+        assertAccess(interviewSessionId, agentSessionId, ownerKey);
         AgentChatSessionEntity session = findSessionForUpdate(interviewSessionId, agentSessionId)
+            .filter(candidate -> ownerKey == null || isOwnedBy(candidate, ownerKey))
             .orElseGet(() -> AgentChatSessionEntity.builder()
                 .interviewSessionId(interviewSessionId)
                 .agentSessionId(UUID.randomUUID().toString())
                 .title("新 Agent 对话")
+                .ownerKey(ownerKey)
                 .build());
         ensureSessionIdentity(session, interviewSessionId);
+        if (ownerKey != null) {
+            session.setOwnerKey(ownerKey);
+        }
         recoverStaleRun(session);
         if (session.getRunStatus() == AgentRunStatus.RUNNING) {
             throw new AgentTaskBusyException();
@@ -151,20 +161,97 @@ public class AgentConversationService {
 
     @Transactional
     public AgentConversationSummary createConversation(String interviewSessionId, String title) {
+        return createConversation(interviewSessionId, title, null);
+    }
+
+    @Transactional
+    public AgentConversationSummary createConversation(
+        String interviewSessionId, String title, String ownerKey
+    ) {
+        String normalizedOwnerKey = normalizeOwnerKey(ownerKey, false);
         String normalizedTitle = title == null || title.isBlank() ? "新 Agent 对话" : truncate(title.trim(), 120);
         AgentChatSessionEntity session = AgentChatSessionEntity.builder()
             .interviewSessionId(interviewSessionId)
             .agentSessionId(UUID.randomUUID().toString())
             .title(normalizedTitle)
+            .ownerKey(normalizedOwnerKey)
+            .memoryKey(normalizedOwnerKey)
             .build();
         return toSummary(sessionRepository.save(session));
     }
 
     @Transactional
     public List<AgentConversationSummary> listConversations(String interviewSessionId) {
+        return listConversations(interviewSessionId, null);
+    }
+
+    @Transactional
+    public List<AgentConversationSummary> listConversations(String interviewSessionId, String ownerKey) {
+        String normalizedOwnerKey = normalizeOwnerKey(ownerKey, false);
         return sessionRepository.findByInterviewSessionIdOrderByUpdatedAtDesc(interviewSessionId).stream()
+            .filter(session -> !session.isArchived())
+            .filter(session -> normalizedOwnerKey == null || isOwnedBy(session, normalizedOwnerKey))
             .map(this::toSummary)
             .toList();
+    }
+
+    @Transactional
+    public AgentConversationSummary renameConversation(
+        String interviewSessionId, String agentSessionId, String title, String ownerKey
+    ) {
+        String normalizedOwnerKey = normalizeOwnerKey(ownerKey, true);
+        assertAccess(interviewSessionId, agentSessionId, normalizedOwnerKey);
+        AgentChatSessionEntity session = findSessionForUpdate(interviewSessionId, agentSessionId)
+            .filter(candidate -> isOwnedBy(candidate, normalizedOwnerKey))
+            .orElseThrow(this::accessDenied);
+        String normalizedTitle = title == null ? "" : title.trim();
+        if (normalizedTitle.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "Agent 会话名称不能为空");
+        }
+        session.setTitle(truncate(normalizedTitle, 120));
+        return toSummary(sessionRepository.save(session));
+    }
+
+    @Transactional
+    public void archiveConversation(
+        String interviewSessionId, String agentSessionId, String ownerKey
+    ) {
+        String normalizedOwnerKey = normalizeOwnerKey(ownerKey, true);
+        assertAccess(interviewSessionId, agentSessionId, normalizedOwnerKey);
+        AgentChatSessionEntity session = findSessionForUpdate(interviewSessionId, agentSessionId)
+            .filter(candidate -> isOwnedBy(candidate, normalizedOwnerKey))
+            .orElseThrow(this::accessDenied);
+        if (session.getRunStatus() == AgentRunStatus.RUNNING) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "Agent 正在执行，完成或取消后才能归档");
+        }
+        session.setArchived(true);
+        sessionRepository.save(session);
+    }
+
+    /** API 层在读取报告或开始流式任务前调用，避免只凭 sessionId 越权读取 Agent 上下文。 */
+    @Transactional
+    public void assertAccess(String interviewSessionId, String agentSessionId, String ownerKey) {
+        String normalizedOwnerKey = normalizeOwnerKey(ownerKey, false);
+        if (normalizedOwnerKey == null) {
+            return;
+        }
+        Optional<AgentChatSessionEntity> session = findRawSession(interviewSessionId, agentSessionId);
+        if (agentSessionId != null && !agentSessionId.isBlank() && session.isEmpty()) {
+            throw accessDenied();
+        }
+        // 未指定线程时允许旧的无 owner 线程自然迁移：后续读取会返回空会话，
+        // 前端随后创建当前身份的新线程；指定了 agentSessionId 则必须严格校验。
+        if (agentSessionId != null && !agentSessionId.isBlank()) {
+            session.ifPresent(candidate -> {
+                if (!isOwnedBy(candidate, normalizedOwnerKey)) {
+                    throw accessDenied();
+                }
+            });
+        }
+    }
+
+    public String requireOwnerKey(String ownerKey) {
+        return normalizeOwnerKey(ownerKey, true);
     }
 
     @Transactional
@@ -209,7 +296,14 @@ public class AgentConversationService {
 
     @Transactional
     public boolean cancelRun(String interviewSessionId, String agentSessionId) {
+        return cancelRun(interviewSessionId, agentSessionId, null);
+    }
+
+    @Transactional
+    public boolean cancelRun(String interviewSessionId, String agentSessionId, String ownerKey) {
+        String normalizedOwnerKey = normalizeOwnerKey(ownerKey, false);
         AgentChatSessionEntity session = findSessionForUpdate(interviewSessionId, agentSessionId)
+            .filter(candidate -> normalizedOwnerKey == null || isOwnedBy(candidate, normalizedOwnerKey))
             .orElse(null);
         if (session == null || session.getRunStatus() != AgentRunStatus.RUNNING) {
             return false;
@@ -338,7 +432,16 @@ public class AgentConversationService {
 
     @Transactional
     public AgentConversationResponse getConversation(String interviewSessionId, String agentSessionId) {
+        return getConversation(interviewSessionId, agentSessionId, null);
+    }
+
+    @Transactional
+    public AgentConversationResponse getConversation(
+        String interviewSessionId, String agentSessionId, String ownerKey
+    ) {
+        String normalizedOwnerKey = normalizeOwnerKey(ownerKey, false);
         AgentChatSessionEntity session = findSession(interviewSessionId, agentSessionId)
+            .filter(candidate -> normalizedOwnerKey == null || isOwnedBy(candidate, normalizedOwnerKey))
             .orElse(null);
         if (session == null) {
             return new AgentConversationResponse(
@@ -396,7 +499,13 @@ public class AgentConversationService {
     }
 
     public List<AgentHistoryMessage> loadHistory(String interviewSessionId, String agentSessionId) {
-        AgentConversationResponse conversation = getConversation(interviewSessionId, agentSessionId);
+        return loadHistory(interviewSessionId, agentSessionId, null);
+    }
+
+    public List<AgentHistoryMessage> loadHistory(
+        String interviewSessionId, String agentSessionId, String ownerKey
+    ) {
+        AgentConversationResponse conversation = getConversation(interviewSessionId, agentSessionId, ownerKey);
         List<AgentHistoryMessage> messages = conversation.messages();
         if (conversation.runStatus() != AgentRunStatus.FAILED
             && conversation.runStatus() != AgentRunStatus.CANCELLED) {
@@ -471,6 +580,66 @@ public class AgentConversationService {
         Optional<AgentChatSessionEntity> legacy = sessionRepository
             .findByInterviewSessionId(interviewSessionId);
         return legacy == null ? Optional.empty() : legacy;
+    }
+
+    private Optional<AgentChatSessionEntity> findRawSession(
+        String interviewSessionId, String agentSessionId
+    ) {
+        if (agentSessionId != null && !agentSessionId.isBlank()) {
+            return sessionRepository.findByAgentSessionId(agentSessionId)
+                .filter(session -> interviewSessionId.equals(session.getInterviewSessionId()));
+        }
+        Optional<AgentChatSessionEntity> oldest = sessionRepository
+            .findFirstByInterviewSessionIdOrderByCreatedAtAsc(interviewSessionId);
+        if (oldest != null && oldest.isPresent()) {
+            return oldest;
+        }
+        Optional<AgentChatSessionEntity> legacy = sessionRepository
+            .findByInterviewSessionId(interviewSessionId);
+        return legacy == null ? Optional.empty() : legacy;
+    }
+
+    private boolean isOwnedBy(AgentChatSessionEntity session, String ownerKey) {
+        if (session == null || ownerKey == null || ownerKey.isBlank()) {
+            return false;
+        }
+        if (ownerKey.equals(session.getOwnerKey())) {
+            return true;
+        }
+        // 兼容迁移前已存在、但 memory_key 与当前浏览器身份一致的旧线程。
+        if ((session.getOwnerKey() == null || session.getOwnerKey().isBlank())
+            && ownerKey.equals(session.getMemoryKey())) {
+            session.setOwnerKey(ownerKey);
+            sessionRepository.save(session);
+            return true;
+        }
+        // 迁移前由服务端内部创建且没有 memory_key 的旧线程，首次带身份访问时完成归属迁移。
+        if ((session.getOwnerKey() == null || session.getOwnerKey().isBlank())
+            && (session.getMemoryKey() == null || session.getMemoryKey().isBlank())) {
+            session.setOwnerKey(ownerKey);
+            session.setMemoryKey(ownerKey);
+            sessionRepository.save(session);
+            return true;
+        }
+        return false;
+    }
+
+    private String normalizeOwnerKey(String ownerKey, boolean required) {
+        String normalized = ownerKey == null ? "" : ownerKey.trim();
+        if (normalized.isBlank()) {
+            if (required) {
+                throw new BusinessException(ErrorCode.UNAUTHORIZED, "Agent 身份已失效，请刷新页面后重试");
+            }
+            return null;
+        }
+        if (normalized.length() > MAX_OWNER_KEY_LENGTH) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "Agent 身份标识不合法");
+        }
+        return normalized;
+    }
+
+    private BusinessException accessDenied() {
+        return new BusinessException(ErrorCode.FORBIDDEN, "无权访问该 Agent 会话");
     }
 
     private Optional<AgentChatSessionEntity> findSessionForUpdate(

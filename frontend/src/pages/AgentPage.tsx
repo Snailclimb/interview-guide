@@ -458,6 +458,10 @@ export default function AgentPage() {
       setLoopPlan(event.content ?? '');
       return;
     }
+    if (event.type === 'loop' && event.status === 'completed' && event.message) {
+      setLoopPlan((current) => `${current}${current ? '\n\n' : ''}执行观察：${event.message}`);
+      return;
+    }
     if (event.type !== 'step' || !event.step || !event.status) return;
     setSteps((current) => {
       const stepIndex = current.findIndex((step) => step.id === event.step);
@@ -662,6 +666,12 @@ export default function AgentPage() {
     setSearchParams({ sessionId, agentSessionId: nextAgentSessionId });
   };
 
+  const clearAgentConversation = () => {
+    if (!sessionId) return;
+    rememberAgentThreadId(null);
+    setSearchParams({ sessionId });
+  };
+
   const createAgentConversation = () => {
     if (!sessionId || runStatus === 'running') return;
     void agentApi.createConversation(sessionId)
@@ -749,6 +759,7 @@ export default function AgentPage() {
           selectedAgentSessionId={agentSessionId}
           onSelectAgentConversation={selectAgentConversation}
           onCreateAgentConversation={createAgentConversation}
+          onClearAgentConversation={clearAgentConversation}
         />
 
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)] gap-6 items-start min-w-0">

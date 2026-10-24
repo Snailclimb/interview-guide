@@ -193,6 +193,12 @@ if ([string]::IsNullOrWhiteSpace($targetSessionId)) {
         Assert-Condition ($null -ne $result.Json.data.messages) 'Agent messages is null'
     }
 
+    Add-TestResult 'Agent rejects missing identity header' {
+        $result = Invoke-JsonApi -Path "/api/agent/interview-sessions/$escapedSessionId/conversation"
+        Assert-Condition ($result.Response.StatusCode -eq 200) "missing identity HTTP $($result.Response.StatusCode)"
+        Assert-Condition ($null -ne $result.Json -and $result.Json.code -eq 401) "missing identity was not rejected: $($result.Response.Body)"
+    }
+
     Add-TestResult 'Agent conversation thread list and creation' {
         $list = Invoke-JsonApi -Path "/api/agent/interview-sessions/$escapedSessionId/conversations" -Headers $agentHeaders
         Assert-ResultSuccess $list 'Agent conversation thread list'
@@ -220,6 +226,30 @@ if ([string]::IsNullOrWhiteSpace($targetSessionId)) {
         Assert-Condition ([string]$threadA.Json.data.agentSessionId -eq $script:agentSessionA) 'Agent thread A returned the wrong ID'
         Assert-Condition ([string]$threadB.Json.data.agentSessionId -eq $script:agentSessionB) 'Agent thread B returned the wrong ID'
         Assert-Condition (@($threadA.Json.data.messages).Count -eq 0 -or @($threadB.Json.data.messages).Count -eq 0 -or [string]$threadA.Json.data.agentSessionId -ne [string]$threadB.Json.data.agentSessionId) 'Agent thread IDs collapsed into one conversation'
+    }
+
+    Add-TestResult 'Agent conversation rejects another identity' {
+        $otherHeaders = @{ 'X-User-Id' = "$UserId-other" }
+        $result = Invoke-JsonApi -Path "/api/agent/interview-sessions/$escapedSessionId/conversation?agentSessionId=$([Uri]::EscapeDataString($script:agentSessionA))" -Headers $otherHeaders
+        Assert-Condition ($result.Response.StatusCode -eq 200) "cross-owner HTTP $($result.Response.StatusCode)"
+        Assert-Condition ($null -ne $result.Json -and $result.Json.code -eq 403) "cross-owner access was not rejected: $($result.Response.Body)"
+    }
+
+    Add-TestResult 'Agent conversation rename persists' {
+        $result = Invoke-JsonApi -Path "/api/agent/interview-sessions/$escapedSessionId/conversations/$([Uri]::EscapeDataString($script:agentSessionA))" -Method PATCH -Body @{ title = '验收线程 A（已命名）' } -Headers $agentHeaders
+        Assert-ResultSuccess $result 'Agent conversation rename'
+        Assert-Condition ([string]$result.Json.data.title -eq '验收线程 A（已命名）') 'Agent conversation rename did not persist'
+    }
+
+    Add-TestResult 'Agent conversation archive is recoverable' {
+        $created = Invoke-JsonApi -Path "/api/agent/interview-sessions/$escapedSessionId/conversations" -Method POST -Body @{ title = '验收归档线程' } -Headers $agentHeaders
+        Assert-ResultSuccess $created 'create archive test conversation'
+        $archiveId = [string]$created.Json.data.agentSessionId
+        $archived = Invoke-JsonApi -Path "/api/agent/interview-sessions/$escapedSessionId/conversations/$([Uri]::EscapeDataString($archiveId))" -Method DELETE -Headers $agentHeaders
+        Assert-ResultSuccess $archived 'archive Agent conversation'
+        $listed = Invoke-JsonApi -Path "/api/agent/interview-sessions/$escapedSessionId/conversations" -Headers $agentHeaders
+        Assert-ResultSuccess $listed 'Agent conversation list after archive'
+        Assert-Condition (@($listed.Json.data | Where-Object { [string]$_.agentSessionId -eq $archiveId }).Count -eq 0) 'archived Agent conversation remained visible'
     }
 
     Add-TestResult 'DELETE Agent memory is idempotent' {
@@ -309,6 +339,7 @@ if ([string]::IsNullOrWhiteSpace($targetSessionId)) {
                 Assert-Condition ($result.Body -match 'event:\s*agent-step') 'Agent stream missing step events'
                 Assert-Condition ($result.Body -match 'event:\s*agent-plan') 'Agent stream missing bounded loop plan event'
                 Assert-Condition ($result.Body -match '"step":"loop"') 'Agent stream missing bounded loop lifecycle events'
+                Assert-Condition ($result.Body -match 'event:\s*agent-loop') 'Agent stream missing explicit loop iteration events'
                 Assert-Condition ($result.Body -match 'event:\s*agent-delta') 'Agent stream missing delta events'
                 Assert-Condition ($result.Body -notmatch 'event:\s*agent-error') 'Agent stream returned an error event'
                 Assert-Condition ($result.Body.Length -gt 200) 'Agent stream response is unexpectedly short'

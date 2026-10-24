@@ -52,7 +52,7 @@ export interface AgentSource {
 }
 
 export interface AgentStreamEvent {
-  type: 'step' | 'plan' | 'delta' | 'sources' | 'done' | 'error';
+  type: 'step' | 'plan' | 'loop' | 'delta' | 'sources' | 'done' | 'error';
   step?: string;
   status?: AgentStepStatus;
   content?: string;

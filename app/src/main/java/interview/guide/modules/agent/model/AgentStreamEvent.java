@@ -41,4 +41,10 @@ public record AgentStreamEvent(
         return new AgentStreamEvent("sources", null, null, null, null,
             sources == null ? List.of() : List.copyOf(sources));
     }
+
+    public static AgentStreamEvent loop(int iteration, String status, String observation) {
+        return new AgentStreamEvent(
+            "loop", "loop-" + iteration, status, null, observation, List.of()
+        );
+    }
 }

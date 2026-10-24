@@ -42,6 +42,21 @@ export const agentApi = {
     );
   },
 
+  renameConversation(sessionId: string, agentSessionId: string, title: string): Promise<AgentConversationSummary> {
+    return request.patch<AgentConversationSummary>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversations/${encodeURIComponent(agentSessionId)}`,
+      { title },
+      { headers: agentHeaders() },
+    );
+  },
+
+  archiveConversation(sessionId: string, agentSessionId: string): Promise<void> {
+    return request.delete<void>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversations/${encodeURIComponent(agentSessionId)}`,
+      { headers: agentHeaders() },
+    );
+  },
+
   cancelRun(sessionId: string, agentSessionId?: string | null): Promise<AgentConversationResponse> {
     const query = agentSessionId ? `?agentSessionId=${encodeURIComponent(agentSessionId)}` : '';
     return request.post<AgentConversationResponse>(

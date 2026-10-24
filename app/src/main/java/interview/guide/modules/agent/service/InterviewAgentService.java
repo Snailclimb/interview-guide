@@ -122,6 +122,21 @@ public class InterviewAgentService {
      * 执行一次面试教练任务并以 SSE 事件流返回结果。
      */
     public Flux<AgentStreamEvent> stream(String sessionId, AgentMessageRequest request) {
+        return stream(sessionId, request, null);
+    }
+
+    /** API 调用必须带身份键；旧的内部测试/调用方仍可使用上面的兼容重载。 */
+    public Flux<AgentStreamEvent> stream(
+        String sessionId, AgentMessageRequest request, String ownerKey
+    ) {
+        if (ownerKey != null && !ownerKey.isBlank()) {
+            agentConversationService.assertAccess(sessionId, request.agentSessionId(), ownerKey);
+            request = request.withMemoryKey(ownerKey);
+        }
+        return streamInternal(sessionId, request);
+    }
+
+    private Flux<AgentStreamEvent> streamInternal(String sessionId, AgentMessageRequest request) {
         return Flux.concat(
             Flux.just(AgentStreamEvent.step("context", "running")),
             Flux.defer(() -> {
@@ -183,7 +198,7 @@ public class InterviewAgentService {
                         },
                         emitter::complete
                     );
-                }, FluxSink.OverflowStrategy.DROP);
+                }, FluxSink.OverflowStrategy.BUFFER);
             } catch (Throwable error) {
                 if (preparedAssistantMessageId != null) {
                     failPreparedMessage(preparedAssistantMessageId, error);
@@ -289,12 +304,22 @@ public class InterviewAgentService {
                 AgentStreamEvent.step("planning", "running")
             ),
             planFlux.flatMap(plan -> {
+                    AgentLoopEngine.LoopResult loopResult = agentLoopPlanner == null
+                        ? new AgentLoopEngine().execute(
+                            context, List.of("读取面试报告并确认当前目标")
+                        )
+                        : new AgentLoopEngine().execute(context, agentLoopPlanner.steps(plan));
+                    String loopTrace = loopResult.trace();
                     List<Message> history = buildModelHistory(historyMessages);
                     List<Message> compactHistory = buildModelHistory(AgentHistoryPolicy.normalize(
                         historyMessages, CONTEXT_RETRY_HISTORY_CHARS, CONTEXT_RETRY_MESSAGE_CHARS
                     ));
-                    PromptVariant normalPrompt = buildPromptVariant(context, request, message, history, plan, false);
-                    PromptVariant compactPrompt = buildPromptVariant(context, request, message, compactHistory, plan, true);
+                    PromptVariant normalPrompt = buildPromptVariant(
+                        context, request, message, history, plan, loopTrace, false
+                    );
+                    PromptVariant compactPrompt = buildPromptVariant(
+                        context, request, message, compactHistory, plan, loopTrace, true
+                    );
                     BiFunction<String, Boolean, Supplier<Flux<String>>> modelStreamFactory =
                         (providerId, compacted) -> {
                             PromptVariant prompt = compacted ? compactPrompt : normalPrompt;
@@ -315,7 +340,14 @@ public class InterviewAgentService {
                         Flux.just(
                             AgentStreamEvent.plan(plan),
                             AgentStreamEvent.step("planning", "completed"),
-                            AgentStreamEvent.step("loop", "running"),
+                            AgentStreamEvent.step("loop", "running")
+                        ),
+                        Flux.fromIterable(loopResult.iterations())
+                            .concatMap(iteration -> Flux.just(
+                                AgentStreamEvent.loop(iteration.iteration(), "running", iteration.action()),
+                                AgentStreamEvent.loop(iteration.iteration(), "completed", iteration.observation())
+                            )),
+                        Flux.just(
                             AgentStreamEvent.step("insight", "running"),
                             AgentStreamEvent.step("retrieval", "running"),
                             AgentStreamEvent.step("retrieval", "completed"),
@@ -779,6 +811,7 @@ public class InterviewAgentService {
         String message,
         List<Message> history,
         String plan,
+        String loopTrace,
         boolean compacted
     ) {
         String report = compacted
@@ -805,7 +838,9 @@ public class InterviewAgentService {
             "goal", promptSanitizer.sanitize(request.goal()),
             "question", promptSanitizer.wrapWithDelimiters("user-message", message),
             "rag", promptSanitizer.wrapWithDelimiters("rag-context", rag),
-            "plan", promptSanitizer.wrapWithStableDelimiters("agent-loop-plan", plan)
+            "plan", promptSanitizer.wrapWithStableDelimiters(
+                "agent-loop-plan", plan + "\n\n已完成的 Loop 观察：\n" + loopTrace
+            )
         );
         String systemPrompt = systemPromptTemplate.render()
             + PromptSecurityConstants.ANTI_INJECTION_INSTRUCTION

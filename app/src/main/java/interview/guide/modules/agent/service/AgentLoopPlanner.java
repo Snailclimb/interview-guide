@@ -15,8 +15,9 @@ import org.springframework.stereotype.Service;
 /**
  * 受控 Agent Loop 的规划阶段。
  *
- * <p>规划器只产出短小的可执行步骤摘要，不展示隐藏推理；最终回答仍由已有的
- * SkillsTool、ToolCallingAdvisor 和流式回答阶段完成。规划失败时自动回退，
+ * <p>规划器只产出短小的可执行步骤摘要，不展示隐藏推理；步骤由显式的
+ * {@link AgentLoopEngine} 有限循环执行，最终回答仍由已有的 SkillsTool、ToolCallingAdvisor
+ * 和流式回答阶段完成。规划失败时自动回退，
  * 不会让 Agent 因为新增阶段不可用而整体不可用。</p>
  */
 @Slf4j

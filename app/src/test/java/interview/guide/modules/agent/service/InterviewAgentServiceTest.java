@@ -105,6 +105,7 @@ class InterviewAgentServiceTest {
         assertThat(events).anySatisfy(event -> assertThat(event.status()).isEqualTo("waiting"));
         assertThat(events).anySatisfy(event -> assertThat(event.content()).isEqualTo("备用模型回答"));
         assertThat(events).anySatisfy(event -> assertThat(event.type()).isEqualTo("done"));
+        assertThat(events).anySatisfy(event -> assertThat(event.type()).isEqualTo("loop"));
         verify(conversationService).completeMessage(10L, "备用模型回答");
     }
 
