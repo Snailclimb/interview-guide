@@ -34,13 +34,19 @@ public class AgentRunRecoveryService {
             .stream()
             .limit(16)
             .forEach(session -> {
-                if (agentService.isLocallyActive(session.getInterviewSessionId())) {
+                if (agentService.isLocallyActive(
+                    session.getInterviewSessionId(), session.getAgentSessionId()
+                )) {
                     return;
                 }
                 try {
-                    AgentConversationService.RecoveredRun recovered = conversationService.claimRecoverableRun(
-                        session.getInterviewSessionId(), staleBefore
-                    );
+                    AgentConversationService.RecoveredRun recovered = session.getAgentSessionId() == null
+                        ? conversationService.claimRecoverableRun(
+                            session.getInterviewSessionId(), staleBefore
+                        )
+                        : conversationService.claimRecoverableRun(
+                            session.getAgentSessionId(), session.getInterviewSessionId(), staleBefore
+                        );
                     if (recovered != null) {
                         log.info("接管应用重启遗留 Agent 任务: sessionId={}, oldRunId={}",
                             recovered.interviewSessionId(), session.getRunId());

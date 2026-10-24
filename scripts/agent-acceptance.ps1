@@ -5,8 +5,9 @@
 .DESCRIPTION
     Runs non-destructive API checks against a running environment. By default it
     does not call the LLM. Use -RunModelTests to run two real Agent stream calls.
-    The script never deletes interviews, renames an existing interview, uploads
-    files, or changes provider configuration.
+    It may create up to two reusable Agent conversation threads under the target
+    interview when the environment does not already have them. It never deletes
+    interviews, renames an existing interview, uploads files, or changes provider configuration.
 #>
 
 [CmdletBinding()]
@@ -192,6 +193,35 @@ if ([string]::IsNullOrWhiteSpace($targetSessionId)) {
         Assert-Condition ($null -ne $result.Json.data.messages) 'Agent messages is null'
     }
 
+    Add-TestResult 'Agent conversation thread list and creation' {
+        $list = Invoke-JsonApi -Path "/api/agent/interview-sessions/$escapedSessionId/conversations" -Headers $agentHeaders
+        Assert-ResultSuccess $list 'Agent conversation thread list'
+        $script:agentConversations = @($list.Json.data)
+        Assert-Condition ($null -ne $list.Json.data) 'Agent conversation thread list is null'
+
+        while ($script:agentConversations.Count -lt 2) {
+            $letter = if ($script:agentConversations.Count -eq 0) { 'A' } else { 'B' }
+            $created = Invoke-JsonApi -Path "/api/agent/interview-sessions/$escapedSessionId/conversations" -Method POST -Body @{ title = "验收线程 $letter" } -Headers $agentHeaders
+            Assert-ResultSuccess $created "create Agent conversation $letter"
+            Assert-Condition (-not [string]::IsNullOrWhiteSpace([string]$created.Json.data.agentSessionId)) "create Agent conversation $letter missing agentSessionId"
+            $script:agentConversations += $created.Json.data
+        }
+
+        $script:agentSessionA = [string]$script:agentConversations[0].agentSessionId
+        $script:agentSessionB = [string]$script:agentConversations[1].agentSessionId
+        Assert-Condition ($script:agentSessionA -ne $script:agentSessionB) 'Agent conversation thread IDs are not unique'
+    }
+
+    Add-TestResult 'Agent conversation threads are isolated' {
+        $threadA = Invoke-JsonApi -Path "/api/agent/interview-sessions/$escapedSessionId/conversation?agentSessionId=$([Uri]::EscapeDataString($script:agentSessionA))" -Headers $agentHeaders
+        $threadB = Invoke-JsonApi -Path "/api/agent/interview-sessions/$escapedSessionId/conversation?agentSessionId=$([Uri]::EscapeDataString($script:agentSessionB))" -Headers $agentHeaders
+        Assert-ResultSuccess $threadA 'Agent thread A'
+        Assert-ResultSuccess $threadB 'Agent thread B'
+        Assert-Condition ([string]$threadA.Json.data.agentSessionId -eq $script:agentSessionA) 'Agent thread A returned the wrong ID'
+        Assert-Condition ([string]$threadB.Json.data.agentSessionId -eq $script:agentSessionB) 'Agent thread B returned the wrong ID'
+        Assert-Condition (@($threadA.Json.data.messages).Count -eq 0 -or @($threadB.Json.data.messages).Count -eq 0 -or [string]$threadA.Json.data.agentSessionId -ne [string]$threadB.Json.data.agentSessionId) 'Agent thread IDs collapsed into one conversation'
+    }
+
     Add-TestResult 'DELETE Agent memory is idempotent' {
         $result = Invoke-JsonApi -Path '/api/agent/memory' -Method DELETE -Headers $agentHeaders
         Assert-ResultSuccess $result 'Agent memory clear'
@@ -266,8 +296,8 @@ if ([string]::IsNullOrWhiteSpace($targetSessionId)) {
 
     if ($RunModelTests) {
         $modelPayloads = @(
-            @{ goal = 'review'; message = '请用不超过三句话总结本场面试最值得优先改进的方向，并使用 Markdown 列表。'; history = @(); providerId = ''; memoryKey = "$UserId-model-1" },
-            @{ goal = 'practice'; message = '请基于本场面试给出一个可立即执行的练习建议，回答保持简洁。'; history = @(); providerId = ''; memoryKey = "$UserId-model-2" }
+            @{ goal = 'review'; message = '请用不超过三句话总结本场面试最值得优先改进的方向，并使用 Markdown 列表。'; history = @(); providerId = ''; memoryKey = "$UserId-model-1"; agentSessionId = $script:agentSessionA },
+            @{ goal = 'practice'; message = '请基于本场面试给出一个可立即执行的练习建议，回答保持简洁。'; history = @(); providerId = ''; memoryKey = "$UserId-model-2"; agentSessionId = $script:agentSessionB }
         )
 
         for ($index = 0; $index -lt $modelPayloads.Count; $index++) {
@@ -277,14 +307,18 @@ if ([string]::IsNullOrWhiteSpace($targetSessionId)) {
                 Assert-Condition ($result.StatusCode -eq 200) "Agent stream HTTP $($result.StatusCode)"
                 # Invoke-WebRequest may normalize the optional SSE space after the colon.
                 Assert-Condition ($result.Body -match 'event:\s*agent-step') 'Agent stream missing step events'
+                Assert-Condition ($result.Body -match 'event:\s*agent-plan') 'Agent stream missing bounded loop plan event'
+                Assert-Condition ($result.Body -match '"step":"loop"') 'Agent stream missing bounded loop lifecycle events'
                 Assert-Condition ($result.Body -match 'event:\s*agent-delta') 'Agent stream missing delta events'
                 Assert-Condition ($result.Body -notmatch 'event:\s*agent-error') 'Agent stream returned an error event'
                 Assert-Condition ($result.Body.Length -gt 200) 'Agent stream response is unexpectedly short'
                 # Some reverse proxies normalize or omit the terminal marker while
                 # the persisted run is already complete. The durable state is the
                 # acceptance source of truth; the explicit done event is diagnostic.
-                $conversation = Invoke-JsonApi -Path "/api/agent/interview-sessions/$escapedSessionId/conversation" -Headers $agentHeaders
+                $threadId = [string]$payload.agentSessionId
+                $conversation = Invoke-JsonApi -Path "/api/agent/interview-sessions/$escapedSessionId/conversation?agentSessionId=$([Uri]::EscapeDataString($threadId))" -Headers $agentHeaders
                 Assert-ResultSuccess $conversation 'Agent conversation after real stream'
+                Assert-Condition ([string]$conversation.Json.data.agentSessionId -eq $threadId) 'Agent stream returned the wrong thread'
                 Assert-Condition ([string]$conversation.Json.data.runStatus -eq 'COMPLETED') "Agent run did not complete: $($conversation.Json.data.runStatus)"
                 Assert-Condition (@($conversation.Json.data.messages | Where-Object { $_.role -eq 'assistant' -and -not [string]::IsNullOrWhiteSpace([string]$_.content) }).Count -ge 1) 'Agent assistant response was not persisted'
                 if ($result.Body -notmatch 'event:\s*agent-done') {

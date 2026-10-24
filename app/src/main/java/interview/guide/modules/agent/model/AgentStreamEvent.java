@@ -25,6 +25,10 @@ public record AgentStreamEvent(
         return new AgentStreamEvent("delta", null, null, content, null, List.of());
     }
 
+    public static AgentStreamEvent plan(String content) {
+        return new AgentStreamEvent("plan", "loop", "completed", content, null, List.of());
+    }
+
     public static AgentStreamEvent done() {
         return new AgentStreamEvent("done", null, null, null, null, List.of());
     }

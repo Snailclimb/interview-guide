@@ -11,10 +11,13 @@ export interface AgentMessageRequest {
   history: AgentHistoryMessage[];
   providerId?: string;
   memoryKey?: string;
+  agentSessionId?: string;
 }
 
 export interface AgentConversationResponse {
   interviewSessionId: string;
+  agentSessionId?: string | null;
+  title?: string | null;
   goal?: AgentGoal | string | null;
   providerId?: string | null;
   runId?: string | null;
@@ -30,6 +33,15 @@ export interface AgentConversationResponse {
   messages: AgentHistoryMessage[];
 }
 
+export interface AgentConversationSummary {
+  agentSessionId: string;
+  interviewSessionId: string;
+  title?: string | null;
+  runStatus?: 'IDLE' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
 export type AgentStepStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
 
 export interface AgentSource {
@@ -40,7 +52,7 @@ export interface AgentSource {
 }
 
 export interface AgentStreamEvent {
-  type: 'step' | 'delta' | 'sources' | 'done' | 'error';
+  type: 'step' | 'plan' | 'delta' | 'sources' | 'done' | 'error';
   step?: string;
   status?: AgentStepStatus;
   content?: string;

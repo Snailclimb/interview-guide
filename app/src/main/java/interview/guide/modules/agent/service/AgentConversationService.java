@@ -3,6 +3,7 @@ package interview.guide.modules.agent.service;
 import interview.guide.modules.agent.model.AgentChatMessageEntity;
 import interview.guide.modules.agent.model.AgentChatSessionEntity;
 import interview.guide.modules.agent.model.AgentConversationResponse;
+import interview.guide.modules.agent.model.AgentConversationSummary;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
 import interview.guide.modules.agent.model.AgentSource;
 import interview.guide.modules.agent.model.AgentRunStatus;
@@ -11,6 +12,7 @@ import interview.guide.modules.agent.repository.AgentChatSessionRepository;
 import jakarta.transaction.Transactional;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -46,7 +48,7 @@ public class AgentConversationService {
         String providerId,
         String userContent
     ) {
-        return prepareMessage(interviewSessionId, goal, providerId, userContent, null);
+        return prepareMessage(interviewSessionId, null, goal, providerId, userContent, null);
     }
 
     @Transactional
@@ -57,11 +59,25 @@ public class AgentConversationService {
         String userContent,
         String memoryKey
     ) {
-        AgentChatSessionEntity session = sessionRepository.findByInterviewSessionIdForUpdate(interviewSessionId)
-            .orElseGet(() -> sessionRepository.findByInterviewSessionId(interviewSessionId)
-                .orElseGet(() -> AgentChatSessionEntity.builder()
-                    .interviewSessionId(interviewSessionId)
-                    .build()));
+        return prepareMessage(interviewSessionId, null, goal, providerId, userContent, memoryKey);
+    }
+
+    @Transactional
+    public PreparedMessage prepareMessage(
+        String interviewSessionId,
+        String agentSessionId,
+        String goal,
+        String providerId,
+        String userContent,
+        String memoryKey
+    ) {
+        AgentChatSessionEntity session = findSessionForUpdate(interviewSessionId, agentSessionId)
+            .orElseGet(() -> AgentChatSessionEntity.builder()
+                .interviewSessionId(interviewSessionId)
+                .agentSessionId(UUID.randomUUID().toString())
+                .title("新 Agent 对话")
+                .build());
+        ensureSessionIdentity(session, interviewSessionId);
         recoverStaleRun(session);
         if (session.getRunStatus() == AgentRunStatus.RUNNING) {
             throw new AgentTaskBusyException();
@@ -74,6 +90,10 @@ public class AgentConversationService {
         }
         if (providerId != null && !providerId.isBlank()) {
             session.setProviderId(providerId);
+        }
+        if (session.getTitle() == null || session.getTitle().isBlank()
+            || "新 Agent 对话".equals(session.getTitle())) {
+            session.setTitle(truncate(userContent, 40));
         }
         session.setRunId(runId);
         session.setRunStatus(AgentRunStatus.RUNNING);
@@ -108,7 +128,43 @@ public class AgentConversationService {
         assistantMessage = messageRepository.save(assistantMessage);
         session.setActiveMessageId(assistantMessage.getId());
         sessionRepository.save(session);
-        return new PreparedMessage(assistantMessage.getId(), session.getId(), runId);
+        return new PreparedMessage(assistantMessage.getId(), session.getId(), runId, session.getAgentSessionId());
+    }
+
+    /** 返回指定面试报告下的稳定 Agent 对话标识；旧调用方不传 ID 时复用默认线程。 */
+    @Transactional
+    public String resolveAgentSessionId(String interviewSessionId, String requestedAgentSessionId) {
+        return findSession(interviewSessionId, requestedAgentSessionId)
+            .map(session -> {
+                ensureSessionIdentity(session, interviewSessionId);
+                return session.getAgentSessionId();
+            })
+            .orElseGet(() -> {
+                AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+                    .interviewSessionId(interviewSessionId)
+                    .agentSessionId(UUID.randomUUID().toString())
+                    .title("新 Agent 对话")
+                    .build();
+                return sessionRepository.save(session).getAgentSessionId();
+            });
+    }
+
+    @Transactional
+    public AgentConversationSummary createConversation(String interviewSessionId, String title) {
+        String normalizedTitle = title == null || title.isBlank() ? "新 Agent 对话" : truncate(title.trim(), 120);
+        AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+            .interviewSessionId(interviewSessionId)
+            .agentSessionId(UUID.randomUUID().toString())
+            .title(normalizedTitle)
+            .build();
+        return toSummary(sessionRepository.save(session));
+    }
+
+    @Transactional
+    public List<AgentConversationSummary> listConversations(String interviewSessionId) {
+        return sessionRepository.findByInterviewSessionIdOrderByUpdatedAtDesc(interviewSessionId).stream()
+            .map(this::toSummary)
+            .toList();
     }
 
     @Transactional
@@ -148,8 +204,12 @@ public class AgentConversationService {
 
     @Transactional
     public boolean cancelRun(String interviewSessionId) {
-        AgentChatSessionEntity session = sessionRepository
-            .findByInterviewSessionIdForUpdate(interviewSessionId)
+        return cancelRun(interviewSessionId, null);
+    }
+
+    @Transactional
+    public boolean cancelRun(String interviewSessionId, String agentSessionId) {
+        AgentChatSessionEntity session = findSessionForUpdate(interviewSessionId, agentSessionId)
             .orElse(null);
         if (session == null || session.getRunStatus() != AgentRunStatus.RUNNING) {
             return false;
@@ -195,7 +255,12 @@ public class AgentConversationService {
      */
     @Transactional
     public boolean isRunActive(String interviewSessionId, String runId) {
-        return sessionRepository.findByInterviewSessionId(interviewSessionId)
+        return isRunActive(interviewSessionId, null, runId);
+    }
+
+    @Transactional
+    public boolean isRunActive(String interviewSessionId, String agentSessionId, String runId) {
+        return findSession(interviewSessionId, agentSessionId)
             .map(session -> session.getRunStatus() == AgentRunStatus.RUNNING
                 && runId != null
                 && runId.equals(session.getRunId()))
@@ -208,7 +273,14 @@ public class AgentConversationService {
      */
     @Transactional
     public RecoveredRun claimRecoverableRun(String interviewSessionId, LocalDateTime staleBefore) {
-        AgentChatSessionEntity session = sessionRepository.findByInterviewSessionIdForUpdate(interviewSessionId)
+        return claimRecoverableRun(null, interviewSessionId, staleBefore);
+    }
+
+    @Transactional
+    public RecoveredRun claimRecoverableRun(
+        String agentSessionId, String interviewSessionId, LocalDateTime staleBefore
+    ) {
+        AgentChatSessionEntity session = findSessionForUpdate(interviewSessionId, agentSessionId)
             .orElse(null);
         if (session == null
             || session.getRunStatus() != AgentRunStatus.RUNNING
@@ -249,6 +321,7 @@ public class AgentConversationService {
         sessionRepository.save(session);
         return new RecoveredRun(
             session.getInterviewSessionId(),
+            session.getAgentSessionId(),
             session.getGoal(),
             session.getProviderId(),
             session.getMemoryKey(),
@@ -260,16 +333,21 @@ public class AgentConversationService {
 
     @Transactional
     public AgentConversationResponse getConversation(String interviewSessionId) {
-        AgentChatSessionEntity session = sessionRepository.findByInterviewSessionId(interviewSessionId)
+        return getConversation(interviewSessionId, null);
+    }
+
+    @Transactional
+    public AgentConversationResponse getConversation(String interviewSessionId, String agentSessionId) {
+        AgentChatSessionEntity session = findSession(interviewSessionId, agentSessionId)
             .orElse(null);
         if (session == null) {
             return new AgentConversationResponse(
-                interviewSessionId, null, null, null, AgentRunStatus.IDLE,
+                interviewSessionId, null, null, null, null, null, AgentRunStatus.IDLE,
                 null, null, null, null, null, null, null, List.of(), List.of()
             );
         }
         if (isStaleRun(session)) {
-            session = sessionRepository.findByInterviewSessionIdForUpdate(interviewSessionId)
+            session = findSessionForUpdate(interviewSessionId, agentSessionId)
                 .orElse(session);
             recoverStaleRun(session);
         }
@@ -295,6 +373,8 @@ public class AgentConversationService {
             : null;
         return new AgentConversationResponse(
             interviewSessionId,
+            session.getAgentSessionId(),
+            session.getTitle(),
             session.getGoal(),
             session.getProviderId(),
             session.getRunId(),
@@ -312,7 +392,11 @@ public class AgentConversationService {
     }
 
     public List<AgentHistoryMessage> loadHistory(String interviewSessionId) {
-        AgentConversationResponse conversation = getConversation(interviewSessionId);
+        return loadHistory(interviewSessionId, null);
+    }
+
+    public List<AgentHistoryMessage> loadHistory(String interviewSessionId, String agentSessionId) {
+        AgentConversationResponse conversation = getConversation(interviewSessionId, agentSessionId);
         List<AgentHistoryMessage> messages = conversation.messages();
         if (conversation.runStatus() != AgentRunStatus.FAILED
             && conversation.runStatus() != AgentRunStatus.CANCELLED) {
@@ -371,6 +455,58 @@ public class AgentConversationService {
         }
     }
 
+    private Optional<AgentChatSessionEntity> findSession(
+        String interviewSessionId, String agentSessionId
+    ) {
+        if (agentSessionId != null && !agentSessionId.isBlank()) {
+            return sessionRepository.findByAgentSessionId(agentSessionId)
+                .filter(session -> interviewSessionId.equals(session.getInterviewSessionId()));
+        }
+        Optional<AgentChatSessionEntity> oldest = sessionRepository
+            .findFirstByInterviewSessionIdOrderByCreatedAtAsc(interviewSessionId);
+        if (oldest != null && oldest.isPresent()) {
+            return oldest;
+        }
+        // 兼容尚未更新测试替身或旧嵌入式调用方的 Repository 实现。
+        Optional<AgentChatSessionEntity> legacy = sessionRepository
+            .findByInterviewSessionId(interviewSessionId);
+        return legacy == null ? Optional.empty() : legacy;
+    }
+
+    private Optional<AgentChatSessionEntity> findSessionForUpdate(
+        String interviewSessionId, String agentSessionId
+    ) {
+        if (agentSessionId != null && !agentSessionId.isBlank()) {
+            return sessionRepository.findByAgentSessionIdForUpdate(agentSessionId)
+                .filter(session -> interviewSessionId.equals(session.getInterviewSessionId()));
+        }
+        return sessionRepository.findByInterviewSessionIdForUpdate(interviewSessionId);
+    }
+
+    private void ensureSessionIdentity(AgentChatSessionEntity session, String interviewSessionId) {
+        if (session.getInterviewSessionId() == null) {
+            session.setInterviewSessionId(interviewSessionId);
+        }
+        if (session.getAgentSessionId() == null || session.getAgentSessionId().isBlank()) {
+            session.setAgentSessionId(UUID.randomUUID().toString());
+        }
+        if (session.getTitle() == null || session.getTitle().isBlank()) {
+            session.setTitle("默认 Agent 对话");
+        }
+    }
+
+    private AgentConversationSummary toSummary(AgentChatSessionEntity session) {
+        ensureSessionIdentity(session, session.getInterviewSessionId());
+        return new AgentConversationSummary(
+            session.getAgentSessionId(),
+            session.getInterviewSessionId(),
+            session.getTitle(),
+            session.getRunStatus(),
+            session.getCreatedAt(),
+            session.getUpdatedAt()
+        );
+    }
+
     private void markRunFinished(AgentChatMessageEntity message, AgentRunStatus status, String error) {
         AgentChatSessionEntity session = message.getSession();
         if (session == null) {
@@ -397,8 +533,7 @@ public class AgentConversationService {
         }
         return messageRepository.findById(messageId)
             .map(AgentChatMessageEntity::getSession)
-            .map(AgentChatSessionEntity::getInterviewSessionId)
-            .flatMap(sessionRepository::findByInterviewSessionIdForUpdate)
+            .flatMap(this::findSessionForUpdateByIdentity)
             .filter(session -> session.getRunStatus() == AgentRunStatus.RUNNING)
             .filter(session -> messageId.equals(session.getActiveMessageId()))
             .orElse(null);
@@ -413,14 +548,25 @@ public class AgentConversationService {
             return null;
         }
         return messageRepository.findById(messageId)
-            .flatMap(message -> sessionRepository
-                .findByInterviewSessionIdForUpdate(message.getSession().getInterviewSessionId())
+            .flatMap(message -> findSessionForUpdateByIdentity(message.getSession())
                 .map(lockedSession -> {
                     message.setSession(lockedSession);
                     return message;
                 }))
             .filter(this::isActiveMessage)
             .orElse(null);
+    }
+
+    private Optional<AgentChatSessionEntity> findSessionForUpdateByIdentity(
+        AgentChatSessionEntity session
+    ) {
+        if (session == null) {
+            return Optional.empty();
+        }
+        if (session.getAgentSessionId() != null && !session.getAgentSessionId().isBlank()) {
+            return sessionRepository.findByAgentSessionIdForUpdate(session.getAgentSessionId());
+        }
+        return sessionRepository.findByInterviewSessionIdForUpdate(session.getInterviewSessionId());
     }
 
     private void updateTerminalMessage(
@@ -467,11 +613,15 @@ public class AgentConversationService {
             && !session.getRunStartedAt().isAfter(LocalDateTime.now().minusMinutes(STALE_RUN_MINUTES));
     }
 
-    public record PreparedMessage(Long assistantMessageId, Long sessionId, String runId) {
+    public record PreparedMessage(Long assistantMessageId, Long sessionId, String runId, String agentSessionId) {
+        public PreparedMessage(Long assistantMessageId, Long sessionId, String runId) {
+            this(assistantMessageId, sessionId, runId, null);
+        }
     }
 
     public record RecoveredRun(
         String interviewSessionId,
+        String agentSessionId,
         String goal,
         String providerId,
         String memoryKey,
@@ -479,5 +629,16 @@ public class AgentConversationService {
         Long assistantMessageId,
         String runId
     ) {
+        public RecoveredRun(
+            String interviewSessionId,
+            String goal,
+            String providerId,
+            String memoryKey,
+            String userContent,
+            Long assistantMessageId,
+            String runId
+        ) {
+            this(interviewSessionId, null, goal, providerId, memoryKey, userContent, assistantMessageId, runId);
+        }
     }
 }

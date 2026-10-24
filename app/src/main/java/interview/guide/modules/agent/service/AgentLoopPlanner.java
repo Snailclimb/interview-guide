@@ -5,6 +5,8 @@ import interview.guide.common.ai.PromptSanitizer;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
 import interview.guide.modules.agent.model.AgentMessageRequest;
 import java.util.List;
+import java.util.Arrays;
+import java.util.stream.IntStream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
@@ -85,7 +87,30 @@ public class AgentLoopPlanner {
         if (content == null || content.isBlank()) {
             return "";
         }
-        String value = content.trim().replaceAll("\\n{3,}", "\\n\\n");
+        List<String> normalizedSteps = steps(content);
+        String value = IntStream.range(0, normalizedSteps.size())
+            .mapToObj(index -> (index + 1) + ". " + normalizedSteps.get(index))
+            .reduce((left, right) -> left + "\n" + right)
+            .orElse("");
         return value.substring(0, Math.min(MAX_PLAN_CHARS, value.length()));
+    }
+
+    /**
+     * 把模型返回的计划规整成有限步骤；这里是 Loop 的边界，不允许模型通过计划文本
+     * 无限扩展后续工作量。ToolCallingAdvisor 的工具调用仍在最终回答阶段自行完成。
+     */
+    public List<String> steps(String plan) {
+        if (plan == null || plan.isBlank()) {
+            return List.of("读取面试报告并确认当前目标");
+        }
+        int maxSteps = Math.max(1, retryProperties.getLoopMaxSteps());
+        List<String> result = Arrays.stream(plan.split("\\R"))
+            .map(String::trim)
+            .map(value -> value.replaceFirst("^(?:[-*]\\s*|\\d+[.)]\\s*)", ""))
+            .map(String::trim)
+            .filter(value -> !value.isBlank())
+            .limit(maxSteps)
+            .toList();
+        return result.isEmpty() ? List.of("读取面试报告并确认当前目标") : result;
     }
 }

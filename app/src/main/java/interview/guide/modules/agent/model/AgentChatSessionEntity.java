@@ -34,8 +34,14 @@ public class AgentChatSessionEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "interview_session_id", nullable = false, unique = true, length = 36)
+    @Column(name = "interview_session_id", nullable = false, length = 36)
     private String interviewSessionId;
+
+    @Column(name = "agent_session_id", nullable = false, unique = true, length = 36)
+    private String agentSessionId;
+
+    @Column(length = 120)
+    private String title;
 
     @Column(length = 32)
     private String goal;

@@ -35,6 +35,7 @@
 11. Agent Loop 使用短规划器；规划失败时回退到默认计划，不影响原有回答能力。
 12. 使用浏览器级记忆键保存有限的 Skill、薄弱点和训练目标摘要；支持主动清除。
 13. 应用重启后扫描遗留的 RUNNING 任务，使用数据库锁接管并从已保存的用户请求重新执行。
+14. 同一份面试报告支持多个独立 Agent 对话线程；线程标题、历史消息、运行状态和恢复任务彼此隔离。
 
 ### 不包含
 
@@ -63,10 +64,10 @@
         v
 安全清洗、字符预算、来源编号
         |
-        +--> 独立 Agent 会话落库：用户消息 + assistant 占位消息 + 运行状态
+        +--> 独立 Agent 对话线程落库：用户消息 + assistant 占位消息 + 运行状态
         |
         v
-Agent Loop：短规划器 -> 只读 SkillsTool/ToolCallingAdvisor 与 RAG 观察 -> 最终回答
+Agent Loop：短规划器 -> 有界循环状态 -> 只读 SkillsTool/ToolCallingAdvisor 与 RAG 观察 -> 最终回答
         |
         +--> SSE：步骤事件 + 来源事件 + 增量文本 + done
         |
@@ -111,6 +112,8 @@ step(context, running)
 step(context, completed)
 step(planning, running)
 step(planning, completed)
+plan(content)                # 本次最多 3 个规划步骤
+step(loop, running)
 step(insight, running)
 step(retrieval, running)
 step(retrieval, completed)
@@ -119,10 +122,14 @@ step(action, running)
 step(insight, waiting)      # 模型退避重试时周期性发送
 delta(...)
 step(action, completed)
+step(loop, completed)
 done
 ```
 
-步骤是可观察的编排状态。Loop 有明确边界：规划器最多输出约 1,200 字符，最终生成仍使用已有的 Provider 重试、上下文压缩和输出护栏；不做无限自主循环，也不开放写入型工具。
+步骤是可观察的编排状态。Loop 有明确边界：规划器最多输出约 1,200 字符，最多规整为
+`APP_AI_AGENT_LOOP_MAX_STEPS`（默认 3）个步骤；最终生成阶段复用已有的
+`SkillsTool + ToolCallingAdvisor`，工具调用由 Spring AI 在当前请求内完成，不会再叠加一套无限自主循环。
+模型失败时仍走现有 Provider 重试、上下文压缩和输出护栏；不开放写入型工具。
 
 ## 6. 长期记忆与应用重启恢复
 
@@ -148,6 +155,7 @@ done
 1. Skill、RAG、面试报告和短期对话上下文的固定预算编排。
    RAG Query Rewrite 会额外使用最近最多 6 条、总计最多 2400 字符的净化历史，支持多轮追问指代。
 2. 独立 Agent 会话/消息表、运行生命周期、进度和来源摘要恢复。
+   同一份面试报告下的多个 Agent 对话通过 `agent_session_id` 隔离，旧的只传面试报告 ID 的链接继续指向最早线程。
 3. Provider 失败重试、备用 Provider、SSE 心跳、取消、超时回收和重复任务保护。
 4. 前端 Markdown 展示、断线恢复、失败重试、Loop 步骤和当前运行来源展示。
 5. Agent 只读 Skill 工具调用的成功/失败与耗时指标（不记录参数和返回内容）。
@@ -164,7 +172,7 @@ done
 
 建议验收顺序：
 
-1. 新建一轮 Agent 请求，确认 SSE 依次出现 `context -> planning -> insight/retrieval -> action`。
+1. 新建一轮 Agent 请求，确认 SSE 依次出现 `context -> planning -> plan -> loop -> insight/retrieval -> action`，并能在前端看到执行计划。
 2. 连续执行两场面试，确认同一浏览器只复用结构化薄弱点，不把原始问答注入长期记忆。
 3. 在 Agent 运行期间重启应用，确认任务从 `RUNNING` 自动恢复且不会重复创建消息。
 4. 调用清除记忆接口后重新执行，确认提示词中不再出现旧记忆。
@@ -175,3 +183,13 @@ done
 2. 需要跨系统读取时，再把稳定的只读工具抽成 MCP；没有外部系统需求时不引入 MCP。
 3. 写入型工具（训练任务、计划）必须先增加权限、幂等键、审计和回滚，再开放给 Agent。
 4. 如需跨面试长期记忆，单独设计用户级记忆边界和删除策略，不复用当前会话表硬扩展。
+
+## 8. 暂缓待办
+
+本轮先不实现以下能力，避免扩大验收面：
+
+- 登录用户级权限、线程归属校验和跨用户数据隔离；当前仍沿用既有 `X-User-Id` 浏览器记忆键。
+- Token、费用和 Provider 账单级统计；当前只保留运行、重试、Provider、工具调用次数和耗时指标。
+- MCP Server/Client 接入；当前已有的 SkillsTool 和 ToolCallingAdvisor 足够支撑面试教练的只读能力。
+- 长期记忆管理页面、记忆编辑和跨面试复杂召回；当前保留轻量结构化摘要和一键清除。
+- Agent 写入训练计划、修改面试报告等高风险工具；需要权限、幂等、审计和回滚设计后再做。

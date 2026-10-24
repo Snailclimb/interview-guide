@@ -17,13 +17,28 @@ public interface AgentChatSessionRepository extends JpaRepository<AgentChatSessi
 
     Optional<AgentChatSessionEntity> findByInterviewSessionId(String interviewSessionId);
 
+    /** 未指定线程时沿用最早创建的默认线程，兼容旧链接。 */
+    Optional<AgentChatSessionEntity> findFirstByInterviewSessionIdOrderByCreatedAtAsc(
+        String interviewSessionId
+    );
+
+    Optional<AgentChatSessionEntity> findByAgentSessionId(String agentSessionId);
+
+    List<AgentChatSessionEntity> findByInterviewSessionIdOrderByUpdatedAtDesc(String interviewSessionId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM AgentChatSessionEntity s WHERE s.agentSessionId = :agentSessionId")
+    Optional<AgentChatSessionEntity> findByAgentSessionIdForUpdate(
+        @Param("agentSessionId") String agentSessionId
+    );
+
     List<AgentChatSessionEntity> findByRunStatusAndRunStartedAtBefore(
         AgentRunStatus runStatus, LocalDateTime runStartedAt
     );
 
     /** 串行化同一面试 Agent 会话的消息序号分配。 */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT s FROM AgentChatSessionEntity s WHERE s.interviewSessionId = :interviewSessionId")
+    @Query("SELECT s FROM AgentChatSessionEntity s WHERE s.interviewSessionId = :interviewSessionId ORDER BY s.createdAt ASC")
     Optional<AgentChatSessionEntity> findByInterviewSessionIdForUpdate(
         @Param("interviewSessionId") String interviewSessionId
     );

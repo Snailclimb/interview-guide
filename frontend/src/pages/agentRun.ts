@@ -4,6 +4,7 @@ export interface AgentRunRequest {
   goal: AgentGoal;
   message: string;
   providerId?: string;
+  agentSessionId?: string;
 }
 
 export interface AgentRunMessageIds {
@@ -38,6 +39,7 @@ export function getRetryableRequest(conversation: AgentConversationResponse): Ag
     goal: isAgentGoal(conversation.goal) ? conversation.goal : 'review',
     message: lastUserMessage.content,
     providerId: conversation.providerId || undefined,
+    agentSessionId: conversation.agentSessionId || undefined,
   };
 }
 
