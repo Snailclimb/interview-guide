@@ -52,7 +52,9 @@ class ResumeFileExportServiceTest {
             }
             assertThat(entries).contains("[Content_Types].xml", "_rels/.rels", "word/document.xml",
                 "word/styles.xml", "word/settings.xml", "word/_rels/document.xml.rels");
-            assertThat(document).contains("孙扬", "专业技能", "Java &amp; Spring", "工作经历", "项目经历");
+            assertThat(document).contains("孙扬", "专业技能", "Java &amp; Spring", "工作经历", "项目经历")
+                .contains("w:tbl", "ResumeName", "ResumeHeading", "EFF6FC", "256398")
+                .doesNotContain("ListBullet", "Heading1");
         }
     }
 
