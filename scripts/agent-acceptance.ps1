@@ -307,6 +307,8 @@ if ([string]::IsNullOrWhiteSpace($targetSessionId)) {
                 Assert-Condition ($result.StatusCode -eq 200) "Agent stream HTTP $($result.StatusCode)"
                 # Invoke-WebRequest may normalize the optional SSE space after the colon.
                 Assert-Condition ($result.Body -match 'event:\s*agent-step') 'Agent stream missing step events'
+                Assert-Condition ($result.Body -match 'event:\s*agent-plan') 'Agent stream missing bounded loop plan event'
+                Assert-Condition ($result.Body -match '"step":"loop"') 'Agent stream missing bounded loop lifecycle events'
                 Assert-Condition ($result.Body -match 'event:\s*agent-delta') 'Agent stream missing delta events'
                 Assert-Condition ($result.Body -notmatch 'event:\s*agent-error') 'Agent stream returned an error event'
                 Assert-Condition ($result.Body.Length -gt 200) 'Agent stream response is unexpectedly short'
