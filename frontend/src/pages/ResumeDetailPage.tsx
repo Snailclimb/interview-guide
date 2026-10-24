@@ -7,6 +7,7 @@ import InterviewPanel from '../components/InterviewPanel';
 import InterviewDetailPanel from '../components/InterviewDetailPanel';
 import ResumeEditorPanel from '../components/ResumeEditorPanel';
 import {formatDateOnly} from '../utils/date';
+import {downloadBlob} from '../utils/download';
 import {CheckSquare, ChevronLeft, Clock, Download, MessageSquare, Mic, PencilLine} from 'lucide-react';
 
 interface ResumeDetailPageProps {
@@ -161,14 +162,7 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
       const blob = format === 'pdf'
         ? await historyApi.exportResumePdf(resumeId)
         : await historyApi.exportResumeDocx(resumeId);
-      const url = window.URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = format === 'pdf' ? '简历编辑版.pdf' : '简历编辑版.docx';
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      window.URL.revokeObjectURL(url);
+      downloadBlob(blob, format === 'pdf' ? '简历编辑版.pdf' : '简历编辑版.docx');
     } catch (err) {
       setEditorError(err instanceof Error ? err.message : '简历导出失败，请稍后重试');
     } finally {
@@ -203,14 +197,7 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
     setExporting('analysis');
     try {
       const blob = await historyApi.exportAnalysisPdf(resumeId);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `简历分析报告_${resume?.filename || resumeId}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
+      downloadBlob(blob, `简历分析报告_${resume?.filename || resumeId}.pdf`);
     } catch (err) {
       alert('导出失败，请重试');
     } finally {
@@ -222,14 +209,7 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
     setExporting(sessionId);
     try {
       const blob = await historyApi.exportInterviewPdf(sessionId);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `面试报告_${sessionId}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
+      downloadBlob(blob, `面试报告_${sessionId}.pdf`);
     } catch (err) {
       alert('导出失败，请重试');
     } finally {
