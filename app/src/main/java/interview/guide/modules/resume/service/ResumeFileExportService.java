@@ -97,10 +97,10 @@ public class ResumeFileExportService {
         blocks.add(new Block(BlockType.TITLE, title));
         String contact = joinNonBlank(content.email(), content.phone(), content.location());
         if (!contact.isBlank()) {
-            blocks.add(new Block(BlockType.SUBTITLE, contact));
+            blocks.add(new Block(BlockType.CONTACT, contact));
         }
         if (content.targetPosition() != null && !content.targetPosition().isBlank()) {
-            blocks.add(new Block(BlockType.SUBTITLE, content.targetPosition().trim()));
+            blocks.add(new Block(BlockType.TARGET, content.targetPosition().trim()));
         }
 
         addSection(blocks, "专业技能", content.skills());
@@ -171,30 +171,93 @@ public class ResumeFileExportService {
 
     private String documentXml(List<Block> blocks) {
         StringBuilder body = new StringBuilder();
-        for (Block block : blocks) {
+        for (int index = 0; index < blocks.size(); index++) {
+            Block block = blocks.get(index);
+            if (block.type() == BlockType.TITLE) {
+                String contact = index + 1 < blocks.size() && blocks.get(index + 1).type() == BlockType.CONTACT
+                    ? blocks.get(++index).text() : "";
+                String target = index + 1 < blocks.size() && blocks.get(index + 1).type() == BlockType.TARGET
+                    ? blocks.get(++index).text() : "";
+                body.append(headerTable(block.text(), target, contact));
+                continue;
+            }
             if (block.type() == BlockType.SPACER) {
                 body.append(paragraph("", "Normal"));
             } else if (block.type() == BlockType.BULLET) {
-                body.append(paragraph("• " + block.text(), "ListBullet"));
+                body.append(paragraph("• " + block.text(), "ResumeBullet"));
+            } else if (block.type() == BlockType.HEADING) {
+                body.append(sectionHeading(block.text()));
             } else {
                 String style = switch (block.type()) {
-                    case TITLE -> "Title";
-                    case SUBTITLE -> "Subtitle";
-                    case HEADING -> "Heading1";
-                    default -> "Normal";
+                    case CONTACT -> "ResumeContact";
+                    case TARGET -> "ResumeTarget";
+                    default -> "ResumeBody";
                 };
                 body.append(paragraph(block.text(), style));
             }
         }
-        body.append("<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1200\" w:right=\"1200\" w:bottom=\"1200\" w:left=\"1200\"/></w:sectPr>");
+        body.append("<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"1000\" w:right=\"1100\" w:bottom=\"1000\" w:left=\"1100\"/></w:sectPr>");
         return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
             + "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>"
             + body + "</w:body></w:document>";
     }
 
+    private String headerTable(String title, String target, String contact) {
+        StringBuilder table = new StringBuilder();
+        table.append("<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/>")
+            .append("<w:tblLayout w:type=\"fixed\"/><w:tblBorders>")
+            .append(border("top", "nil", "0", "auto"))
+            .append(border("left", "nil", "0", "auto"))
+            .append(border("bottom", "nil", "0", "auto"))
+            .append(border("right", "nil", "0", "auto"))
+            .append(border("insideH", "nil", "0", "auto"))
+            .append(border("insideV", "nil", "0", "auto"))
+            .append("</w:tblBorders><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:left w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>")
+            .append("<w:tblGrid><w:gridCol w:w=\"7200\"/><w:gridCol w:w=\"2500\"/></w:tblGrid>")
+            .append("<w:tr>")
+            .append(tableCell(paragraph(title, "ResumeName"), "7200", false))
+            .append(tableCell(paragraph(target, "ResumeTarget", true), "2500", false))
+            .append("</w:tr>");
+        if (!contact.isBlank()) {
+            table.append("<w:tr>")
+                .append(tableCell(paragraph(contact.replace("  |  ", "  ·  "), "ResumeContact"), "9700", true))
+                .append("</w:tr>");
+        }
+        table.append("</w:tbl>")
+            .append("<w:p><w:pPr><w:spacing w:before=\"60\" w:after=\"120\"/>")
+            .append("<w:pBdr><w:bottom w:val=\"single\" w:sz=\"18\" w:space=\"1\" w:color=\"256398\"/></w:pBdr>")
+            .append("</w:pPr><w:r><w:t xml:space=\"preserve\"> </w:t></w:r></w:p>");
+        return table.toString();
+    }
+
+    private String tableCell(String paragraph, String width, boolean spanTwoColumns) {
+        return "<w:tc><w:tcPr><w:tcW w:w=\"" + width + "\" w:type=\"dxa\"/>"
+            + (spanTwoColumns ? "<w:gridSpan w:val=\"2\"/>" : "")
+            + "</w:tcPr>" + paragraph + "</w:tc>";
+    }
+
+    private String border(String side, String value, String size, String color) {
+        return "<w:" + side + " w:val=\"" + value + "\" w:sz=\"" + size + "\" w:color=\"" + color + "\"/>";
+    }
+
+    private String sectionHeading(String text) {
+        return "<w:p><w:pPr><w:pStyle w:val=\"ResumeHeading\"/><w:keepNext/>"
+            + "<w:spacing w:before=\"240\" w:after=\"90\"/>"
+            + "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"EFF6FC\"/>"
+            + "<w:pBdr><w:left w:val=\"single\" w:sz=\"24\" w:space=\"8\" w:color=\"256398\"/></w:pBdr>"
+            + "</w:pPr><w:r><w:rPr><w:color w:val=\"256398\"/><w:b/></w:rPr><w:t>"
+            + xml(text) + "</w:t></w:r></w:p>";
+    }
+
     private String paragraph(String text, String style) {
+        return paragraph(text, style, false);
+    }
+
+    private String paragraph(String text, String style, boolean alignRight) {
         String escaped = xml(text);
-        return "<w:p><w:pPr><w:pStyle w:val=\"" + style + "\"/></w:pPr><w:r><w:rPr>"
+        return "<w:p><w:pPr><w:pStyle w:val=\"" + style + "\"/>"
+            + (alignRight ? "<w:jc w:val=\"right\"/>" : "")
+            + "</w:pPr><w:r><w:rPr>"
             + "<w:rFonts w:ascii=\"Aptos\" w:hAnsi=\"Aptos\" w:eastAsia=\"Microsoft YaHei\"/>"
             + "</w:rPr><w:t xml:space=\"preserve\">" + escaped + "</w:t></w:r></w:p>";
     }
@@ -202,19 +265,25 @@ public class ResumeFileExportService {
     private String stylesXml() {
         return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
             + "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">"
-            + "<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Aptos\" w:hAnsi=\"Aptos\" w:eastAsia=\"Microsoft YaHei\"/><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>"
-            + style("Normal", "22", "0", "0")
-            + style("Title", "36", "0", "240")
-            + style("Subtitle", "22", "0", "80")
-            + style("Heading1", "26", "240", "100")
-            + style("ListBullet", "22", "0", "40")
+            + "<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Aptos\" w:hAnsi=\"Aptos\" w:eastAsia=\"Microsoft YaHei\"/><w:color w:val=\"1F3041\"/><w:sz w:val=\"21\"/></w:rPr></w:rPrDefault></w:docDefaults>"
+            + style("Normal", "21", "0", "0", "1F3041")
+            + style("ResumeBody", "21", "0", "50", "1F3041")
+            + style("ResumeName", "40", "0", "30", "1F3041", true)
+            + style("ResumeTarget", "21", "0", "0", "256398", true)
+            + style("ResumeContact", "18", "0", "0", "5C6C7A")
+            + style("ResumeHeading", "22", "240", "90", "256398", true)
+            + style("ResumeBullet", "21", "0", "50", "1F3041")
             + "</w:styles>";
     }
 
-    private String style(String id, String size, String before, String after) {
+    private String style(String id, String size, String before, String after, String color) {
+        return style(id, size, before, after, color, false);
+    }
+
+    private String style(String id, String size, String before, String after, String color, boolean bold) {
         return "<w:style w:type=\"paragraph\" w:styleId=\"" + id + "\"><w:name w:val=\"" + id
-            + "\"/><w:pPr><w:spacing w:before=\"" + before + "\" w:after=\"" + after + "\" w:line=\"300\"/></w:pPr><w:rPr><w:sz w:val=\""
-            + size + "\"/></w:rPr></w:style>";
+            + "\"/><w:pPr><w:spacing w:before=\"" + before + "\" w:after=\"" + after + "\" w:line=\"300\" w:lineRule=\"auto\"/></w:pPr><w:rPr><w:color w:val=\""
+            + color + "\"/><w:sz w:val=\"" + size + "\"/>" + (bold ? "<w:b/>" : "") + "</w:rPr></w:style>";
     }
 
     private String settingsXml() {
@@ -250,7 +319,7 @@ public class ResumeFileExportService {
         }
     }
 
-    private enum BlockType { TITLE, SUBTITLE, HEADING, BODY, BULLET, SPACER }
+    private enum BlockType { TITLE, CONTACT, TARGET, HEADING, BODY, BULLET, SPACER }
 
     private record Block(BlockType type, String text) {}
 }
