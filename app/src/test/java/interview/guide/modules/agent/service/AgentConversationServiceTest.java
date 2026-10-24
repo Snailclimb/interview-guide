@@ -3,7 +3,9 @@ package interview.guide.modules.agent.service;
 import interview.guide.modules.agent.model.AgentChatMessageEntity;
 import interview.guide.modules.agent.model.AgentChatSessionEntity;
 import interview.guide.modules.agent.model.AgentConversationResponse;
+import interview.guide.modules.agent.model.AgentConversationSummary;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
+import interview.guide.modules.agent.model.AgentRunStatus;
 import interview.guide.modules.agent.model.AgentSource;
 import interview.guide.modules.agent.repository.AgentChatMessageRepository;
 import interview.guide.modules.agent.repository.AgentChatSessionRepository;
@@ -45,8 +47,6 @@ class AgentConversationServiceTest {
     @DisplayName("准备 Agent 消息时创建独立会话、用户消息和助手占位消息")
     void prepareMessageCreatesSessionAndMessagePair() {
         when(sessionRepository.findByInterviewSessionIdForUpdate("interview-1"))
-            .thenReturn(Optional.empty());
-        when(sessionRepository.findByInterviewSessionId("interview-1"))
             .thenReturn(Optional.empty());
         when(sessionRepository.save(any(AgentChatSessionEntity.class)))
             .thenAnswer(invocation -> {
@@ -353,5 +353,51 @@ class AgentConversationServiceTest {
         assertThat(message.getCompleted()).isTrue();
         verify(messageRepository).save(message);
         verify(sessionRepository).save(session);
+    }
+
+    @Test
+    @DisplayName("同一份面试报告可以创建两个互不相同的 Agent 对话线程")
+    void createsIndependentConversationThreads() {
+        when(sessionRepository.save(any(AgentChatSessionEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AgentConversationSummary first = service.createConversation("interview-1", "复盘线程");
+        AgentConversationSummary second = service.createConversation("interview-1", "训练线程");
+
+        assertThat(first.agentSessionId()).isNotBlank().isNotEqualTo(second.agentSessionId());
+        assertThat(first.interviewSessionId()).isEqualTo("interview-1");
+        assertThat(first.title()).isEqualTo("复盘线程");
+        assertThat(second.title()).isEqualTo("训练线程");
+    }
+
+    @Test
+    @DisplayName("按 Agent 线程 ID 读取时不会回退到另一份面试对话")
+    void readsConversationByExplicitThreadId() {
+        AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+            .id(12L)
+            .interviewSessionId("interview-1")
+            .agentSessionId("thread-b")
+            .title("训练线程")
+            .runStatus(AgentRunStatus.COMPLETED)
+            .build();
+        AgentChatMessageEntity message = AgentChatMessageEntity.builder()
+            .session(session)
+            .role(AgentChatMessageEntity.MessageRole.ASSISTANT)
+            .content("只属于训练线程的回答")
+            .sequenceNum(1)
+            .completed(true)
+            .build();
+        when(sessionRepository.findByAgentSessionId("thread-b")).thenReturn(Optional.of(session));
+        when(messageRepository.findBySessionIdAndCompletedTrueOrderBySequenceNumDesc(
+            org.mockito.ArgumentMatchers.eq(12L), any(Pageable.class)
+        )).thenReturn(List.of(message));
+
+        AgentConversationResponse response = service.getConversation("interview-1", "thread-b");
+
+        assertThat(response.agentSessionId()).isEqualTo("thread-b");
+        assertThat(response.title()).isEqualTo("训练线程");
+        assertThat(response.messages()).extracting(AgentHistoryMessage::content)
+            .containsExactly("只属于训练线程的回答");
+        verify(sessionRepository).findByAgentSessionId("thread-b");
     }
 }

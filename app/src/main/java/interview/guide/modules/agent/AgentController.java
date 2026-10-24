@@ -3,7 +3,9 @@ package interview.guide.modules.agent;
 import interview.guide.common.annotation.RateLimit;
 import interview.guide.modules.agent.model.AgentMessageRequest;
 import interview.guide.modules.agent.model.AgentConversationResponse;
+import interview.guide.modules.agent.model.AgentConversationSummary;
 import interview.guide.modules.agent.model.AgentStreamEvent;
+import interview.guide.modules.agent.model.CreateAgentConversationRequest;
 import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.AgentMemoryService;
 import interview.guide.modules.agent.service.InterviewAgentService;
@@ -25,6 +27,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -51,17 +54,38 @@ public class AgentController {
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
     public Result<AgentConversationResponse> getConversation(
         @PathVariable String sessionId,
-        @RequestHeader(value = "X-User-Id", required = false) String memoryKey
+        @RequestHeader(value = "X-User-Id", required = false) String memoryKey,
+        @RequestParam(value = "agentSessionId", required = false) String agentSessionId
     ) {
-        return Result.success(conversationService.getConversation(sessionId));
+        return Result.success(conversationService.getConversation(sessionId, agentSessionId));
+    }
+
+    @GetMapping("/api/agent/interview-sessions/{sessionId}/conversations")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
+    public Result<List<AgentConversationSummary>> listConversations(@PathVariable String sessionId) {
+        return Result.success(conversationService.listConversations(sessionId));
+    }
+
+    @PostMapping("/api/agent/interview-sessions/{sessionId}/conversations")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
+    public Result<AgentConversationSummary> createConversation(
+        @PathVariable String sessionId,
+        @Valid @RequestBody(required = false) CreateAgentConversationRequest request
+    ) {
+        return Result.success(conversationService.createConversation(
+            sessionId, request == null ? null : request.title()
+        ));
     }
 
     @PostMapping("/api/agent/interview-sessions/{sessionId}/cancel")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
-    public Result<AgentConversationResponse> cancelRun(@PathVariable String sessionId) {
-        agentService.cancel(sessionId);
-        conversationService.cancelRun(sessionId);
-        return Result.success(conversationService.getConversation(sessionId));
+    public Result<AgentConversationResponse> cancelRun(
+        @PathVariable String sessionId,
+        @RequestParam(value = "agentSessionId", required = false) String agentSessionId
+    ) {
+        agentService.cancel(agentSessionId == null || agentSessionId.isBlank() ? sessionId : agentSessionId);
+        conversationService.cancelRun(sessionId, agentSessionId);
+        return Result.success(conversationService.getConversation(sessionId, agentSessionId));
     }
 
     @DeleteMapping("/api/agent/memory")

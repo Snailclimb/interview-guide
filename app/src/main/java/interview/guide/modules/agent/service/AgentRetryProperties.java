@@ -37,6 +37,11 @@ public class AgentRetryProperties {
     /** 是否启用受控 Agent Loop；关闭时回退到现有单次回答流程。 */
     private boolean loopEnabled = true;
 
+    /** 一次 Agent Loop 最多展示和执行的规划步骤数，避免规划无限膨胀。 */
+    @Min(value = 1, message = "Agent Loop 步骤数必须大于 0")
+    @Max(value = 3, message = "Agent Loop 步骤数不能超过 3")
+    private int loopMaxSteps = 3;
+
     /** 启动恢复扫描是否启用。 */
     private boolean recoveryEnabled = true;
 

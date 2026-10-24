@@ -125,17 +125,23 @@ public class InterviewAgentService {
         return Flux.concat(
             Flux.just(AgentStreamEvent.step("context", "running")),
             Flux.defer(() -> {
-            if (!activeSessions.add(sessionId)) {
+            String activeKey = request.agentSessionId() == null || request.agentSessionId().isBlank()
+                ? sessionId : request.agentSessionId();
+            if (!activeSessions.add(activeKey)) {
                 return Flux.just(AgentStreamEvent.error("当前面试已有一个 Agent 任务正在执行，请等待完成后再试"));
             }
             Sinks.One<Void> cancellationSignal = Sinks.one();
-            cancellationSignals.put(sessionId, cancellationSignal);
+            cancellationSignals.put(activeKey, cancellationSignal);
             Long preparedAssistantMessageId = null;
             AgentMetrics.RunTracker runTracker = agentMetrics.startRun();
             AtomicReference<AgentTaskHandle> taskHandleRef = new AtomicReference<>();
+            AtomicReference<String> activeAgentSessionKeyRef = new AtomicReference<>(activeKey);
             try {
                 String message = promptSanitizer.sanitize(request.message());
-                List<AgentHistoryMessage> persistedHistory = agentConversationService.loadHistory(sessionId);
+                List<AgentHistoryMessage> persistedHistory = request.agentSessionId() == null
+                    || request.agentSessionId().isBlank()
+                    ? agentConversationService.loadHistory(sessionId)
+                    : agentConversationService.loadHistory(sessionId, request.agentSessionId());
                 List<AgentHistoryMessage> historyMessages = AgentHistoryPolicy.normalize(
                     persistedHistory.isEmpty() ? request.history() : persistedHistory
                 );
@@ -151,13 +157,16 @@ public class InterviewAgentService {
                     preparedMessage.assistantMessageId(), cancellationSignal
                 );
                 taskHandleRef.set(taskHandle);
-                activeTasks.put(sessionId, taskHandle);
+                String resolvedAgentSessionId = preparedMessage.agentSessionId() == null
+                    ? activeKey : preparedMessage.agentSessionId();
+                activeAgentSessionKeyRef.set(resolvedAgentSessionId);
+                activeTasks.put(resolvedAgentSessionId, taskHandle);
                 persistRunProgress(
                     preparedMessage.assistantMessageId(), "context", "running", null
                 );
 
                 Flux<AgentStreamEvent> workflow = buildWorkflow(
-                    sessionId, request, message, historyMessages, context, preparedMessage,
+                    sessionId, resolvedAgentSessionId, request, message, historyMessages, context, preparedMessage,
                     cancellationSignal, taskHandle, runTracker
                 );
                 // SSE 断开后不缓存全部 token；最终答案由 AgentConversationService 持久化。
@@ -165,7 +174,8 @@ public class InterviewAgentService {
                     taskHandle.subscription = workflow.subscribe(
                         emitter::next,
                         error -> {
-                            log.error("面试教练 Agent 后台任务失败: sessionId={}", sessionId, error);
+                            log.error("面试教练 Agent 后台任务失败: sessionId={}, agentSessionId={}",
+                                sessionId, resolvedAgentSessionId, error);
                             if (!emitter.isCancelled()) {
                                 emitter.next(AgentStreamEvent.error(toAgentErrorMessage(error)));
                             }
@@ -180,13 +190,14 @@ public class InterviewAgentService {
                     agentProgressWriter.finish(preparedAssistantMessageId);
                 }
                 agentMetrics.finishRun(runTracker, "failure");
-                activeSessions.remove(sessionId);
-                cancellationSignals.remove(sessionId, cancellationSignal);
+                activeSessions.remove(activeKey);
+                cancellationSignals.remove(activeKey, cancellationSignal);
                 AgentTaskHandle taskHandle = taskHandleRef.get();
+                String cleanupKey = activeAgentSessionKeyRef.get();
                 if (taskHandle == null) {
-                    activeTasks.remove(sessionId);
+                    activeTasks.remove(cleanupKey);
                 } else {
-                    activeTasks.remove(sessionId, taskHandle);
+                    activeTasks.remove(cleanupKey, taskHandle);
                 }
                 return Flux.error(error);
             }
@@ -203,33 +214,39 @@ public class InterviewAgentService {
 
     /** 启动恢复任务复用同一条 Agent Loop，不新建重复的用户/助手消息。 */
     public void recoverRun(AgentConversationService.RecoveredRun recoveredRun) {
-        if (recoveredRun == null || !activeSessions.add(recoveredRun.interviewSessionId())) {
+        String activeKey = recoveredRun == null || recoveredRun.agentSessionId() == null
+            ? recoveredRun == null ? null : recoveredRun.interviewSessionId()
+            : recoveredRun.agentSessionId();
+        if (recoveredRun == null || !activeSessions.add(activeKey)) {
             return;
         }
         Mono.fromRunnable(() -> {
             Sinks.One<Void> cancellationSignal = Sinks.one();
-            cancellationSignals.put(recoveredRun.interviewSessionId(), cancellationSignal);
+            cancellationSignals.put(activeKey, cancellationSignal);
             AgentMetrics.RunTracker runTracker = agentMetrics.startRun();
             AgentTaskHandle taskHandle = new AgentTaskHandle(recoveredRun.assistantMessageId(), cancellationSignal);
-            activeTasks.put(recoveredRun.interviewSessionId(), taskHandle);
+            activeTasks.put(activeKey, taskHandle);
             try {
                 String message = promptSanitizer.sanitize(recoveredRun.userContent());
                 List<AgentHistoryMessage> historyMessages = AgentHistoryPolicy.normalize(
-                    removeCurrentUser(agentConversationService.loadHistory(recoveredRun.interviewSessionId()))
+                    removeCurrentUser(agentConversationService.loadHistory(
+                        recoveredRun.interviewSessionId(), recoveredRun.agentSessionId()
+                    ))
                 );
                 AgentMessageRequest request = new AgentMessageRequest(
                     recoveredRun.goal() == null || recoveredRun.goal().isBlank() ? "review" : recoveredRun.goal(),
-                    message, historyMessages, recoveredRun.providerId(), recoveredRun.memoryKey()
+                    message, historyMessages, recoveredRun.providerId(), recoveredRun.memoryKey(),
+                    recoveredRun.agentSessionId()
                 );
                 AgentContextService.AgentContext context = agentContextService.build(
                     recoveredRun.interviewSessionId(), request, historyMessages
                 );
                 AgentConversationService.PreparedMessage prepared = new AgentConversationService.PreparedMessage(
-                    recoveredRun.assistantMessageId(), null, recoveredRun.runId()
+                    recoveredRun.assistantMessageId(), null, recoveredRun.runId(), recoveredRun.agentSessionId()
                 );
                 persistRunProgress(recoveredRun.assistantMessageId(), "context", "running", "应用重启后自动恢复中");
                 Flux<AgentStreamEvent> workflow = buildWorkflow(
-                    recoveredRun.interviewSessionId(), request, message, historyMessages, context,
+                    recoveredRun.interviewSessionId(), activeKey, request, message, historyMessages, context,
                     prepared, cancellationSignal, taskHandle, runTracker
                 );
                 taskHandle.subscription = workflow.subscribe(
@@ -241,9 +258,9 @@ public class InterviewAgentService {
                 failPreparedMessage(recoveredRun.assistantMessageId(), error);
                 agentProgressWriter.finish(recoveredRun.assistantMessageId());
                 agentMetrics.finishRun(runTracker, "failure");
-                activeSessions.remove(recoveredRun.interviewSessionId());
-                cancellationSignals.remove(recoveredRun.interviewSessionId(), cancellationSignal);
-                activeTasks.remove(recoveredRun.interviewSessionId(), taskHandle);
+                activeSessions.remove(activeKey);
+                cancellationSignals.remove(activeKey, cancellationSignal);
+                activeTasks.remove(activeKey, taskHandle);
                 log.warn("Agent 启动恢复准备失败: sessionId={}", recoveredRun.interviewSessionId(), error);
             }
         }).subscribeOn(Schedulers.boundedElastic()).subscribe();
@@ -251,6 +268,7 @@ public class InterviewAgentService {
 
     private Flux<AgentStreamEvent> buildWorkflow(
         String sessionId,
+        String agentSessionId,
         AgentMessageRequest request,
         String message,
         List<AgentHistoryMessage> historyMessages,
@@ -295,25 +313,31 @@ public class InterviewAgentService {
                     );
                     return Flux.concat(
                         Flux.just(
+                            AgentStreamEvent.plan(plan),
                             AgentStreamEvent.step("planning", "completed"),
+                            AgentStreamEvent.step("loop", "running"),
                             AgentStreamEvent.step("insight", "running"),
                             AgentStreamEvent.step("retrieval", "running"),
                             AgentStreamEvent.step("retrieval", "completed"),
                             AgentStreamEvent.sources(context.sources()),
                             AgentStreamEvent.step("action", "running")
                         ),
-                        response
+                        response,
+                        Flux.just(AgentStreamEvent.step("loop", "completed"))
                     );
                 })
         )
             .doOnNext(event -> persistRunProgress(preparedMessage.assistantMessageId(), event))
             .doOnError(error -> failPreparedMessage(preparedMessage.assistantMessageId(), error))
-            .takeUntilOther(Flux.merge(cancellationSignal.asMono(), monitorRemoteCancellation(sessionId, preparedMessage.runId())))
+            .takeUntilOther(Flux.merge(
+                cancellationSignal.asMono(),
+                monitorRemoteCancellation(sessionId, agentSessionId, preparedMessage.runId())
+            ))
             .doFinally(signal -> {
                 agentProgressWriter.finish(preparedMessage.assistantMessageId());
-                activeSessions.remove(sessionId);
-                cancellationSignals.remove(sessionId, cancellationSignal);
-                activeTasks.remove(sessionId, taskHandle);
+                activeSessions.remove(agentSessionId);
+                cancellationSignals.remove(agentSessionId, cancellationSignal);
+                activeTasks.remove(agentSessionId, taskHandle);
             });
     }
 
@@ -334,10 +358,14 @@ public class InterviewAgentService {
         String goal = promptSanitizer.sanitize(request.goal());
         if (request.memoryKey() == null || request.memoryKey().isBlank()) {
             // 兼容旧的嵌入式调用方和单元测试；有记忆键时才走新增重载。
-            return agentConversationService.prepareMessage(sessionId, goal, request.providerId(), message);
+            return request.agentSessionId() == null || request.agentSessionId().isBlank()
+                ? agentConversationService.prepareMessage(sessionId, goal, request.providerId(), message)
+                : agentConversationService.prepareMessage(
+                    sessionId, request.agentSessionId(), goal, request.providerId(), message, null
+                );
         }
         return agentConversationService.prepareMessage(
-            sessionId, goal, request.providerId(), message, request.memoryKey()
+            sessionId, request.agentSessionId(), goal, request.providerId(), message, request.memoryKey()
         );
     }
 
@@ -362,6 +390,10 @@ public class InterviewAgentService {
     /** 恢复扫描前排除本实例仍在正常执行的任务，避免本地任务被自己换发 runId。 */
     public boolean isLocallyActive(String sessionId) {
         return sessionId != null && activeSessions.contains(sessionId);
+    }
+
+    public boolean isLocallyActive(String interviewSessionId, String agentSessionId) {
+        return isLocallyActive(interviewSessionId) || isLocallyActive(agentSessionId);
     }
 
     private static final class AgentTaskHandle {
@@ -411,10 +443,10 @@ public class InterviewAgentService {
         agentProgressWriter.recordStep(assistantMessageId, step, status, notice);
     }
 
-    private Flux<Boolean> monitorRemoteCancellation(String sessionId, String runId) {
+    private Flux<Boolean> monitorRemoteCancellation(String sessionId, String agentSessionId, String runId) {
         return Flux.interval(Duration.ofSeconds(2))
             .flatMap(ignored -> Mono.fromCallable(() ->
-                    agentConversationService.isRunActive(sessionId, runId)
+                    agentConversationService.isRunActive(sessionId, agentSessionId, runId)
                 )
                 .subscribeOn(Schedulers.boundedElastic())
                 // 数据库瞬时异常时继续执行，避免监测故障误杀模型任务。

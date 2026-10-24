@@ -21,7 +21,9 @@ public record AgentMessageRequest(
     @Size(max = 64)
     String providerId,
     @Size(max = 64)
-    String memoryKey
+    String memoryKey,
+    @Size(max = 36)
+    String agentSessionId
 ) {
     /** 兼容已有调用方；长期记忆是新增的可选能力。 */
     public AgentMessageRequest(
@@ -30,6 +32,16 @@ public record AgentMessageRequest(
         List<AgentHistoryMessage> history,
         String providerId
     ) {
-        this(goal, message, history, providerId, null);
+        this(goal, message, history, providerId, null, null);
+    }
+
+    public AgentMessageRequest(
+        String goal,
+        String message,
+        List<AgentHistoryMessage> history,
+        String providerId,
+        String memoryKey
+    ) {
+        this(goal, message, history, providerId, memoryKey, null);
     }
 }

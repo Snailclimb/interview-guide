@@ -189,6 +189,7 @@ app:
       # 模型等待首 token 或重试等待期间的 SSE 心跳间隔（秒）
       retry-heartbeat-interval-seconds: ${APP_AI_AGENT_RETRY_HEARTBEAT_INTERVAL_SECONDS:10}
       loop-enabled: ${APP_AI_AGENT_LOOP_ENABLED:true}
+      loop-max-steps: ${APP_AI_AGENT_LOOP_MAX_STEPS:3}
       recovery-enabled: ${APP_AI_AGENT_RECOVERY_ENABLED:true}
       recovery-min-age-seconds: ${APP_AI_AGENT_RECOVERY_MIN_AGE_SECONDS:30}
       recovery-scan-interval-ms: ${APP_AI_AGENT_RECOVERY_SCAN_INTERVAL_MS:10000}

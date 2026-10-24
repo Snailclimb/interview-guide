@@ -33,7 +33,13 @@ import CodeBlock from '../components/CodeBlock';
 import { getRetryableRequest, removeLastRunMessages, resolveRetryProviderId, type AgentRunMessageIds, type AgentRunRequest } from './agentRun';
 import { normalizeAgentMarkdown } from './agentMarkdown';
 import { isNearChatBottom } from './agentChatScroll';
-import { getStoredAgentSessionId, rememberAgentSessionId, resolveAgentSessionId } from './agentSession';
+import {
+  getStoredAgentSessionId,
+  getStoredAgentThreadId,
+  rememberAgentSessionId,
+  rememberAgentThreadId,
+  resolveAgentSessionId,
+} from './agentSession';
 import type {
   AgentGoal,
   AgentConversationResponse,
@@ -79,6 +85,7 @@ const createWelcomeMessage = (): AgentMessage => ({
 const createInitialSteps = (): AgentStep[] => [
   { id: 'context', title: '整理面试上下文', description: '读取本场面试的问题、回答和评分', status: 'pending' },
   { id: 'planning', title: '规划处理路径', description: '确定是否需要 Skill 或知识库资料支持', status: 'pending' },
+  { id: 'loop', title: '执行受控 Agent Loop', description: '按有限步骤调用工具并汇总可验证上下文', status: 'pending' },
   { id: 'insight', title: '识别表现模式', description: '归纳回答中的优势、风险和知识盲区', status: 'pending' },
   { id: 'retrieval', title: '检索相关知识', description: '结合 Skill 和知识库补充训练依据', status: 'pending' },
   { id: 'action', title: '生成下一步建议', description: '给出可执行的训练任务和追问方向', status: 'pending' },
@@ -148,8 +155,12 @@ export default function AgentPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const routeSessionId = searchParams.get('sessionId');
+  const routeAgentSessionId = searchParams.get('agentSessionId');
   const storedSessionId = useMemo(() => getStoredAgentSessionId(), []);
+  const storedAgentSessionId = useMemo(() => getStoredAgentThreadId(), []);
   const sessionId = resolveAgentSessionId(routeSessionId, storedSessionId);
+  // 地址带有报告 ID 时不使用上一次报告的线程；无参数进入 /agent 时才从 sessionStorage 恢复。
+  const agentSessionId = routeAgentSessionId || (!routeSessionId ? storedAgentSessionId : null);
   const [goal, setGoal] = useState<AgentGoal>('review');
   const [providerId, setProviderId] = useState('');
   const [providers, setProviders] = useState<ProviderItem[]>([]);
@@ -160,6 +171,7 @@ export default function AgentPage() {
   const [runError, setRunError] = useState('');
   const [steps, setSteps] = useState<AgentStep[]>(createInitialSteps);
   const [sources, setSources] = useState<AgentSource[]>([]);
+  const [loopPlan, setLoopPlan] = useState('');
   const [runNotice, setRunNotice] = useState('');
   const [memoryNotice, setMemoryNotice] = useState('');
   const [messages, setMessages] = useState<AgentMessage[]>([createWelcomeMessage()]);
@@ -174,13 +186,15 @@ export default function AgentPage() {
   useEffect(() => {
     if (routeSessionId) {
       rememberAgentSessionId(routeSessionId);
-      return;
-    }
-    if (storedSessionId) {
+    } else if (storedSessionId) {
       // 让地址栏也恢复 sessionId，复制链接或刷新时仍然能打开同一份报告。
-      setSearchParams({ sessionId: storedSessionId }, { replace: true });
+      setSearchParams((current) => {
+        current.set('sessionId', storedSessionId);
+        return current;
+      }, { replace: true });
     }
-  }, [routeSessionId, setSearchParams, storedSessionId]);
+    if (routeAgentSessionId) rememberAgentThreadId(routeAgentSessionId);
+  }, [routeAgentSessionId, routeSessionId, setSearchParams, storedSessionId]);
 
   const clearReconciliationTimer = useCallback(() => {
     if (reconciliationTimerRef.current !== null) {
@@ -246,13 +260,17 @@ export default function AgentPage() {
     lastRunMessageIdsRef.current = null;
   }, []);
 
-  const reconcileConversation = useCallback((currentSessionId: string, fallbackAssistant?: AgentMessage) => {
+  const reconcileConversation = useCallback((
+    currentSessionId: string,
+    fallbackAssistant?: AgentMessage,
+    targetAgentSessionId: string | null = agentSessionId,
+  ) => {
     clearReconciliationTimer();
     let attempts = 0;
 
     const poll = () => {
       attempts += 1;
-      void agentApi.getConversation(currentSessionId)
+      void agentApi.getConversation(currentSessionId, targetAgentSessionId)
         .then((conversation) => {
           restoreRunProgress(conversation);
           if (conversation.runStatus === 'RUNNING' && attempts < MAX_RECONCILIATION_ATTEMPTS) {
@@ -296,7 +314,7 @@ export default function AgentPage() {
     };
 
     poll();
-  }, [clearReconciliationTimer, rememberRetryableRequest, restoreConversationMessages, restoreRunProgress]);
+  }, [agentSessionId, clearReconciliationTimer, rememberRetryableRequest, restoreConversationMessages, restoreRunProgress]);
 
   useEffect(() => {
     // 同一个页面内切换会话时，先清掉上一份报告的本地状态，避免旧消息和步骤闪现到新会话。
@@ -312,10 +330,11 @@ export default function AgentPage() {
     setRunError('');
     setRunNotice('');
     setSources([]);
+    setLoopPlan('');
     setSteps(createInitialSteps());
     setMessages([createWelcomeMessage()]);
     setInput('');
-  }, [clearReconciliationTimer, sessionId]);
+  }, [agentSessionId, clearReconciliationTimer, sessionId]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -368,9 +387,26 @@ export default function AgentPage() {
     if (!sessionId) return;
 
     let cancelled = false;
-    agentApi.getConversation(sessionId)
-      .then((conversation) => {
+    void (async () => {
+      try {
+        let conversation = await agentApi.getConversation(sessionId, agentSessionId);
+        // 首次打开某份面试报告时建立一个默认线程，确保第一条消息也能绑定稳定的线程 ID。
+        if (!conversation.agentSessionId) {
+          const existing = await agentApi.listConversations(sessionId);
+          const target = existing[0] ?? await agentApi.createConversation(sessionId);
+          conversation = await agentApi.getConversation(sessionId, target.agentSessionId);
+        }
         if (cancelled) return;
+
+        const resolvedAgentSessionId = conversation.agentSessionId || null;
+        if (resolvedAgentSessionId && resolvedAgentSessionId !== agentSessionId) {
+          rememberAgentThreadId(resolvedAgentSessionId);
+          setSearchParams((current) => {
+            current.set('sessionId', sessionId);
+            current.set('agentSessionId', resolvedAgentSessionId);
+            return current;
+          }, { replace: true });
+        }
 
         rememberRetryableRequest(conversation);
         restoreRunProgress(conversation);
@@ -384,32 +420,28 @@ export default function AgentPage() {
         if (conversation.runStatus === 'RUNNING') {
           setRunStatus('running');
           setRunNotice(conversation.runNotice || '服务端仍有一个 Agent 任务正在执行，可等待完成或取消任务。');
-          reconcileConversation(sessionId);
+          reconcileConversation(sessionId, undefined, resolvedAgentSessionId);
         }
         if (conversation.runStatus === 'FAILED') {
           setRunStatus('error');
-          if (conversation.runError) {
-            setRunError(conversation.runError);
-          }
+          if (conversation.runError) setRunError(conversation.runError);
         }
-        if (conversation.runStatus === 'COMPLETED') {
-          setRunStatus('completed');
-        }
+        if (conversation.runStatus === 'COMPLETED') setRunStatus('completed');
         if (conversation.runStatus === 'CANCELLED') {
           setRunStatus('cancelled');
           setRunNotice('上一次 Agent 任务已取消，可以重新执行。');
         }
         restoreConversationMessages(conversation);
-      })
-      .catch(() => {
+      } catch {
         // 会话恢复失败不阻塞当前 Agent，仍允许用户从空白上下文开始。
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;
       clearReconciliationTimer();
     };
-  }, [reconcileConversation, rememberRetryableRequest, restoreConversationMessages, restoreRunProgress, sessionId]);
+  }, [agentSessionId, reconcileConversation, rememberRetryableRequest, restoreConversationMessages, restoreRunProgress, sessionId, setSearchParams]);
 
   useEffect(() => () => {
     abortRef.current?.abort();
@@ -422,6 +454,10 @@ export default function AgentPage() {
   );
 
   const updateStep = (event: AgentStreamEvent) => {
+    if (event.type === 'plan') {
+      setLoopPlan(event.content ?? '');
+      return;
+    }
     if (event.type !== 'step' || !event.step || !event.status) return;
     setSteps((current) => {
       const stepIndex = current.findIndex((step) => step.id === event.step);
@@ -450,6 +486,7 @@ export default function AgentPage() {
       goal: runGoal,
       message: content,
       providerId: runProviderId || undefined,
+      agentSessionId: agentSessionId || undefined,
     };
     const historyMessages = options?.retrying
       ? removeLastRunMessages(messages, runRequest, lastRunMessageIdsRef.current)
@@ -468,6 +505,7 @@ export default function AgentPage() {
     setRunError('');
     setRunNotice('');
     setSources([]);
+    setLoopPlan('');
     setRunStatus('running');
     setSteps(createInitialSteps().map((step, index) => ({
       ...step,
@@ -485,7 +523,7 @@ export default function AgentPage() {
 
     void agentApi.streamMessage(
       sessionId,
-      { goal: runGoal, message: content, history, providerId: runProviderId || undefined },
+       { goal: runGoal, message: content, history, providerId: runProviderId || undefined, agentSessionId: agentSessionId || undefined },
       {
         onEvent: (event) => {
           updateStep(event);
@@ -537,7 +575,7 @@ export default function AgentPage() {
           setRunError('');
           setRunStatus('running');
           setRunNotice(`${message}，正在确认后台任务状态...`);
-          reconcileConversation(sessionId, {
+           reconcileConversation(sessionId, {
             id: assistantMessageId,
             role: 'assistant',
             content: 'Agent 连接暂时中断，正在恢复任务状态...',
@@ -574,7 +612,7 @@ export default function AgentPage() {
     clearReconciliationTimer();
     abortRef.current?.abort();
     setRunNotice('正在取消 Agent 任务...');
-    void agentApi.cancelRun(sessionId)
+    void agentApi.cancelRun(sessionId, agentSessionId)
       .then((conversation) => {
         if (conversation.runStatus === 'COMPLETED') {
           restoreConversationMessages(conversation);
@@ -614,7 +652,26 @@ export default function AgentPage() {
 
   const selectAgentSession = (nextSessionId: string) => {
     if (nextSessionId === sessionId) return;
+    rememberAgentThreadId(null);
     setSearchParams({ sessionId: nextSessionId });
+  };
+
+  const selectAgentConversation = (nextAgentSessionId: string) => {
+    if (!sessionId || nextAgentSessionId === agentSessionId) return;
+    rememberAgentThreadId(nextAgentSessionId);
+    setSearchParams({ sessionId, agentSessionId: nextAgentSessionId });
+  };
+
+  const createAgentConversation = () => {
+    if (!sessionId || runStatus === 'running') return;
+    void agentApi.createConversation(sessionId)
+      .then((conversation) => {
+        rememberAgentThreadId(conversation.agentSessionId);
+        setSearchParams({ sessionId, agentSessionId: conversation.agentSessionId });
+      })
+      .catch((error: unknown) => {
+        setRunError(getErrorMessage(error) || '新建 Agent 对话失败');
+      });
   };
 
   useEffect(() => {
@@ -689,6 +746,9 @@ export default function AgentPage() {
           selectedSessionId={sessionId}
           onSelect={selectAgentSession}
           onCreate={() => navigate('/interviews')}
+          selectedAgentSessionId={agentSessionId}
+          onSelectAgentConversation={selectAgentConversation}
+          onCreateAgentConversation={createAgentConversation}
         />
 
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)] gap-6 items-start min-w-0">
@@ -831,6 +891,12 @@ export default function AgentPage() {
                 </div>
               ))}
             </div>
+            {loopPlan && (
+              <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50/70 px-4 py-3 dark:border-primary-900/50 dark:bg-primary-900/20">
+                <p className="text-xs font-semibold text-primary-600 dark:text-primary-300">本次执行计划</p>
+                <p className="mt-2 whitespace-pre-line text-xs leading-6 text-slate-600 dark:text-slate-300">{loopPlan}</p>
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-3 pt-2">
               <button
                 onClick={startRun}

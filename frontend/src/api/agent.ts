@@ -1,7 +1,11 @@
 import { streamSse } from './stream.ts';
 import request from './request.ts';
-import type { AgentMessageRequest, AgentStreamEvent } from '../types/agent.ts';
-import type { AgentConversationResponse } from '../types/agent.ts';
+import type {
+  AgentConversationResponse,
+  AgentConversationSummary,
+  AgentMessageRequest,
+  AgentStreamEvent,
+} from '../types/agent.ts';
 import { getAgentMemoryKey } from '../utils/clientIdentity.ts';
 
 function agentHeaders() {
@@ -15,16 +19,33 @@ interface AgentStreamHandlers {
 }
 
 export const agentApi = {
-  getConversation(sessionId: string): Promise<AgentConversationResponse> {
+  getConversation(sessionId: string, agentSessionId?: string | null): Promise<AgentConversationResponse> {
+    const query = agentSessionId ? `?agentSessionId=${encodeURIComponent(agentSessionId)}` : '';
     return request.get<AgentConversationResponse>(
-      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversation`,
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversation${query}`,
       { headers: agentHeaders() },
     );
   },
 
-  cancelRun(sessionId: string): Promise<AgentConversationResponse> {
+  listConversations(sessionId: string): Promise<AgentConversationSummary[]> {
+    return request.get<AgentConversationSummary[]>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversations`,
+      { headers: agentHeaders() },
+    );
+  },
+
+  createConversation(sessionId: string, title?: string): Promise<AgentConversationSummary> {
+    return request.post<AgentConversationSummary>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversations`,
+      title?.trim() ? { title: title.trim() } : undefined,
+      { headers: agentHeaders() },
+    );
+  },
+
+  cancelRun(sessionId: string, agentSessionId?: string | null): Promise<AgentConversationResponse> {
+    const query = agentSessionId ? `?agentSessionId=${encodeURIComponent(agentSessionId)}` : '';
     return request.post<AgentConversationResponse>(
-      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/cancel`,
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/cancel${query}`,
       undefined,
       { headers: agentHeaders() },
     );
