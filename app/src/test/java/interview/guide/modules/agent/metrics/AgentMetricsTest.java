@@ -1,6 +1,7 @@
 package interview.guide.modules.agent.metrics;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.math.BigDecimal;
 import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.data.Offset.offset;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -26,6 +28,13 @@ class AgentMetricsTest {
         ObjectProvider<io.micrometer.core.instrument.MeterRegistry> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(registry);
         return new AgentMetrics(provider, enabled);
+    }
+
+    @SuppressWarnings("unchecked")
+    private AgentMetrics metrics(boolean enabled, AgentCostProperties costProperties) {
+        ObjectProvider<io.micrometer.core.instrument.MeterRegistry> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(registry);
+        return new AgentMetrics(provider, costProperties, enabled);
     }
 
     @Test
@@ -94,5 +103,78 @@ class AgentMetricsTest {
         assertThat(registry.get(AgentMetrics.TOOL_DURATION)
             .tag("tool", "load_skill").tag("result", "success").timer().count())
             .isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("记录模型调用耗时和 Provider usage Token")
+    void recordsModelUsageMetrics() {
+        AgentMetrics metrics = metrics(true);
+        AgentMetrics.ModelCallTracker tracker = metrics.startModelCall("pixel");
+
+        metrics.observeModelUsage(tracker, 120, 80, null, "gpt-5.6-luna");
+        metrics.finishModelCall(tracker, "success");
+        metrics.finishModelCall(tracker, "failure");
+
+        assertThat(registry.get(AgentMetrics.MODEL_CALLS)
+            .tag("provider", "pixel")
+            .tag("model", "gpt-5.6-luna")
+            .tag("result", "success")
+            .counter().count()).isEqualTo(1.0);
+        assertThat(registry.get(AgentMetrics.MODEL_DURATION)
+            .tag("provider", "pixel")
+            .tag("model", "gpt-5.6-luna")
+            .tag("result", "success")
+            .timer().count()).isEqualTo(1L);
+        assertThat(registry.get(AgentMetrics.TOKENS)
+            .tag("provider", "pixel")
+            .tag("model", "gpt-5.6-luna")
+            .tag("direction", "prompt")
+            .counter().count()).isEqualTo(120.0);
+        assertThat(registry.get(AgentMetrics.TOKENS)
+            .tag("provider", "pixel")
+            .tag("model", "gpt-5.6-luna")
+            .tag("direction", "completion")
+            .counter().count()).isEqualTo(80.0);
+        assertThat(registry.get(AgentMetrics.TOKENS)
+            .tag("provider", "pixel")
+            .tag("model", "gpt-5.6-luna")
+            .tag("direction", "total")
+            .counter().count()).isEqualTo(200.0);
+        assertThat(registry.find(AgentMetrics.MODEL_CALLS)
+            .tag("result", "failure").counter()).isNull();
+    }
+
+    @Test
+    @DisplayName("Provider 没有 usage 时只记录调用，不伪造 Token")
+    void doesNotInventUsageWhenProviderOmitsIt() {
+        AgentMetrics metrics = metrics(true);
+        AgentMetrics.ModelCallTracker tracker = metrics.startModelCall("provider-without-usage");
+
+        metrics.finishModelCall(tracker, "success");
+
+        assertThat(registry.get(AgentMetrics.MODEL_CALLS).counter().count()).isEqualTo(1.0);
+        assertThat(registry.find(AgentMetrics.TOKENS).counter()).isNull();
+    }
+
+    @Test
+    @DisplayName("显式配置单价时按输入输出 Token 累计费用")
+    void recordsConfiguredModelCost() {
+        AgentCostProperties costProperties = new AgentCostProperties();
+        AgentCostProperties.Pricing pricing = new AgentCostProperties.Pricing();
+        pricing.setInputPerMillion(new BigDecimal("2"));
+        pricing.setOutputPerMillion(new BigDecimal("3"));
+        pricing.setCurrency("CNY");
+        costProperties.getProviders().put("pixel", pricing);
+
+        AgentMetrics metrics = metrics(true, costProperties);
+        AgentMetrics.ModelCallTracker tracker = metrics.startModelCall("pixel");
+        metrics.observeModelUsage(tracker, 120, 80, 200, "gpt-5.6-luna");
+        metrics.finishModelCall(tracker, "success");
+
+        assertThat(registry.get(AgentMetrics.COST)
+            .tag("provider", "pixel")
+            .tag("model", "gpt-5.6-luna")
+            .tag("currency", "CNY")
+            .counter().count()).isCloseTo(0.00048, offset(0.000000000001));
     }
 }

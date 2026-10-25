@@ -14,6 +14,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +25,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 import reactor.core.Disposable;
+import reactor.core.publisher.SignalType;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -359,16 +361,52 @@ public class InterviewAgentService {
                     PromptVariant compactPrompt = buildPromptVariant(
                         context, request, message, compactHistory, plan, loopTrace, true
                     );
-                    BiFunction<String, Boolean, Supplier<Flux<String>>> modelStreamFactory =
+                    BiFunction<String, Boolean, Supplier<ModelStream>> modelStreamFactory =
                         (providerId, compacted) -> {
                             PromptVariant prompt = compacted ? compactPrompt : normalPrompt;
                             return () -> {
-                                ChatClient chatClient = llmProviderRegistry.getAgentChatClient(providerId);
-                                var promptSpec = chatClient.prompt().system(prompt.systemPrompt());
-                                if (!prompt.history().isEmpty()) {
-                                    promptSpec = promptSpec.messages(prompt.history());
+                                AgentMetrics.ModelCallTracker modelCall = agentMetrics.startModelCall(providerId);
+                                try {
+                                    ChatClient chatClient = llmProviderRegistry.getAgentChatClient(providerId);
+                                    var promptSpec = chatClient.prompt().system(prompt.systemPrompt());
+                                    if (!prompt.history().isEmpty()) {
+                                        promptSpec = promptSpec.messages(prompt.history());
+                                    }
+                                    var streamSpec = promptSpec.user(prompt.userPrompt()).stream();
+                                    Flux<ChatResponse> chatResponses = streamSpec.chatResponse();
+                                    if (chatResponses == null) {
+                                        // 保留对旧的/简化 ChatClient 测试替身和不提供 ChatResponse
+                                        // 流的兼容性；真实 Spring AI 2.0 Provider 会走 usage 分支。
+                                        return new ModelStream(streamSpec.content(), modelCall);
+                                    }
+                                    Flux<String> content = chatResponses.handle((response, sink) -> {
+                                        if (response == null) {
+                                            return;
+                                        }
+                                        if (response.getMetadata() != null
+                                            && response.getMetadata().getUsage() != null) {
+                                            var usage = response.getMetadata().getUsage();
+                                            agentMetrics.observeModelUsage(
+                                                modelCall,
+                                                usage.getPromptTokens(),
+                                                usage.getCompletionTokens(),
+                                                usage.getTotalTokens(),
+                                                response.getMetadata().getModel()
+                                            );
+                                        }
+                                        String text = response.getResult() == null
+                                            || response.getResult().getOutput() == null
+                                            ? ""
+                                            : response.getResult().getOutput().getText();
+                                        if (text != null && !text.isEmpty()) {
+                                            sink.next(text);
+                                        }
+                                    });
+                                    return new ModelStream(content, modelCall);
+                                } catch (Throwable error) {
+                                    agentMetrics.finishModelCall(modelCall, "failure");
+                                    throw error;
                                 }
-                                return promptSpec.user(prompt.userPrompt()).stream().content();
                             };
                         };
                     Flux<AgentStreamEvent> response = streamModelWithRetry(
@@ -531,7 +569,7 @@ public class InterviewAgentService {
     }
 
     private Flux<AgentStreamEvent> streamModelWithRetry(
-        BiFunction<String, Boolean, Supplier<Flux<String>>> modelStreamFactory,
+        BiFunction<String, Boolean, Supplier<ModelStream>> modelStreamFactory,
         String providerId,
         String sessionId,
         Long assistantMessageId,
@@ -595,7 +633,7 @@ public class InterviewAgentService {
     }
 
     private Flux<AgentStreamEvent> streamProviderAttempt(
-        BiFunction<String, Boolean, Supplier<Flux<String>>> modelStreamFactory,
+        BiFunction<String, Boolean, Supplier<ModelStream>> modelStreamFactory,
         List<String> providers,
         int providerIndex,
         String sessionId,
@@ -676,8 +714,8 @@ public class InterviewAgentService {
     }
 
     private Flux<AgentStreamEvent> streamModelAttempt(
-        BiFunction<String, Boolean, Supplier<Flux<String>>> modelStreamFactory,
-        Supplier<Flux<String>> modelStream,
+        BiFunction<String, Boolean, Supplier<ModelStream>> modelStreamFactory,
+        Supplier<ModelStream> modelStream,
         String providerId,
         String sessionId,
         Long assistantMessageId,
@@ -686,17 +724,21 @@ public class InterviewAgentService {
         int attempt,
         boolean compacted
     ) {
-        Flux<AgentStreamEvent> attemptStream = Flux.defer(modelStream)
-            .doOnNext(content -> {
-                modelOutputStarted.set(true);
-            })
-            .doOnComplete(() -> llmProviderRegistry.markChatProviderSuccess(providerId))
-            .map(content -> appendOutputChunk(content, output))
-            // 达到展示上限后立即取消上游模型流，避免继续消耗模型额度。
-            .takeUntil(ignored -> output.get().length() >= MAX_AGENT_OUTPUT_CHARS)
-            .filter(content -> !content.isEmpty())
-            .map(AgentStreamEvent::delta);
-        return withModelHeartbeat(attemptStream)
+        return Flux.defer(() -> {
+            ModelStream currentCall = modelStream.get();
+            Flux<AgentStreamEvent> attemptStream = currentCall.content()
+                .doOnNext(content -> {
+                    modelOutputStarted.set(true);
+                })
+                .doOnComplete(() -> llmProviderRegistry.markChatProviderSuccess(providerId))
+                .map(content -> appendOutputChunk(content, output))
+                // 达到展示上限后立即取消上游模型流，避免继续消耗模型额度。
+                .takeUntil(ignored -> output.get().length() >= MAX_AGENT_OUTPUT_CHARS)
+                .filter(content -> !content.isEmpty())
+                .map(AgentStreamEvent::delta);
+            return withModelHeartbeat(attemptStream)
+            .doFinally(signal -> agentMetrics.finishModelCall(
+                currentCall.tracker(), modelCallResult(signal)))
             .onErrorResume(error -> {
                 if (!modelOutputStarted.get() && isContextLimitError(error) && !compacted) {
                     agentMetrics.recordRetry("context_limit");
@@ -754,6 +796,19 @@ public class InterviewAgentService {
                 }
                 return Flux.error(error);
             });
+        });
+    }
+
+    private String modelCallResult(SignalType signal) {
+        return signal == SignalType.ON_COMPLETE
+            ? "success"
+            : signal == SignalType.CANCEL ? "cancelled" : "failure";
+    }
+
+    private record ModelStream(
+        Flux<String> content,
+        AgentMetrics.ModelCallTracker tracker
+    ) {
     }
 
     private List<String> providerCandidatesFromCurrent(String providerId) {
