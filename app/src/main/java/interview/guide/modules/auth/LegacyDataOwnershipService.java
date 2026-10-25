@@ -2,7 +2,9 @@ package interview.guide.modules.auth;
 
 import interview.guide.modules.auth.repository.UserAccountRepository;
 import interview.guide.modules.interview.repository.InterviewSessionRepository;
+import interview.guide.modules.interviewschedule.repository.InterviewScheduleRepository;
 import interview.guide.modules.resume.repository.ResumeRepository;
+import interview.guide.modules.voiceinterview.repository.VoiceInterviewSessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,20 +23,26 @@ public class LegacyDataOwnershipService {
     private final UserAccountRepository userRepository;
     private final ResumeRepository resumeRepository;
     private final InterviewSessionRepository sessionRepository;
+    private final InterviewScheduleRepository scheduleRepository;
+    private final VoiceInterviewSessionRepository voiceSessionRepository;
 
     @Transactional
     public void claimForSingleUser(String userId) {
         if (userId == null || userId.isBlank() || userRepository.count() != 1
             || resumeRepository.countByOwnerIdIsNotNull() > 0
-            || sessionRepository.countByOwnerIdIsNotNull() > 0) {
+            || sessionRepository.countByOwnerIdIsNotNull() > 0
+            || scheduleRepository.countByOwnerIdIsNotNull() > 0
+            || voiceSessionRepository.countByAssignedUserId() > 0) {
             return;
         }
 
         int resumes = resumeRepository.claimUnownedRows(userId);
         int sessions = sessionRepository.claimUnownedRows(userId);
-        if (resumes > 0 || sessions > 0) {
-            log.info("已将单用户迁移期历史数据归属到首个账号: userId={}, resumes={}, sessions={}",
-                userId, resumes, sessions);
+        int schedules = scheduleRepository.claimUnownedRows(userId);
+        int voiceSessions = voiceSessionRepository.claimLegacyRows(userId);
+        if (resumes > 0 || sessions > 0 || schedules > 0 || voiceSessions > 0) {
+            log.info("已将单用户迁移期历史数据归属到首个账号: userId={}, resumes={}, sessions={}, schedules={}, voiceSessions={}",
+                userId, resumes, sessions, schedules, voiceSessions);
         }
     }
 }

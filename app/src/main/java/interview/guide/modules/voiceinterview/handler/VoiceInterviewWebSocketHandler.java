@@ -31,6 +31,7 @@ import java.util.Base64;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.security.Principal;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -78,6 +79,8 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
     private final ExecutorService voicePipelineExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
+    /** 握手成功后固定会话归属，后续 WebSocket 消息不依赖请求线程 ThreadLocal。 */
+    private final Map<String, String> sessionOwners = new ConcurrentHashMap<>();
     private final Map<String, SessionState> sessionStates = new ConcurrentHashMap<>();
     private final Map<String, byte[]> openingAudioCache = new ConcurrentHashMap<>();
 
@@ -149,6 +152,13 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String sessionId = extractSessionId(session);
+        String ownerId = resolveOwnerId(session);
+        Long sessionIdLong = parseSessionId(sessionId);
+        if (sessionIdLong == null || interviewService.getSession(sessionIdLong, ownerId) == null) {
+            log.warn("拒绝未归属当前用户的语音面试 WebSocket: sessionId={}, ownerId={}", sessionId, ownerId);
+            session.close(CloseStatus.POLICY_VIOLATION);
+            return;
+        }
 
         // Increase message size limits for audio streaming
         // 1 second of PCM audio @ 16kHz, 16-bit = ~32KB raw, ~42KB base64
@@ -161,6 +171,9 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
         );
 
         sessions.put(sessionId, safeSession);
+        if (ownerId != null && !ownerId.isBlank()) {
+            sessionOwners.put(sessionId, ownerId);
+        }
         sessionStates.put(sessionId, new SessionState());
         lastActivityTime.put(sessionId, System.currentTimeMillis());
         log.info("WebSocket connection established for session: {}", sessionId);
@@ -373,8 +386,10 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
         String sessionId = extractSessionId(session);
+        String ownerId = sessionOwners.get(sessionId);
         try {
             sessions.remove(sessionId);
+            sessionOwners.remove(sessionId);
             SessionState removedState = sessionStates.remove(sessionId);
             if (removedState != null) {
                 Thread t = removedState.getProcessingThread();
@@ -390,7 +405,7 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
 
             // WebSocket 异常断开时自动结束会话，防止状态永远停留在 IN_PROGRESS
             try {
-                interviewService.endSessionIfInProgress(sessionId);
+                interviewService.endSessionIfInProgress(sessionId, ownerId);
             } catch (Exception endEx) {
                 log.warn("Failed to auto-end session {} after disconnect: {}", sessionId, endEx.getMessage());
             }
@@ -891,10 +906,10 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
                 flushMergedUtteranceToLlm(sessionId);
                 break;
             case "end_interview":
-                interviewService.endSession(sessionId);
+                interviewService.endSession(sessionId, sessionOwners.get(sessionId));
                 break;
             case "start_phase":
-                interviewService.startPhase(sessionId, control.getPhase());
+                interviewService.startPhase(sessionId, control.getPhase(), sessionOwners.get(sessionId));
                 break;
         }
     }
@@ -1196,7 +1211,7 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
             }
 
             // 2. Save session state to database
-            interviewService.pauseSession(sessionId, "timeout");
+            interviewService.pauseSession(sessionId, "timeout", sessionOwners.get(sessionId));
 
             // 3. Close WebSocket connection
             if (session != null && session.isOpen()) {
@@ -1206,6 +1221,7 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
             // 4. Cleanup - Stop ASR session to prevent resource leak
             sttService.stopTranscription(sessionId);
             sessions.remove(sessionId);
+            sessionOwners.remove(sessionId);
             sessionStates.remove(sessionId);
             lastActivityTime.remove(sessionId);
 
@@ -1247,7 +1263,7 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
     private VoiceInterviewSessionEntity getSessionEntity(String sessionId) {
         try {
             Long sessionIdLong = Long.parseLong(sessionId);
-            return interviewService.getSession(sessionIdLong);
+            return interviewService.getSession(sessionIdLong, sessionOwners.get(sessionId));
         } catch (NumberFormatException e) {
             log.error("Invalid session ID format: {}", sessionId);
             return null;
@@ -1259,10 +1275,25 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
      */
     private void saveMessage(String sessionId, String userText, String aiText) {
         try {
-            interviewService.saveMessage(sessionId, userText, aiText);
+            interviewService.saveMessage(sessionId, userText, aiText, sessionOwners.get(sessionId));
             log.debug("Message saved to database for session: {}", sessionId);
         } catch (Exception e) {
             log.error("Error saving message for session {}", sessionId, e);
+        }
+    }
+
+    private String resolveOwnerId(WebSocketSession session) {
+        Principal principal = session.getPrincipal();
+        return principal != null && principal.getName() != null && !principal.getName().isBlank()
+            ? principal.getName()
+            : null;
+    }
+
+    private Long parseSessionId(String sessionId) {
+        try {
+            return Long.valueOf(sessionId);
+        } catch (NumberFormatException | NullPointerException e) {
+            return null;
         }
     }
 

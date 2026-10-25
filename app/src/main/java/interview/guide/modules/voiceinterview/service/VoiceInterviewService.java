@@ -5,6 +5,7 @@ import interview.guide.common.constant.CommonConstants.InterviewDefaults;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.model.AsyncTaskStatus;
+import interview.guide.modules.auth.AuthUserContext;
 import interview.guide.modules.voiceinterview.config.VoiceInterviewProperties;
 import interview.guide.modules.voiceinterview.dto.CreateSessionRequest;
 import interview.guide.modules.voiceinterview.dto.VoiceInterviewMessageDTO;
@@ -17,6 +18,7 @@ import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionStatus;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewEvaluationRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewMessageRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewSessionRepository;
+import interview.guide.modules.resume.repository.ResumeRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBucket;
@@ -55,6 +57,7 @@ public class VoiceInterviewService {
     private final VoiceInterviewProperties properties;
     private final VoiceEvaluateStreamProducer voiceEvaluateStreamProducer;
     private final LlmProviderRegistry llmProviderRegistry;
+    private final ResumeRepository resumeRepository;
 
     private static final String SESSION_CACHE_KEY_PREFIX = "voice:interview:session:";
     private static final int CACHE_TTL_HOURS = 1;
@@ -75,9 +78,11 @@ public class VoiceInterviewService {
         String effectiveLlmProvider = (request.getLlmProvider() != null && !request.getLlmProvider().isBlank())
             ? request.getLlmProvider()
             : null;
+        String ownerId = currentOrDefaultOwner();
+        validateResumeOwner(request.getResumeId(), ownerId);
 
         VoiceInterviewSessionEntity session = VoiceInterviewSessionEntity.builder()
-                .userId(DEFAULT_USER_ID)
+                .userId(ownerId)
                 .roleType(effectiveSkillId)
                 .skillId(effectiveSkillId)
                 .difficulty(request.getDifficulty() != null ? request.getDifficulty() : InterviewDefaults.DIFFICULTY)
@@ -107,8 +112,14 @@ public class VoiceInterviewService {
      */
     @Transactional
     public void endSessionIfInProgress(String sessionId) {
+        endSessionIfInProgress(sessionId, null);
+    }
+
+    /** WebSocket 连接关闭时使用握手阶段确认过的用户归属。 */
+    @Transactional
+    public void endSessionIfInProgress(String sessionId, String ownerId) {
         Long sessionIdLong = parseSessionId(sessionId);
-        VoiceInterviewSessionEntity session = sessionRepository.findById(sessionIdLong).orElse(null);
+        VoiceInterviewSessionEntity session = getSession(sessionIdLong, ownerId);
         if (session == null || session.getStatus() != VoiceInterviewSessionStatus.IN_PROGRESS) {
             return;
         }
@@ -125,8 +136,13 @@ public class VoiceInterviewService {
      */
     @Transactional
     public void endSession(String sessionId) {
+        endSession(sessionId, null);
+    }
+
+    @Transactional
+    public void endSession(String sessionId, String ownerId) {
         Long sessionIdLong = parseSessionId(sessionId);
-        VoiceInterviewSessionEntity session = getSession(sessionIdLong);
+        VoiceInterviewSessionEntity session = getSession(sessionIdLong, ownerId);
 
         if (session == null) {
             log.warn("Session not found: {}", sessionId);
@@ -159,7 +175,7 @@ public class VoiceInterviewService {
      * @return VoiceInterviewSessionEntity or null if not found
      */
     public VoiceInterviewSessionEntity getSession(String sessionId) {
-        return getSession(parseSessionId(sessionId));
+        return getSession(parseSessionId(sessionId), null);
     }
 
     /**
@@ -170,18 +186,32 @@ public class VoiceInterviewService {
      * @return VoiceInterviewSessionEntity or null if not found
      */
     public VoiceInterviewSessionEntity getSession(Long sessionId) {
+        return getSession(sessionId, null);
+    }
+
+    /**
+     * 根据当前请求或显式的 WebSocket 用户归属读取会话。
+     * ownerId 为空时保留后台消费者和兼容模式按 ID 读取的能力。
+     */
+    public VoiceInterviewSessionEntity getSession(Long sessionId, String ownerId) {
         if (sessionId == null) {
             return null;
         }
+
+        String effectiveOwnerId = AuthUserContext.currentUserId().orElse(normalizeOwner(ownerId));
 
         // Try cache first
         String cacheKey = getSessionCacheKey(sessionId);
         RBucket<VoiceInterviewSessionEntity> bucket = redissonClient.getBucket(cacheKey);
         VoiceInterviewSessionEntity cached = bucket.get();
 
-        if (cached != null) {
+        if (cached != null && (effectiveOwnerId == null || effectiveOwnerId.equals(cached.getUserId()))) {
             log.debug("Session {} found in cache", sessionId);
             return cached;
+        }
+
+        if (effectiveOwnerId != null) {
+            return sessionRepository.findByIdAndUserId(sessionId, effectiveOwnerId).orElse(null);
         }
 
         // Fallback to database
@@ -197,8 +227,13 @@ public class VoiceInterviewService {
      */
     @Transactional
     public void startPhase(String sessionId, String phaseStr) {
+        startPhase(sessionId, phaseStr, null);
+    }
+
+    @Transactional
+    public void startPhase(String sessionId, String phaseStr, String ownerId) {
         Long sessionIdLong = parseSessionId(sessionId);
-        VoiceInterviewSessionEntity session = getSession(sessionIdLong);
+        VoiceInterviewSessionEntity session = getSession(sessionIdLong, ownerId);
 
         if (session == null) {
             log.warn("Cannot start phase - session not found: {}", sessionId);
@@ -243,8 +278,13 @@ public class VoiceInterviewService {
      */
     @Transactional
     public void saveMessage(String sessionId, String userText, String aiText) {
+        saveMessage(sessionId, userText, aiText, null);
+    }
+
+    @Transactional
+    public void saveMessage(String sessionId, String userText, String aiText, String ownerId) {
         Long sessionIdLong = parseSessionId(sessionId);
-        VoiceInterviewSessionEntity session = getSession(sessionIdLong);
+        VoiceInterviewSessionEntity session = getSession(sessionIdLong, ownerId);
 
         if (session == null) {
             log.warn("Cannot save message - session not found: {}", sessionId);
@@ -393,10 +433,17 @@ public class VoiceInterviewService {
      */
     @Transactional
     public void pauseSession(String sessionId, String reason) {
+        pauseSession(sessionId, reason, null);
+    }
+
+    @Transactional
+    public void pauseSession(String sessionId, String reason, String ownerId) {
         Long sessionIdLong = parseSessionId(sessionId);
 
-        VoiceInterviewSessionEntity session = sessionRepository.findById(sessionIdLong)
-            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在: " + sessionId));
+        VoiceInterviewSessionEntity session = getSession(sessionIdLong, ownerId);
+        if (session == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "会话不存在: " + sessionId);
+        }
 
         if (session.getStatus() != VoiceInterviewSessionStatus.IN_PROGRESS) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
@@ -422,10 +469,17 @@ public class VoiceInterviewService {
      */
     @Transactional
     public SessionResponseDTO resumeSession(String sessionId) {
+        return resumeSession(sessionId, null);
+    }
+
+    @Transactional
+    public SessionResponseDTO resumeSession(String sessionId, String ownerId) {
         Long sessionIdLong = parseSessionId(sessionId);
 
-        VoiceInterviewSessionEntity session = sessionRepository.findById(sessionIdLong)
-            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在: " + sessionId));
+        VoiceInterviewSessionEntity session = getSession(sessionIdLong, ownerId);
+        if (session == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "会话不存在: " + sessionId);
+        }
 
         if (session.getStatus() != VoiceInterviewSessionStatus.PAUSED) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
@@ -454,7 +508,9 @@ public class VoiceInterviewService {
      * @return List of session metadata
      */
     public List<SessionMetaDTO> getAllSessions(String userId, String status) {
-        userId = userId != null ? userId : DEFAULT_USER_ID;
+        String requestedUserId = userId;
+        userId = AuthUserContext.currentUserId().orElseGet(() ->
+            requestedUserId != null && !requestedUserId.isBlank() ? requestedUserId.trim() : DEFAULT_USER_ID);
 
         List<VoiceInterviewSessionEntity> sessions;
         if (status != null && !status.isEmpty()) {
@@ -680,12 +736,13 @@ public class VoiceInterviewService {
      */
     @Transactional
     public void deleteSession(Long sessionId) {
-        if (!sessionRepository.existsById(sessionId)) {
+        VoiceInterviewSessionEntity session = getSession(sessionId);
+        if (session == null) {
             throw new BusinessException(ErrorCode.VOICE_SESSION_NOT_FOUND, "会话不存在: " + sessionId);
         }
         evaluationRepository.findBySessionId(sessionId).ifPresent(evaluationRepository::delete);
         messageRepository.deleteBySessionId(sessionId);
-        sessionRepository.deleteById(sessionId);
+        sessionRepository.delete(session);
         log.info("Deleted voice interview session: {}", sessionId);
     }
 
@@ -782,5 +839,25 @@ public class VoiceInterviewService {
         }
 
         return cleaned;
+    }
+
+    private String currentOrDefaultOwner() {
+        return AuthUserContext.currentUserId().orElse(DEFAULT_USER_ID);
+    }
+
+    private String normalizeOwner(String ownerId) {
+        if (ownerId == null || ownerId.isBlank()) {
+            return null;
+        }
+        return ownerId.trim();
+    }
+
+    private void validateResumeOwner(Long resumeId, String ownerId) {
+        if (resumeId == null || resumeRepository == null || AuthUserContext.currentUserId().isEmpty()) {
+            return;
+        }
+        if (resumeRepository.findByIdAndOwnerId(resumeId, ownerId).isEmpty()) {
+            throw new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在");
+        }
     }
 }

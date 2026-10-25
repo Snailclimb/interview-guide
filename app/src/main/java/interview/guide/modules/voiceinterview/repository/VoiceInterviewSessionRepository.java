@@ -5,6 +5,7 @@ import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity.
 import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -51,6 +52,17 @@ public interface VoiceInterviewSessionRepository extends JpaRepository<VoiceInte
         String userId,
         VoiceInterviewSessionStatus status
     );
+
+    @Query("SELECT COUNT(s) FROM VoiceInterviewSessionEntity s "
+        + "WHERE s.userId IS NOT NULL AND s.userId <> 'default'")
+    long countByAssignedUserId();
+
+    @Modifying
+    @Query("UPDATE VoiceInterviewSessionEntity s SET s.userId = :userId "
+        + "WHERE s.userId IS NULL OR s.userId = 'default'")
+    int claimLegacyRows(@Param("userId") String userId);
+
+    Optional<VoiceInterviewSessionEntity> findByIdAndUserId(Long id, String userId);
 
     List<VoiceInterviewSessionEntity> findByStatusAndStartTimeBefore(
         VoiceInterviewSessionStatus status,
