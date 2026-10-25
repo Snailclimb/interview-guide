@@ -1,6 +1,7 @@
 package interview.guide.modules.resume.service;
 
 import interview.guide.common.config.AppConfigProperties;
+import interview.guide.modules.auth.AuthUserContext;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.model.AsyncTaskStatus;
@@ -190,13 +191,13 @@ public class ResumeUploadService {
      * @param resumeId 简历ID
      */
     public void reanalyze(Long resumeId) {
-        resumeRepository.findById(resumeId)
+        findScopedResume(resumeId)
             .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
 
         log.info("开始重新分析简历: resumeId={}", resumeId);
 
         transactionalExecutor.run(() -> {
-            ResumeEntity resume = resumeRepository.findById(resumeId)
+            ResumeEntity resume = findScopedResume(resumeId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
             resume.setAnalyzeStatus(AsyncTaskStatus.PENDING);
             resume.setAnalyzeError(null);
@@ -205,7 +206,10 @@ public class ResumeUploadService {
             resumeRepository.save(resume);
         });
         // 手动重试清零自动恢复计数
-        resumeRepository.resetAnalyzeRecoveryCount(resumeId);
+        findScopedResume(resumeId).ifPresent(resume -> {
+            resume.setAnalyzeRecoveryCount(0);
+            resumeRepository.save(resume);
+        });
 
         // 事务提交后再发送分析任务到 Stream；投递失败必须让调用方感知
         if (!analyzeStreamProducer.sendAnalyzeTask(resumeId)) {
@@ -213,5 +217,11 @@ public class ResumeUploadService {
         }
 
         log.info("重新分析任务已发送: resumeId={}", resumeId);
+    }
+
+    private Optional<ResumeEntity> findScopedResume(Long resumeId) {
+        return AuthUserContext.currentUserId()
+            .map(ownerId -> resumeRepository.findByIdAndOwnerId(resumeId, ownerId))
+            .orElseGet(() -> resumeRepository.findById(resumeId));
     }
 }

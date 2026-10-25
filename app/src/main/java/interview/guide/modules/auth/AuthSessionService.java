@@ -24,6 +24,10 @@ public class AuthSessionService {
     private final RedissonClient redissonClient;
     private final AuthProperties properties;
 
+    public boolean isRequired() {
+        return properties.isRequired();
+    }
+
     public String create(String userId, HttpServletResponse response) {
         String token = UUID.randomUUID().toString() + UUID.randomUUID();
         bucket(token).set(userId, ttlSeconds(), TimeUnit.SECONDS);

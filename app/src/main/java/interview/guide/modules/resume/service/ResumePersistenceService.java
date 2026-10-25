@@ -5,6 +5,7 @@ import interview.guide.common.exception.ErrorCode;
 import interview.guide.infrastructure.file.FileHashService;
 import interview.guide.infrastructure.mapper.ResumeMapper;
 import interview.guide.modules.interview.model.ResumeAnalysisResponse;
+import interview.guide.modules.auth.AuthUserContext;
 import interview.guide.modules.resume.model.ResumeAnalysisEntity;
 import interview.guide.modules.resume.model.ResumeEntity;
 import interview.guide.modules.resume.repository.ResumeAnalysisRepository;
@@ -46,7 +47,7 @@ public class ResumePersistenceService {
     public Optional<ResumeEntity> findExistingResume(MultipartFile file) {
         try {
             String fileHash = fileHashService.calculateHash(file);
-            Optional<ResumeEntity> existing = resumeRepository.findByFileHash(fileHash);
+            Optional<ResumeEntity> existing = findByFileHashScoped(fileHash);
             
             if (existing.isPresent()) {
                 log.info("检测到重复简历: hash={}", fileHash);
@@ -72,6 +73,7 @@ public class ResumePersistenceService {
             String fileHash = fileHashService.calculateHash(file);
             
             ResumeEntity resume = new ResumeEntity();
+            AuthUserContext.currentUserId().ifPresent(resume::setOwnerId);
             resume.setFileHash(fileHash);
             resume.setOriginalFilename(file.getOriginalFilename());
             resume.setFileSize(file.getSize());
@@ -98,7 +100,7 @@ public class ResumePersistenceService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void updateResumeText(Long resumeId, String resumeText) {
-        ResumeEntity resume = resumeRepository.findById(resumeId)
+        ResumeEntity resume = findByIdScoped(resumeId)
             .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
         resume.setResumeText(resumeText);
         if (resume.getOriginalResumeText() == null || resume.getOriginalResumeText().isBlank()) {
@@ -143,7 +145,7 @@ public class ResumePersistenceService {
     @Transactional(rollbackFor = Exception.class)
     public ResumeAnalysisEntity saveAnalysisIfOwned(Long resumeId, String attemptId,
                                                      ResumeAnalysisResponse analysis) {
-        ResumeEntity resume = resumeRepository.findByIdForUpdate(resumeId)
+        ResumeEntity resume = findByIdForUpdateScoped(resumeId)
             .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND, "简历不存在"));
         if (resume.getAnalyzeStatus() != interview.guide.common.model.AsyncTaskStatus.PROCESSING
             || !Objects.equals(resume.getAnalyzeAttemptId(), attemptId)) {
@@ -172,7 +174,9 @@ public class ResumePersistenceService {
      * 获取所有简历列表
      */
     public List<ResumeEntity> findAllResumes() {
-        return resumeRepository.findAll();
+        return AuthUserContext.currentUserId()
+            .map(resumeRepository::findAllByOwnerIdOrderByUploadedAtDesc)
+            .orElseGet(resumeRepository::findAll);
     }
     
     /**
@@ -217,7 +221,7 @@ public class ResumePersistenceService {
      * 根据ID获取简历
      */
     public Optional<ResumeEntity> findById(Long id) {
-        return resumeRepository.findById(id);
+        return findByIdScoped(id);
     }
     
     /**
@@ -226,7 +230,7 @@ public class ResumePersistenceService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void deleteResume(Long id) {
-        Optional<ResumeEntity> resumeOpt = resumeRepository.findById(id);
+        Optional<ResumeEntity> resumeOpt = findByIdScoped(id);
         if (resumeOpt.isEmpty()) {
             throw new BusinessException(ErrorCode.RESUME_NOT_FOUND);
         }
@@ -243,5 +247,23 @@ public class ResumePersistenceService {
         // 2. 删除简历实体（面试会话会在服务层删除）
         resumeRepository.delete(resume);
         log.info("简历已删除: id={}, filename={}", id, resume.getOriginalFilename());
+    }
+
+    private Optional<ResumeEntity> findByFileHashScoped(String fileHash) {
+        return AuthUserContext.currentUserId()
+            .map(ownerId -> resumeRepository.findByFileHashAndOwnerId(fileHash, ownerId))
+            .orElseGet(() -> resumeRepository.findByFileHash(fileHash));
+    }
+
+    private Optional<ResumeEntity> findByIdScoped(Long id) {
+        return AuthUserContext.currentUserId()
+            .map(ownerId -> resumeRepository.findByIdAndOwnerId(id, ownerId))
+            .orElseGet(() -> resumeRepository.findById(id));
+    }
+
+    private Optional<ResumeEntity> findByIdForUpdateScoped(Long id) {
+        return AuthUserContext.currentUserId()
+            .map(ownerId -> resumeRepository.findByIdForUpdateAndOwnerId(id, ownerId))
+            .orElseGet(() -> resumeRepository.findByIdForUpdate(id));
     }
 }

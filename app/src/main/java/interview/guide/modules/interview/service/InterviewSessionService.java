@@ -5,6 +5,7 @@ import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.model.AsyncTaskStatus;
+import interview.guide.modules.auth.AuthUserContext;
 import interview.guide.infrastructure.redis.InterviewSessionCache;
 import interview.guide.infrastructure.redis.InterviewSessionCache.CachedSession;
 import interview.guide.infrastructure.redis.RedisService;
@@ -234,6 +235,8 @@ public class InterviewSessionService {
      * 获取会话信息（优先从缓存获取，缓存未命中则从数据库恢复）
      */
     public InterviewSessionDTO getSession(String sessionId) {
+        assertSessionAccessible(sessionId);
+
         // 1. 尝试从 Redis 缓存获取
         Optional<CachedSession> cachedOpt = sessionCache.getSession(sessionId);
         if (cachedOpt.isPresent()) {
@@ -258,7 +261,9 @@ public class InterviewSessionService {
             Optional<String> cachedSessionIdOpt = sessionCache.findUnfinishedSessionId(resumeId);
             if (cachedSessionIdOpt.isPresent()) {
                 String sessionId = cachedSessionIdOpt.get();
-                Optional<CachedSession> cachedOpt = sessionCache.getSession(sessionId);
+                Optional<CachedSession> cachedOpt = isSessionAccessible(sessionId)
+                    ? sessionCache.getSession(sessionId)
+                    : Optional.empty();
                 if (cachedOpt.isPresent()) {
                     log.debug("从 Redis 缓存找到未完成会话: resumeId={}, sessionId={}", resumeId, sessionId);
                     return Optional.of(toDTO(cachedOpt.get()));
@@ -555,6 +560,8 @@ public class InterviewSessionService {
      * 获取或恢复会话（优先从缓存获取）
      */
     private CachedSession getOrRestoreSession(String sessionId) {
+        assertSessionAccessible(sessionId);
+
         // 1. 尝试从 Redis 缓存获取
         Optional<CachedSession> cachedOpt = sessionCache.getSession(sessionId);
         if (cachedOpt.isPresent()) {
@@ -570,6 +577,21 @@ public class InterviewSessionService {
         }
 
         return restoredSession;
+    }
+
+    /**
+     * Redis 会话缓存不携带用户归属，正式登录模式下必须先用数据库的归属关系校验，
+     * 防止仅凭猜到的 sessionId 读取或修改其他用户的缓存会话。
+     */
+    private void assertSessionAccessible(String sessionId) {
+        if (!isSessionAccessible(sessionId)) {
+            throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND);
+        }
+    }
+
+    private boolean isSessionAccessible(String sessionId) {
+        return AuthUserContext.currentUserId().isEmpty()
+            || persistenceService.findBySessionId(sessionId).isPresent();
     }
 
     /**

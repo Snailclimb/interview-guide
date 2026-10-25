@@ -21,6 +21,20 @@ import jakarta.persistence.LockModeType;
 @Repository
 public interface ResumeRepository extends JpaRepository<ResumeEntity, Long> {
 
+    long countByOwnerIdIsNotNull();
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE ResumeEntity r SET r.ownerId = :ownerId WHERE r.ownerId IS NULL")
+    int claimUnownedRows(@Param("ownerId") String ownerId);
+
+    Optional<ResumeEntity> findByIdAndOwnerId(Long id, String ownerId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM ResumeEntity r WHERE r.id = :id AND r.ownerId = :ownerId")
+    Optional<ResumeEntity> findByIdForUpdateAndOwnerId(
+        @Param("id") Long id, @Param("ownerId") String ownerId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT r FROM ResumeEntity r WHERE r.id = :id")
     Optional<ResumeEntity> findByIdForUpdate(@Param("id") Long id);
@@ -29,6 +43,10 @@ public interface ResumeRepository extends JpaRepository<ResumeEntity, Long> {
      * 根据文件哈希查找简历（用于去重）
      */
     Optional<ResumeEntity> findByFileHash(String fileHash);
+
+    Optional<ResumeEntity> findByFileHashAndOwnerId(String fileHash, String ownerId);
+
+    List<ResumeEntity> findAllByOwnerIdOrderByUploadedAtDesc(String ownerId);
     
     /**
      * 检查文件哈希是否存在

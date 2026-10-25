@@ -4,6 +4,7 @@ import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.ai.PromptSanitizer;
 import interview.guide.common.ai.PromptSecurityConstants;
 import interview.guide.common.exception.BusinessException;
+import interview.guide.modules.auth.AuthUserContext;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
 import interview.guide.modules.agent.model.AgentMessageRequest;
 import interview.guide.modules.agent.model.AgentStreamEvent;
@@ -129,14 +130,17 @@ public class InterviewAgentService {
     public Flux<AgentStreamEvent> stream(
         String sessionId, AgentMessageRequest request, String ownerKey
     ) {
+        String dataOwnerKey = AuthUserContext.currentUserId().orElse(null);
         if (ownerKey != null && !ownerKey.isBlank()) {
             agentConversationService.assertAccess(sessionId, request.agentSessionId(), ownerKey);
             request = request.withMemoryKey(ownerKey);
         }
-        return streamInternal(sessionId, request);
+        return streamInternal(sessionId, request, dataOwnerKey);
     }
 
-    private Flux<AgentStreamEvent> streamInternal(String sessionId, AgentMessageRequest request) {
+    private Flux<AgentStreamEvent> streamInternal(
+        String sessionId, AgentMessageRequest request, String dataOwnerKey
+    ) {
         return Flux.concat(
             Flux.just(AgentStreamEvent.step("context", "running")),
             Flux.defer(() -> {
@@ -160,9 +164,13 @@ public class InterviewAgentService {
                 List<AgentHistoryMessage> historyMessages = AgentHistoryPolicy.normalize(
                     persistedHistory.isEmpty() ? request.history() : persistedHistory
                 );
-                AgentContextService.AgentContext context = agentContextService.build(
-                    sessionId, request, historyMessages
-                );
+                AgentContextService.AgentContext context;
+                AuthUserContext.set(dataOwnerKey);
+                try {
+                    context = agentContextService.build(sessionId, request, historyMessages);
+                } finally {
+                    AuthUserContext.clear();
+                }
 
                 AgentConversationService.PreparedMessage preparedMessage = prepareMessage(
                     sessionId, request, message
@@ -253,9 +261,15 @@ public class InterviewAgentService {
                     message, historyMessages, recoveredRun.providerId(), recoveredRun.memoryKey(),
                     recoveredRun.agentSessionId()
                 );
-                AgentContextService.AgentContext context = agentContextService.build(
-                    recoveredRun.interviewSessionId(), request, historyMessages
-                );
+                AgentContextService.AgentContext context;
+                AuthUserContext.set(recoveredRun.ownerKey());
+                try {
+                    context = agentContextService.build(
+                        recoveredRun.interviewSessionId(), request, historyMessages
+                    );
+                } finally {
+                    AuthUserContext.clear();
+                }
                 AgentConversationService.PreparedMessage prepared = new AgentConversationService.PreparedMessage(
                     recoveredRun.assistantMessageId(), null, recoveredRun.runId(), recoveredRun.agentSessionId()
                 );

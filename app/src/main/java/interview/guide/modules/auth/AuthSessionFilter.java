@@ -27,7 +27,9 @@ public class AuthSessionFilter extends OncePerRequestFilter {
         FilterChain filterChain
     ) throws ServletException, IOException {
         String token = sessionService.readToken(request);
-        sessionService.resolve(token).ifPresent(userId -> {
+        var sessionUser = sessionService.resolve(token);
+        sessionUser.ifPresent(userId -> {
+            AuthUserContext.set(userId);
             UsernamePasswordAuthenticationToken authentication =
                 new UsernamePasswordAuthenticationToken(
                     userId,
@@ -40,7 +42,17 @@ public class AuthSessionFilter extends OncePerRequestFilter {
         try {
             filterChain.doFilter(request, response);
         } finally {
+            AuthUserContext.clear();
             SecurityContextHolder.clearContext();
         }
+    }
+
+    private String legacyIdentity(HttpServletRequest request) {
+        String identity = request.getHeader("X-User-Id");
+        if (identity == null || identity.isBlank()) {
+            return null;
+        }
+        String normalized = identity.trim();
+        return normalized.length() > 64 ? normalized.substring(0, 64) : normalized;
     }
 }
