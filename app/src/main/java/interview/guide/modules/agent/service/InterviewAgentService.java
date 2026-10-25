@@ -25,7 +25,6 @@ import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 import reactor.core.Disposable;
-import reactor.core.publisher.SignalType;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -157,6 +156,7 @@ public class InterviewAgentService {
             AgentMetrics.RunTracker runTracker = agentMetrics.startRun();
             AtomicReference<AgentTaskHandle> taskHandleRef = new AtomicReference<>();
             AtomicReference<String> activeAgentSessionKeyRef = new AtomicReference<>(activeKey);
+            AtomicReference<String> preparedRunIdRef = new AtomicReference<>();
             try {
                 String message = promptSanitizer.sanitize(request.message());
                 List<AgentHistoryMessage> persistedHistory = request.agentSessionId() == null
@@ -178,8 +178,9 @@ public class InterviewAgentService {
                     sessionId, request, message
                 );
                 preparedAssistantMessageId = preparedMessage.assistantMessageId();
+                preparedRunIdRef.set(preparedMessage.runId());
                 AgentTaskHandle taskHandle = new AgentTaskHandle(
-                    preparedMessage.assistantMessageId(), cancellationSignal
+                    preparedMessage.assistantMessageId(), preparedMessage.runId(), cancellationSignal
                 );
                 taskHandleRef.set(taskHandle);
                 String resolvedAgentSessionId = preparedMessage.agentSessionId() == null
@@ -211,7 +212,7 @@ public class InterviewAgentService {
                 }, FluxSink.OverflowStrategy.BUFFER);
             } catch (Throwable error) {
                 if (preparedAssistantMessageId != null) {
-                    failPreparedMessage(preparedAssistantMessageId, error);
+                    failPreparedMessage(preparedAssistantMessageId, error, preparedRunIdRef.get());
                     agentProgressWriter.finish(preparedAssistantMessageId);
                 }
                 agentMetrics.finishRun(runTracker, "failure");
@@ -249,7 +250,9 @@ public class InterviewAgentService {
             Sinks.One<Void> cancellationSignal = Sinks.one();
             cancellationSignals.put(activeKey, cancellationSignal);
             AgentMetrics.RunTracker runTracker = agentMetrics.startRun();
-            AgentTaskHandle taskHandle = new AgentTaskHandle(recoveredRun.assistantMessageId(), cancellationSignal);
+            AgentTaskHandle taskHandle = new AgentTaskHandle(
+                recoveredRun.assistantMessageId(), recoveredRun.runId(), cancellationSignal
+            );
             activeTasks.put(activeKey, taskHandle);
             try {
                 String message = promptSanitizer.sanitize(recoveredRun.userContent());
@@ -287,7 +290,7 @@ public class InterviewAgentService {
                     () -> log.info("Agent 启动恢复任务完成: sessionId={}", recoveredRun.interviewSessionId())
                 );
             } catch (Throwable error) {
-                failPreparedMessage(recoveredRun.assistantMessageId(), error);
+                failPreparedMessage(recoveredRun.assistantMessageId(), error, recoveredRun.runId());
                 agentProgressWriter.finish(recoveredRun.assistantMessageId());
                 agentMetrics.finishRun(runTracker, "failure");
                 activeSessions.remove(activeKey);
@@ -411,7 +414,8 @@ public class InterviewAgentService {
                         };
                     Flux<AgentStreamEvent> response = streamModelWithRetry(
                         modelStreamFactory, request.providerId(), sessionId,
-                        preparedMessage.assistantMessageId(), context.sources(), runTracker, taskHandle
+                        preparedMessage.assistantMessageId(), preparedMessage.runId(), context.sources(),
+                        runTracker, taskHandle
                     );
                     return Flux.concat(
                         Flux.just(
@@ -441,7 +445,9 @@ public class InterviewAgentService {
                 })
         )
             .doOnNext(event -> persistRunProgress(preparedMessage.assistantMessageId(), event))
-            .doOnError(error -> failPreparedMessage(preparedMessage.assistantMessageId(), error))
+            .doOnError(error -> failPreparedMessage(
+                preparedMessage.assistantMessageId(), error, preparedMessage.runId()
+            ))
             .takeUntilOther(Flux.merge(
                 cancellationSignal.asMono(),
                 monitorRemoteCancellation(sessionId, agentSessionId, preparedMessage.runId())
@@ -491,7 +497,9 @@ public class InterviewAgentService {
             boolean shouldPersistCancellation = taskHandle.markCancellationPersisted();
             taskHandle.cancel();
             if (shouldPersistCancellation) {
-                agentConversationService.cancelMessage(taskHandle.assistantMessageId, "");
+                agentConversationService.cancelMessage(
+                    taskHandle.assistantMessageId, "", taskHandle.runId
+                );
             }
             agentProgressWriter.finish(taskHandle.assistantMessageId);
             return true;
@@ -511,12 +519,16 @@ public class InterviewAgentService {
 
     private static final class AgentTaskHandle {
         private final Long assistantMessageId;
+        private final String runId;
         private final Sinks.One<Void> cancellationSignal;
         private final AtomicBoolean cancellationPersisted = new AtomicBoolean();
         private volatile Disposable subscription;
 
-        private AgentTaskHandle(Long assistantMessageId, Sinks.One<Void> cancellationSignal) {
+        private AgentTaskHandle(
+            Long assistantMessageId, String runId, Sinks.One<Void> cancellationSignal
+        ) {
             this.assistantMessageId = assistantMessageId;
+            this.runId = runId;
             this.cancellationSignal = cancellationSignal;
         }
 
@@ -535,9 +547,11 @@ public class InterviewAgentService {
         }
     }
 
-    private void failPreparedMessage(Long messageId, Throwable error) {
+    private void failPreparedMessage(Long messageId, Throwable error, String expectedRunId) {
         try {
-            agentConversationService.failMessage(messageId, "", toAgentErrorMessage(error));
+            agentConversationService.failMessage(
+                messageId, "", toAgentErrorMessage(error), expectedRunId
+            );
         } catch (Throwable persistenceError) {
             log.warn("Agent 任务失败状态持久化失败: messageId={}", messageId, persistenceError);
         }
@@ -573,6 +587,7 @@ public class InterviewAgentService {
         String providerId,
         String sessionId,
         Long assistantMessageId,
+        String runId,
         List<interview.guide.modules.agent.model.AgentSource> sources,
         AgentMetrics.RunTracker runTracker,
         AgentTaskHandle taskHandle
@@ -588,6 +603,8 @@ public class InterviewAgentService {
             0,
             sessionId,
             assistantMessageId,
+            runId,
+            runTracker,
             modelOutputStarted,
             output,
             false
@@ -610,7 +627,8 @@ public class InterviewAgentService {
                 agentProgressWriter.flush(assistantMessageId);
                 agentConversationService.completeMessage(
                     assistantMessageId,
-                    output.get().toString()
+                    output.get().toString(),
+                    runId
                 );
             })
             .doOnError(error -> {
@@ -618,13 +636,16 @@ public class InterviewAgentService {
                 agentConversationService.failMessage(
                     assistantMessageId,
                     output.get().toString(),
-                    toAgentErrorMessage(error)
+                    toAgentErrorMessage(error),
+                    runId
                 );
             })
             .doOnCancel(() -> {
                 agentProgressWriter.flush(assistantMessageId);
                 if (taskHandle == null || taskHandle.markCancellationPersisted()) {
-                    agentConversationService.cancelMessage(assistantMessageId, output.get().toString());
+                    agentConversationService.cancelMessage(
+                        assistantMessageId, output.get().toString(), runId
+                    );
                 }
             })
             // 模型流自己的 doFinally 会先结束 ModelCallTracker；在这里再读取聚合快照，
@@ -657,6 +678,8 @@ public class InterviewAgentService {
         int providerIndex,
         String sessionId,
         Long assistantMessageId,
+        String runId,
+        AgentMetrics.RunTracker runTracker,
         AtomicBoolean modelOutputStarted,
         AtomicReference<StringBuilder> output,
         boolean compacted
@@ -669,6 +692,8 @@ public class InterviewAgentService {
                 currentProvider,
                 sessionId,
                 assistantMessageId,
+                runId,
+                runTracker,
                 modelOutputStarted,
                 output,
                 0,
@@ -697,6 +722,8 @@ public class InterviewAgentService {
                         providerIndex + 1,
                         sessionId,
                         assistantMessageId,
+                        runId,
+                        runTracker,
                         modelOutputStarted,
                         output,
                         compacted
@@ -738,6 +765,8 @@ public class InterviewAgentService {
         String providerId,
         String sessionId,
         Long assistantMessageId,
+        String runId,
+        AgentMetrics.RunTracker runTracker,
         AtomicBoolean modelOutputStarted,
         AtomicReference<StringBuilder> output,
         int attempt,
@@ -756,8 +785,12 @@ public class InterviewAgentService {
                 .filter(content -> !content.isEmpty())
                 .map(AgentStreamEvent::delta);
             return withModelHeartbeat(attemptStream)
-            .doFinally(signal -> agentMetrics.finishModelCall(
-                currentCall.tracker(), modelCallResult(signal)))
+            .doOnComplete(() -> finishModelCallAndPersist(
+                currentCall.tracker(), "success", assistantMessageId, runTracker))
+            .doOnError(error -> finishModelCallAndPersist(
+                currentCall.tracker(), "failure", assistantMessageId, runTracker))
+            .doOnCancel(() -> finishModelCallAndPersist(
+                currentCall.tracker(), "cancelled", assistantMessageId, runTracker))
             .onErrorResume(error -> {
                 if (!modelOutputStarted.get() && isContextLimitError(error) && !compacted) {
                     agentMetrics.recordRetry("context_limit");
@@ -773,6 +806,8 @@ public class InterviewAgentService {
                             0,
                             sessionId,
                             assistantMessageId,
+                            runId,
+                            runTracker,
                             modelOutputStarted,
                             output,
                             true
@@ -806,6 +841,8 @@ public class InterviewAgentService {
                             providerId,
                             sessionId,
                             assistantMessageId,
+                            runId,
+                            runTracker,
                             modelOutputStarted,
                             output,
                             retryNumber,
@@ -818,10 +855,15 @@ public class InterviewAgentService {
         });
     }
 
-    private String modelCallResult(SignalType signal) {
-        return signal == SignalType.ON_COMPLETE
-            ? "success"
-            : signal == SignalType.CANCEL ? "cancelled" : "failure";
+    private void finishModelCallAndPersist(
+        AgentMetrics.ModelCallTracker tracker,
+        String result,
+        Long assistantMessageId,
+        AgentMetrics.RunTracker runTracker
+    ) {
+        agentMetrics.finishModelCall(tracker, result);
+        // 必须在外层 completeMessage/failMessage 之前写入，避免活动消息栅栏关闭后被忽略。
+        persistRunUsage(assistantMessageId, runTracker);
     }
 
     private record ModelStream(

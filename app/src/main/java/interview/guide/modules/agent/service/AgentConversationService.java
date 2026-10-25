@@ -266,7 +266,12 @@ public class AgentConversationService {
 
     @Transactional
     public void completeMessage(Long messageId, String content) {
-        AgentChatMessageEntity message = lockActiveMessage(messageId);
+        completeMessage(messageId, content, null);
+    }
+
+    @Transactional
+    public void completeMessage(Long messageId, String content, String expectedRunId) {
+        AgentChatMessageEntity message = lockActiveMessage(messageId, expectedRunId);
         if (message == null) {
             log.info("忽略已失效 Agent 完成事件: messageId={}", messageId);
             return;
@@ -277,8 +282,15 @@ public class AgentConversationService {
 
     @Transactional
     public void failMessage(Long messageId, String partialContent, String errorMessage) {
+        failMessage(messageId, partialContent, errorMessage, null);
+    }
+
+    @Transactional
+    public void failMessage(
+        Long messageId, String partialContent, String errorMessage, String expectedRunId
+    ) {
         String safeError = truncate(errorMessage, 500);
-        AgentChatMessageEntity message = lockActiveMessage(messageId);
+        AgentChatMessageEntity message = lockActiveMessage(messageId, expectedRunId);
         if (message == null) {
             log.info("忽略已失效 Agent 失败事件: messageId={}", messageId);
             return;
@@ -289,8 +301,13 @@ public class AgentConversationService {
 
     @Transactional
     public void cancelMessage(Long messageId, String partialContent) {
+        cancelMessage(messageId, partialContent, null);
+    }
+
+    @Transactional
+    public void cancelMessage(Long messageId, String partialContent, String expectedRunId) {
         String error = "客户端中断了本次回答";
-        AgentChatMessageEntity message = lockActiveMessage(messageId);
+        AgentChatMessageEntity message = lockActiveMessage(messageId, expectedRunId);
         if (message == null) {
             log.info("忽略已失效 Agent 取消事件: messageId={}", messageId);
             return;
@@ -319,7 +336,7 @@ public class AgentConversationService {
             return false;
         }
         if (session.getActiveMessageId() != null) {
-            cancelMessage(session.getActiveMessageId(), "用户请求取消本次回答");
+            cancelMessage(session.getActiveMessageId(), "用户请求取消本次回答", session.getRunId());
         } else {
             markRunFinished(session, AgentRunStatus.CANCELLED, "用户请求取消本次回答");
         }
@@ -817,6 +834,10 @@ public class AgentConversationService {
      * 第二个并发终态拿到锁后会发现状态已不是 RUNNING，从而安全忽略。
      */
     private AgentChatMessageEntity lockActiveMessage(Long messageId) {
+        return lockActiveMessage(messageId, null);
+    }
+
+    private AgentChatMessageEntity lockActiveMessage(Long messageId, String expectedRunId) {
         if (messageId == null) {
             return null;
         }
@@ -826,7 +847,7 @@ public class AgentConversationService {
                     message.setSession(lockedSession);
                     return message;
                 }))
-            .filter(this::isActiveMessage)
+            .filter(message -> isActiveMessage(message, expectedRunId))
             .orElse(null);
     }
 
@@ -852,11 +873,16 @@ public class AgentConversationService {
     }
 
     private boolean isActiveMessage(AgentChatMessageEntity message) {
+        return isActiveMessage(message, null);
+    }
+
+    private boolean isActiveMessage(AgentChatMessageEntity message, String expectedRunId) {
         AgentChatSessionEntity session = message.getSession();
         return session != null
             && message.getId() != null
             && message.getId().equals(session.getActiveMessageId())
-            && session.getRunStatus() == AgentRunStatus.RUNNING;
+            && session.getRunStatus() == AgentRunStatus.RUNNING
+            && (expectedRunId == null || expectedRunId.equals(session.getRunId()));
     }
 
     private boolean shouldExposePartialAnswer(AgentRunStatus status) {

@@ -148,7 +148,8 @@ try {
             $conversation = Invoke-JsonApi "/api/agent/interview-sessions/$InterviewSessionId/conversation?agentSessionId=$([Uri]::EscapeDataString([string]$payloads[$i].agentSessionId))"
             Assert-Pass ($conversation.code -eq 200 -and $conversation.data.runStatus -eq 'COMPLETED') "Agent 第 $($i + 1) 轮状态持久化为 COMPLETED"
             $usage = $conversation.data.runUsage
-            Assert-Pass ($null -ne $usage -and [int]$usage.modelCalls -ge 1 -and [int64]$usage.durationMillis -ge 0) "Agent 第 $($i + 1) 轮用量摘要已持久化"
+            $usageText = if ($null -eq $usage) { 'null' } else { $usage | ConvertTo-Json -Compress }
+            Assert-Pass ($null -ne $usage -and [int]$usage.modelCalls -ge 1 -and [int64]$usage.durationMillis -ge 0) "Agent 第 $($i + 1) 轮用量摘要已持久化（实际=$usageText）"
         }
 
         $memory = Invoke-JsonApi '/api/agent/memory'

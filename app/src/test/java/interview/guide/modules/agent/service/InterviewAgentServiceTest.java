@@ -113,7 +113,7 @@ class InterviewAgentServiceTest {
         assertThat(events).anySatisfy(event -> assertThat(event.content()).isEqualTo("备用模型回答"));
         assertThat(events).anySatisfy(event -> assertThat(event.type()).isEqualTo("done"));
         assertThat(events).anySatisfy(event -> assertThat(event.type()).isEqualTo("loop"));
-        verify(conversationService).completeMessage(10L, "备用模型回答");
+        verify(conversationService).completeMessage(10L, "备用模型回答", "run-1");
     }
 
     @Test
@@ -169,7 +169,7 @@ class InterviewAgentServiceTest {
         assertThat(events).isNotNull();
         assertThat(optionsCalls).hasValue(0);
         assertThat(events).anySatisfy(event -> assertThat(event.content()).isEqualTo("不设置输出上限的回答"));
-        verify(conversationService).completeMessage(10L, "不设置输出上限的回答");
+        verify(conversationService).completeMessage(10L, "不设置输出上限的回答", "run-1");
     }
 
     @Test
@@ -309,7 +309,7 @@ class InterviewAgentServiceTest {
 
         assertThat(service.cancel("cancel-session")).isTrue();
         verify(conversationService, timeout(1000))
-            .cancelMessage(10L, "");
+            .cancelMessage(10L, "", "run-1");
         subscription.dispose();
     }
 
@@ -374,7 +374,7 @@ class InterviewAgentServiceTest {
         assertThat(events).isNotNull();
         assertThat(events).anySatisfy(event -> assertThat(event.content()).isEqualTo("带 usage 的回答"));
         verify(agentMetrics).observeModelUsage(isNull(), eq(120), eq(80), eq(200), eq("gpt-5.6-luna"));
-        verify(conversationService).completeMessage(10L, "带 usage 的回答");
+        verify(conversationService).completeMessage(10L, "带 usage 的回答", "run-1");
     }
 
     @Test
@@ -414,7 +414,7 @@ class InterviewAgentServiceTest {
 
         assertThat(events).isNotNull();
         assertThat(events).anySatisfy(event -> assertThat(event.type()).isEqualTo("error"));
-        verify(conversationService).failMessage(10L, "", "AI 面试教练暂时不可用，请稍后重试");
+        verify(conversationService).failMessage(10L, "", "AI 面试教练暂时不可用，请稍后重试", "run-1");
     }
 
     @Test
@@ -457,7 +457,7 @@ class InterviewAgentServiceTest {
 
         verify(conversationService, after(200).never()).cancelMessage(any(), anyString());
         assertThat(service.cancel("disconnect-session")).isTrue();
-        verify(conversationService, timeout(1000)).cancelMessage(10L, "");
+        verify(conversationService, timeout(1000)).cancelMessage(10L, "", "run-1");
     }
 
     @Test
@@ -504,7 +504,9 @@ class InterviewAgentServiceTest {
 
         assertThat(events).isNotNull();
         ArgumentCaptor<String> outputCaptor = ArgumentCaptor.forClass(String.class);
-        verify(conversationService).completeMessage(org.mockito.ArgumentMatchers.eq(10L), outputCaptor.capture());
+        verify(conversationService).completeMessage(
+            org.mockito.ArgumentMatchers.eq(10L), outputCaptor.capture(), eq("run-1")
+        );
         assertThat(outputCaptor.getValue()).hasSizeLessThanOrEqualTo(32_000);
         assertThat(outputCaptor.getValue()).contains("回答已达到展示上限");
         assertThat(upstreamCancelled).isTrue();
@@ -617,7 +619,7 @@ class InterviewAgentServiceTest {
         assertThat(events).anySatisfy(event -> assertThat(event.status()).isEqualTo("waiting"));
         assertThat(events).anySatisfy(event -> assertThat(event.content()).isEqualTo("重试后回答"));
         assertThat(events).anySatisfy(event -> assertThat(event.type()).isEqualTo("done"));
-        verify(conversationService).completeMessage(10L, "重试后回答");
+        verify(conversationService).completeMessage(10L, "重试后回答", "run-1");
     }
 
     @Test
@@ -669,7 +671,7 @@ class InterviewAgentServiceTest {
         assertThat(events).anySatisfy(event -> assertThat(event.message()).contains("压缩较早对话"));
         assertThat(events).anySatisfy(event -> assertThat(event.content()).isEqualTo("压缩后回答"));
         assertThat(events).anySatisfy(event -> assertThat(event.type()).isEqualTo("done"));
-        verify(conversationService).completeMessage(10L, "压缩后回答");
+        verify(conversationService).completeMessage(10L, "压缩后回答", "run-1");
     }
 
     @Test
@@ -714,7 +716,7 @@ class InterviewAgentServiceTest {
         assertThat(events).isNotNull();
         assertThat(events).anySatisfy(event -> assertThat(event.message()).contains("切换备用模型"));
         assertThat(events).anySatisfy(event -> assertThat(event.content()).isEqualTo("备用模型完成"));
-        verify(conversationService).completeMessage(10L, "备用模型完成");
+        verify(conversationService).completeMessage(10L, "备用模型完成", "run-1");
     }
 
     private ChatClient mockStreamClient(Flux<String> content) {

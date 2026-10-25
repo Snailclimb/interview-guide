@@ -212,6 +212,35 @@ class AgentConversationServiceTest {
     }
 
     @Test
+    @DisplayName("应用重启后旧运行的迟到终态事件不会取消新接管任务")
+    void ignoresLateTerminalEventFromPreviousRunId() {
+        AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+            .id(11L)
+            .interviewSessionId("interview-1")
+            .runId("recovered-run")
+            .runStatus(AgentRunStatus.RUNNING)
+            .activeMessageId(22L)
+            .build();
+        AgentChatMessageEntity message = AgentChatMessageEntity.builder()
+            .id(22L)
+            .session(session)
+            .role(AgentChatMessageEntity.MessageRole.ASSISTANT)
+            .content("")
+            .sequenceNum(1)
+            .completed(false)
+            .build();
+        when(messageRepository.findById(22L)).thenReturn(Optional.of(message));
+        when(sessionRepository.findByInterviewSessionIdForUpdate("interview-1"))
+            .thenReturn(Optional.of(session));
+
+        service.cancelMessage(22L, "旧进程的迟到取消", "previous-run");
+
+        assertThat(session.getRunStatus()).isEqualTo(AgentRunStatus.RUNNING);
+        assertThat(message.getCompleted()).isFalse();
+        verify(messageRepository, org.mockito.Mockito.never()).save(message);
+    }
+
+    @Test
     @DisplayName("读取会话时自动回收超过 15 分钟的运行任务")
     void recoversStaleRunWhenReadingConversation() {
         AgentChatSessionEntity session = AgentChatSessionEntity.builder()
