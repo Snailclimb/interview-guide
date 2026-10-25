@@ -106,6 +106,22 @@ class AgentMetricsTest {
     }
 
     @Test
+    @DisplayName("记录 Loop 步骤结果和耗时")
+    void recordsLoopStepMetrics() {
+        AgentMetrics metrics = metrics(true);
+
+        metrics.recordLoopStep("completed", Duration.ofMillis(18));
+        metrics.recordLoopStep("failed", Duration.ofMillis(4));
+
+        assertThat(registry.get(AgentMetrics.LOOP_STEPS)
+            .tag("result", "completed").counter().count()).isEqualTo(1.0);
+        assertThat(registry.get(AgentMetrics.LOOP_STEPS)
+            .tag("result", "failed").counter().count()).isEqualTo(1.0);
+        assertThat(registry.get(AgentMetrics.LOOP_STEP_DURATION)
+            .tag("result", "completed").timer().count()).isEqualTo(1L);
+    }
+
+    @Test
     @DisplayName("记录模型调用耗时和 Provider usage Token")
     void recordsModelUsageMetrics() {
         AgentMetrics metrics = metrics(true);

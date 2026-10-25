@@ -369,6 +369,9 @@ public class InterviewAgentService {
                         : loopEngine.execute(
                             context, loopSteps, loopPolicy, null, checkpointListener
                         );
+                    loopResult.iterations().forEach(iteration -> agentMetrics.recordLoopStep(
+                        iteration.status(), Duration.ofMillis(iteration.durationMillis())
+                    ));
                     persistLoopCheckpoint(
                         preparedMessage.assistantMessageId(), preparedMessage.runId(),
                         plan, loopResult.nextStepIndex()

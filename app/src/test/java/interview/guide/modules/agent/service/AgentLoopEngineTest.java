@@ -115,6 +115,9 @@ class AgentLoopEngineTest {
         assertThat(checkpoints).hasSize(2);
         assertThat(checkpoints.get(0).status()).isEqualTo("completed");
         assertThat(checkpoints.get(1).status()).isEqualTo("failed");
+        assertThat(checkpoints.get(0).durationMillis()).isGreaterThanOrEqualTo(0);
+        assertThat(checkpoints.get(1).failureReason()).contains("IllegalStateException");
+        assertThat(result.trace()).contains("耗时：").contains("失败原因：");
         assertThat(result.nextStepIndex()).isEqualTo(1);
     }
 

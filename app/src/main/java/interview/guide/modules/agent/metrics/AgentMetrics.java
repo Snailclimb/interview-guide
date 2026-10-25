@@ -28,6 +28,8 @@ public class AgentMetrics {
     public static final String PROVIDER_ATTEMPTS = "app.agent.provider.attempts";
     public static final String TOOL_CALLS = "app.agent.tool.calls";
     public static final String TOOL_DURATION = "app.agent.tool.duration";
+    public static final String LOOP_STEPS = "app.agent.loop.steps";
+    public static final String LOOP_STEP_DURATION = "app.agent.loop.step.duration";
     public static final String MODEL_CALLS = "app.agent.model.calls";
     public static final String MODEL_DURATION = "app.agent.model.duration";
     public static final String TOKENS = "app.agent.tokens";
@@ -104,6 +106,20 @@ public class AgentMetrics {
         Timer.builder(TOOL_DURATION)
             .tag("tool", safeToolName)
             .tag("result", safeResult)
+            .publishPercentileHistogram()
+            .register(registry)
+            .record(duration == null ? Duration.ZERO : duration);
+    }
+
+    /** 记录有限 Loop 的步骤结果和耗时，不把动作文本或失败详情作为高基数标签。 */
+    public void recordLoopStep(String status, Duration duration) {
+        if (!enabled) {
+            return;
+        }
+        String safeStatus = safeTag(status, "unknown");
+        registry.counter(LOOP_STEPS, "result", safeStatus).increment();
+        Timer.builder(LOOP_STEP_DURATION)
+            .tag("result", safeStatus)
             .publishPercentileHistogram()
             .register(registry)
             .record(duration == null ? Duration.ZERO : duration);

@@ -116,6 +116,7 @@ public class AgentLoopEngine {
             int attempts = 0;
             String observation = null;
             Throwable lastError = null;
+            long stepStartedNanos = System.nanoTime();
             int maxAttempts = safePolicy.maxStepRetries() + 1;
             while (attempts < maxAttempts) {
                 attempts++;
@@ -146,7 +147,9 @@ public class AgentLoopEngine {
                     step,
                     "步骤执行失败（" + errorName + "）",
                     status,
-                    attempts
+                    attempts,
+                    elapsedMillis(stepStartedNanos),
+                    failureReason(lastError)
                 );
                 iterations.add(failedIteration);
                 notifyProgress(progressListener, failedIteration);
@@ -155,7 +158,8 @@ public class AgentLoopEngine {
                 break;
             }
             LoopIteration completedIteration = new LoopIteration(
-                index + 1, step, observation, "completed", attempts
+                index + 1, step, observation, "completed", attempts,
+                elapsedMillis(stepStartedNanos), null
             );
             iterations.add(completedIteration);
             notifyProgress(progressListener, completedIteration);
@@ -179,6 +183,23 @@ public class AgentLoopEngine {
         } catch (Throwable ignored) {
             // 检查点是附加能力，不能因为写入进度失败而改变 Agent 主流程结果。
         }
+    }
+
+    private long elapsedMillis(long startedNanos) {
+        return Math.max(0, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos));
+    }
+
+    private String failureReason(Throwable error) {
+        if (error == null) {
+            return "unknown";
+        }
+        String type = error.getClass().getSimpleName();
+        String message = error.getMessage();
+        if (message == null || message.isBlank()) {
+            return type;
+        }
+        String clean = message.replaceAll("[\\p{Cntrl}]", " ").replaceAll("\\s+", " ").trim();
+        return (type + ": " + clean).substring(0, Math.min(160, type.length() + 2 + clean.length()));
     }
 
     private String executeWithTimeout(
@@ -224,10 +245,18 @@ public class AgentLoopEngine {
         String action,
         String observation,
         String status,
-        int attempts
+        int attempts,
+        long durationMillis,
+        String failureReason
     ) {
         public LoopIteration(int iteration, String action, String observation) {
-            this(iteration, action, observation, "completed", 1);
+            this(iteration, action, observation, "completed", 1, 0, null);
+        }
+
+        public LoopIteration(
+            int iteration, String action, String observation, String status, int attempts
+        ) {
+            this(iteration, action, observation, status, attempts, 0, null);
         }
     }
 
@@ -246,6 +275,8 @@ public class AgentLoopEngine {
             return iterations.stream()
                 .map(item -> "第 " + item.iteration() + " 步：" + item.action()
                     + "；观察：" + item.observation()
+                    + "；耗时：" + item.durationMillis() + "ms"
+                    + (item.failureReason() == null ? "" : "；失败原因：" + item.failureReason())
                     + ("completed".equals(item.status()) ? "" : "；状态：" + item.status()))
                 .reduce((left, right) -> left + "\n" + right)
                 .orElse("未产生 Loop 观察结果");
