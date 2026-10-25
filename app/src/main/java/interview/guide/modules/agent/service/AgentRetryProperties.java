@@ -39,6 +39,11 @@ public class AgentRetryProperties {
     @Max(value = 32, message = "Agent 单次运行模型调用预算不能超过 32 次")
     private int maxModelCallsPerRun = 12;
 
+    /** 一次 Agent 运行最多执行的只读工具调用数。 */
+    @Min(value = 0, message = "Agent 单次运行工具调用预算不能为负数")
+    @Max(value = 64, message = "Agent 单次运行工具调用预算不能超过 64 次")
+    private int maxToolCallsPerRun = 8;
+
     /** 是否启用受控 Agent Loop；关闭时回退到现有单次回答流程。 */
     private boolean loopEnabled = true;
 

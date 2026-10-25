@@ -8,6 +8,7 @@ import interview.guide.modules.agent.model.AgentHistoryMessage;
 import interview.guide.modules.agent.model.AgentMessageRequest;
 import java.util.List;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.stream.IntStream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -97,11 +98,14 @@ public class AgentLoopPlanner {
                     modelCall = agentMetrics.startModelCall(providerId, runTracker);
                 }
                 ChatClient client = providerRegistry.getAgentChatClient(providerId);
-                String content = client.prompt()
-                    .system("你是一个严格受控的 Agent Loop planner，只返回执行计划，不要编造资料。")
-                    .user(prompt)
-                    .call()
-                    .content();
+                var promptSpec = client.prompt()
+                    .system("你是一个严格受控的 Agent Loop planner，只返回执行计划，不要编造资料。");
+                if (runTracker != null) {
+                    promptSpec = promptSpec.toolContext(Map.of(
+                        AgentMetrics.RUN_TRACKER_TOOL_CONTEXT_KEY, runTracker
+                    ));
+                }
+                String content = promptSpec.user(prompt).call().content();
                 if (agentMetrics != null) {
                     agentMetrics.finishModelCall(modelCall, "success");
                 }

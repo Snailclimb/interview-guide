@@ -200,6 +200,8 @@ app:
       retry-heartbeat-interval-seconds: ${APP_AI_AGENT_RETRY_HEARTBEAT_INTERVAL_SECONDS:10}
       # 单次 Agent 运行最多发起的模型请求数（含规划、重试、压缩重试和备用模型）
       max-model-calls-per-run: ${APP_AI_AGENT_MAX_MODEL_CALLS_PER_RUN:12}
+      # 单次 Agent 运行最多执行的只读工具调用数
+      max-tool-calls-per-run: ${APP_AI_AGENT_MAX_TOOL_CALLS_PER_RUN:8}
       loop-enabled: ${APP_AI_AGENT_LOOP_ENABLED:true}
       loop-max-steps: ${APP_AI_AGENT_LOOP_MAX_STEPS:3}
       loop-step-timeout-millis: ${APP_AI_AGENT_LOOP_STEP_TIMEOUT_MILLIS:5000}

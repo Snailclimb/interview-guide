@@ -7,6 +7,10 @@ package interview.guide.modules.agent.metrics;
  */
 public class AgentRunBudgetExceededException extends RuntimeException {
     public AgentRunBudgetExceededException(int limit) {
-        super("Agent 单次运行已达到模型调用预算（" + limit + " 次）");
+        this("模型调用", limit);
+    }
+
+    public AgentRunBudgetExceededException(String resource, int limit) {
+        super("Agent 单次运行已达到" + resource + "预算（" + limit + " 次）");
     }
 }

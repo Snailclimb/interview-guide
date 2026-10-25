@@ -22,6 +22,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class AgentMetrics {
 
+    /** Spring AI ToolContext 中传递当前 Agent 运行预算的内部键，不含用户数据。 */
+    public static final String RUN_TRACKER_TOOL_CONTEXT_KEY = "agent.runTracker";
+
     public static final String RUNS = "app.agent.runs";
     public static final String RUN_DURATION = "app.agent.run.duration";
     public static final String RETRIES = "app.agent.retries";
@@ -63,15 +66,20 @@ public class AgentMetrics {
     }
 
     public RunTracker startRun() {
-        return startRun(Integer.MAX_VALUE);
+        return startRun(Integer.MAX_VALUE, Integer.MAX_VALUE);
     }
 
     /** 创建带模型请求预算的 Agent 运行追踪器。 */
     public RunTracker startRun(int maxModelCalls) {
+        return startRun(maxModelCalls, Integer.MAX_VALUE);
+    }
+
+    /** 创建同时限制模型请求和只读工具调用的 Agent 运行追踪器。 */
+    public RunTracker startRun(int maxModelCalls, int maxToolCalls) {
         if (enabled) {
             registry.counter(RUNS, "result", "started").increment();
         }
-        return new RunTracker(System.nanoTime(), maxModelCalls);
+        return new RunTracker(System.nanoTime(), maxModelCalls, maxToolCalls);
     }
 
     public void finishRun(RunTracker tracker, String result) {
@@ -258,8 +266,10 @@ public class AgentMetrics {
     public static final class RunTracker {
         private final long startedNanos;
         private final int maxModelCalls;
+        private final int maxToolCalls;
         private final AtomicBoolean finished = new AtomicBoolean();
         private final AtomicInteger reservedModelCalls = new AtomicInteger();
+        private final AtomicInteger reservedToolCalls = new AtomicInteger();
         private final AtomicInteger modelCalls = new AtomicInteger();
         private final LongAdder promptTokens = new LongAdder();
         private final LongAdder completionTokens = new LongAdder();
@@ -270,9 +280,10 @@ public class AgentMetrics {
         private final AtomicReference<String> provider = new AtomicReference<>();
         private final AtomicReference<String> model = new AtomicReference<>();
 
-        private RunTracker(long startedNanos, int maxModelCalls) {
+        private RunTracker(long startedNanos, int maxModelCalls, int maxToolCalls) {
             this.startedNanos = startedNanos;
             this.maxModelCalls = Math.max(1, maxModelCalls);
+            this.maxToolCalls = Math.max(0, maxToolCalls);
         }
 
         private void reserveModelCall() {
@@ -280,6 +291,15 @@ public class AgentMetrics {
             if (reserved > maxModelCalls) {
                 reservedModelCalls.decrementAndGet();
                 throw new AgentRunBudgetExceededException(maxModelCalls);
+            }
+        }
+
+        /** 为 Spring AI 只读工具回调预留一次调用额度。 */
+        public void reserveToolCall() {
+            int reserved = reservedToolCalls.incrementAndGet();
+            if (reserved > maxToolCalls) {
+                reservedToolCalls.decrementAndGet();
+                throw new AgentRunBudgetExceededException("工具调用", maxToolCalls);
             }
         }
 

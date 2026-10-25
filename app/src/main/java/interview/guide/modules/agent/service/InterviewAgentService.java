@@ -155,7 +155,7 @@ public class InterviewAgentService {
             cancellationSignals.put(activeKey, cancellationSignal);
             Long preparedAssistantMessageId = null;
             AgentMetrics.RunTracker runTracker = agentMetrics.startRun(
-                retryProperties.getMaxModelCallsPerRun()
+                retryProperties.getMaxModelCallsPerRun(), retryProperties.getMaxToolCallsPerRun()
             );
             AtomicReference<AgentTaskHandle> taskHandleRef = new AtomicReference<>();
             AtomicReference<String> activeAgentSessionKeyRef = new AtomicReference<>(activeKey);
@@ -254,7 +254,7 @@ public class InterviewAgentService {
             Sinks.One<Void> cancellationSignal = Sinks.one();
             cancellationSignals.put(activeKey, cancellationSignal);
             AgentMetrics.RunTracker runTracker = agentMetrics.startRun(
-                retryProperties.getMaxModelCallsPerRun()
+                retryProperties.getMaxModelCallsPerRun(), retryProperties.getMaxToolCallsPerRun()
             );
             AgentTaskHandle taskHandle = new AgentTaskHandle(
                 recoveredRun.assistantMessageId(), recoveredRun.runId(), cancellationSignal
@@ -405,6 +405,11 @@ public class InterviewAgentService {
                                     var promptSpec = chatClient.prompt().system(prompt.systemPrompt());
                                     if (!prompt.history().isEmpty()) {
                                         promptSpec = promptSpec.messages(prompt.history());
+                                    }
+                                    if (runTracker != null) {
+                                        promptSpec = promptSpec.toolContext(Map.of(
+                                            AgentMetrics.RUN_TRACKER_TOOL_CONTEXT_KEY, runTracker
+                                        ));
                                     }
                                     var streamSpec = promptSpec.user(prompt.userPrompt()).stream();
                                     Flux<ChatResponse> chatResponses = streamSpec.chatResponse();
@@ -1079,7 +1084,7 @@ public class InterviewAgentService {
 
     String toAgentErrorMessage(Throwable error) {
         if (error instanceof AgentRunBudgetExceededException) {
-            return "本次 Agent 任务已达到模型调用预算，系统已停止继续重试；请缩短问题或稍后重新发起任务";
+            return "本次 Agent 任务已达到资源调用预算，系统已停止继续重试；请缩短问题或稍后重新发起任务";
         }
         if (isOutputTokenLimitError(error)) {
             return "当前模型 Provider 限制单次输出长度，系统会尝试切换可用模型；如果仍失败，请分段发送或切换其他模型。这不是面试消息字符限制";

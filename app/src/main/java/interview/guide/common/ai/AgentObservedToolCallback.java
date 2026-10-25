@@ -50,12 +50,23 @@ final class AgentObservedToolCallback implements ToolCallback {
     public String call(String toolInput, ToolContext toolContext) {
         long startedNanos = System.nanoTime();
         try {
+            reserveToolCall(toolContext);
             String result = delegate.call(toolInput, toolContext);
             record("success", startedNanos);
             return result;
         } catch (RuntimeException error) {
             record("failure", startedNanos);
             throw error;
+        }
+    }
+
+    private void reserveToolCall(ToolContext toolContext) {
+        if (toolContext == null || toolContext.getContext() == null) {
+            return;
+        }
+        Object value = toolContext.getContext().get(AgentMetrics.RUN_TRACKER_TOOL_CONTEXT_KEY);
+        if (value instanceof AgentMetrics.RunTracker runTracker) {
+            runTracker.reserveToolCall();
         }
     }
 
