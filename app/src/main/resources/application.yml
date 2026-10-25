@@ -95,6 +95,13 @@ spring:
 
 # Application custom configuration
 app:
+  auth:
+    # 第一阶段默认兼容旧的匿名使用方式；正式环境切换为 true 后，业务 API 要求登录。
+    required: ${APP_AUTH_REQUIRED:false}
+    cookie-name: ${APP_AUTH_COOKIE_NAME:INTERVIEW_AUTH}
+    session-ttl: ${APP_AUTH_SESSION_TTL:7d}
+    secure-cookie: ${APP_AUTH_SECURE_COOKIE:false}
+    same-site: ${APP_AUTH_COOKIE_SAME_SITE:Lax}
   ai:
     default-provider: ${APP_AI_DEFAULT_PROVIDER:dashscope}
     default-embedding-provider: ${APP_AI_DEFAULT_EMBEDDING_PROVIDER:dashscope}

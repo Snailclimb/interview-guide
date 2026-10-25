@@ -52,7 +52,7 @@ public class AgentChatSessionEntity {
     @Column(name = "memory_key", length = 64)
     private String memoryKey;
 
-    /** Agent 会话归属的浏览器/登录身份键。当前登录模块尚未统一，先复用 X-User-Id。 */
+    /** Agent 会话归属的正式用户 ID；迁移期仍兼容旧浏览器身份键。 */
     @Column(name = "owner_key", length = 64)
     private String ownerKey;
 

@@ -1,11 +1,13 @@
 import {Link, Outlet, useLocation, useNavigate} from 'react-router-dom';
 import {motion} from 'framer-motion';
-import {BookOpen, Bot, Calendar, ChevronRight, Database, FileStack, MessageSquare, Moon, Settings, Sparkles, Sun, Users,} from 'lucide-react';
+import {BookOpen, Bot, Calendar, ChevronRight, Database, FileStack, LogIn, LogOut, MessageSquare, Moon, Settings, Sparkles, Sun, Users,} from 'lucide-react';
 import {useTheme} from '../hooks/useTheme';
-import {useState} from 'react';
+import {useEffect, useState} from 'react';
 import UnifiedInterviewModal, {UnifiedInterviewConfig} from './UnifiedInterviewModal';
 import {ROUTES} from '../constants/routes';
 import { createRequestId } from '../utils/requestId';
+import { authApi } from '../api/auth';
+import type { AuthUser } from '../types/auth';
 
 interface NavItem {
   id: string;
@@ -26,6 +28,7 @@ export default function Layout() {
   const currentPath = location.pathname;
   const {theme, toggleTheme} = useTheme();
   const navigate = useNavigate();
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [interviewModalPreset, setInterviewModalPreset] = useState<{
     defaultMode: 'text' | 'voice';
     defaultResumeId?: number;
@@ -33,6 +36,18 @@ export default function Layout() {
     subtitle: string;
     startButtonText: string;
   } | null>(null);
+
+  useEffect(() => {
+    authApi.me()
+      .then(state => setAuthUser(state.authenticated ? state.user : null))
+      .catch(() => setAuthUser(null));
+  }, []);
+
+  const handleLogout = async () => {
+    await authApi.logout().catch(() => undefined);
+    setAuthUser(null);
+    navigate('/login');
+  };
 
   const openInterviewModalWithResume = (resumeId: number) => {
     setInterviewModalPreset({
@@ -230,6 +245,35 @@ export default function Layout() {
 
         {/* 底部信息 */}
         <div className="p-4 border-t border-slate-100 dark:border-slate-700">
+          {authUser ? (
+            <div className="mb-3 flex items-center gap-2 rounded-xl bg-slate-50 dark:bg-slate-800 px-3 py-2">
+              <div className="w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900/50 text-primary-600 dark:text-primary-300 flex items-center justify-center text-sm font-semibold">
+                {(authUser.nickname || authUser.email).slice(0, 1).toUpperCase()}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-200">{authUser.nickname}</p>
+                <p className="truncate text-xs text-slate-400 dark:text-slate-500">{authUser.email}</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleLogout}
+                title="退出登录"
+                aria-label="退出登录"
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-white dark:hover:bg-slate-700 hover:text-red-500"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => navigate('/login')}
+              className="mb-3 w-full flex items-center justify-center gap-2 rounded-xl border border-primary-200 dark:border-primary-800 px-3 py-2 text-sm font-medium text-primary-600 dark:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/20"
+            >
+              <LogIn className="w-4 h-4" />
+              登录账号
+            </button>
+          )}
           <div className="px-3 py-2 bg-gradient-to-r from-primary-50 to-indigo-50 dark:from-primary-900/30 dark:to-slate-800 rounded-xl">
             <p className="text-xs text-primary-600 dark:text-primary-400 font-medium">AI 面试助手 v1.0</p>
             <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Powered by AI</p>

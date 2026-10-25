@@ -10,6 +10,7 @@ import interview.guide.modules.agent.model.RenameAgentConversationRequest;
 import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.AgentMemoryService;
 import interview.guide.modules.agent.service.InterviewAgentService;
+import interview.guide.modules.auth.AuthIdentityService;
 import interview.guide.common.result.Result;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -50,6 +51,7 @@ public class AgentController {
     private final InterviewAgentService agentService;
     private final AgentConversationService conversationService;
     private final AgentMemoryService memoryService;
+    private final AuthIdentityService authIdentityService;
     private final ObjectMapper objectMapper;
 
     @GetMapping("/api/agent/interview-sessions/{sessionId}/conversation")
@@ -59,7 +61,7 @@ public class AgentController {
         @RequestHeader(value = "X-User-Id", required = false) String ownerKey,
         @RequestParam(value = "agentSessionId", required = false) String agentSessionId
     ) {
-        String identity = conversationService.requireOwnerKey(ownerKey);
+        String identity = authIdentityService.requireIdentity(ownerKey);
         conversationService.assertAccess(sessionId, agentSessionId, identity);
         return Result.success(conversationService.getConversation(sessionId, agentSessionId, identity));
     }
@@ -70,7 +72,7 @@ public class AgentController {
         @PathVariable String sessionId,
         @RequestHeader(value = "X-User-Id", required = false) String ownerKey
     ) {
-        String identity = conversationService.requireOwnerKey(ownerKey);
+        String identity = authIdentityService.requireIdentity(ownerKey);
         return Result.success(conversationService.listConversations(sessionId, identity));
     }
 
@@ -81,7 +83,7 @@ public class AgentController {
         @Valid @RequestBody(required = false) CreateAgentConversationRequest request,
         @RequestHeader(value = "X-User-Id", required = false) String ownerKey
     ) {
-        String identity = conversationService.requireOwnerKey(ownerKey);
+        String identity = authIdentityService.requireIdentity(ownerKey);
         return Result.success(conversationService.createConversation(
             sessionId, request == null ? null : request.title(), identity
         ));
@@ -95,7 +97,7 @@ public class AgentController {
         @Valid @RequestBody RenameAgentConversationRequest request,
         @RequestHeader(value = "X-User-Id", required = false) String ownerKey
     ) {
-        String identity = conversationService.requireOwnerKey(ownerKey);
+        String identity = authIdentityService.requireIdentity(ownerKey);
         return Result.success(conversationService.renameConversation(
             sessionId, agentSessionId, request.title(), identity
         ));
@@ -108,7 +110,7 @@ public class AgentController {
         @PathVariable String agentSessionId,
         @RequestHeader(value = "X-User-Id", required = false) String ownerKey
     ) {
-        String identity = conversationService.requireOwnerKey(ownerKey);
+        String identity = authIdentityService.requireIdentity(ownerKey);
         conversationService.archiveConversation(sessionId, agentSessionId, identity);
         return Result.success(null);
     }
@@ -120,7 +122,7 @@ public class AgentController {
         @RequestParam(value = "agentSessionId", required = false) String agentSessionId,
         @RequestHeader(value = "X-User-Id", required = false) String ownerKey
     ) {
-        String identity = conversationService.requireOwnerKey(ownerKey);
+        String identity = authIdentityService.requireIdentity(ownerKey);
         conversationService.assertAccess(sessionId, agentSessionId, identity);
         agentService.cancel(agentSessionId == null || agentSessionId.isBlank() ? sessionId : agentSessionId);
         conversationService.cancelRun(sessionId, agentSessionId, identity);
@@ -132,7 +134,7 @@ public class AgentController {
     public Result<Void> clearMemory(
         @RequestHeader(value = "X-User-Id", required = false) String ownerKey
     ) {
-        memoryService.clear(conversationService.requireOwnerKey(ownerKey));
+        memoryService.clear(authIdentityService.requireIdentity(ownerKey));
         return Result.success(null);
     }
 
@@ -148,7 +150,7 @@ public class AgentController {
         @Valid @RequestBody AgentMessageRequest request,
         @RequestHeader(value = "X-User-Id", required = false) String ownerKey
     ) {
-        String identity = conversationService.requireOwnerKey(ownerKey);
+        String identity = authIdentityService.requireIdentity(ownerKey);
         log.info("收到面试教练 Agent 请求: sessionId={}, goal={}, messageLength={}",
             sessionId, request.goal(), request.message().length());
         return agentService.stream(sessionId, request, identity)

@@ -7,6 +7,8 @@ import type { CategoryDTO } from './api/skill';
 import { Loader2, Sparkles } from 'lucide-react';
 import { ROUTE_PATTERNS, ROUTES } from './constants/routes';
 import { createRequestId } from './utils/requestId';
+import { authApi } from './api/auth';
+import type { AuthState } from './types/auth';
 
 // Lazy load components
 const UploadPage = lazy(() => import('./pages/UploadPage'));
@@ -27,6 +29,7 @@ const InterviewHubPage = lazy(() => import('./pages/InterviewHubPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const InterviewDetailPanel = lazy(() => import('./components/InterviewDetailPanel'));
 const AgentPage = lazy(() => import('./pages/AgentPage'));
+const AuthPage = lazy(() => import('./pages/AuthPage'));
 
 // Loading component
 const Loading = () => (
@@ -34,6 +37,36 @@ const Loading = () => (
     <div className="w-10 h-10 border-3 border-slate-200 border-t-primary-500 rounded-full animate-spin" />
   </div>
 );
+
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [state, setState] = useState<AuthState | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    authApi.me()
+      .then(value => {
+        if (active) setState(value);
+      })
+      .catch(() => {
+        // 迁移期间后端可能尚未更新，保留旧匿名使用路径。
+        if (active) setState({ required: false, authenticated: false, user: null });
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (state?.required && !state.authenticated) {
+      const redirect = `${location.pathname}${location.search}`;
+      navigate(`/login?redirect=${encodeURIComponent(redirect)}`, { replace: true });
+    }
+  }, [location.pathname, location.search, navigate, state]);
+
+  if (!state) return <Loading />;
+  if (state.required && !state.authenticated) return <Loading />;
+  return <>{children}</>;
+}
 
 // 上传页面包装器
 function UploadPageWrapper() {
@@ -187,7 +220,8 @@ function App() {
     <BrowserRouter>
       <Suspense fallback={<Loading />}>
         <Routes>
-          <Route path="/" element={<Layout />}>
+          <Route path="/login" element={<AuthPage />} />
+          <Route path="/" element={<AuthGate><Layout /></AuthGate>}>
             {/* 默认重定向到简历管理页面 */}
             <Route index element={<Navigate to="/history" replace />} />
 

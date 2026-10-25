@@ -34,6 +34,13 @@ function toApiUrl(url: string): string {
   return `${API_BASE_URL}${url}`;
 }
 
+function readCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${encodeURIComponent(name)}=`;
+  const entry = document.cookie.split('; ').find(value => value.startsWith(prefix));
+  return entry ? decodeURIComponent(entry.slice(prefix.length)) : null;
+}
+
 function isJsonContentType(contentType: string): boolean {
   return contentType.toLowerCase().includes('json');
 }
@@ -294,7 +301,16 @@ async function readStream(response: Response, options: StreamSseOptions): Promis
 
 export async function streamSse(options: StreamSseOptions): Promise<void> {
   try {
-    const response = await fetch(toApiUrl(options.url), options.init);
+    const headers = new Headers(options.init.headers);
+    const csrfToken = readCookie('XSRF-TOKEN');
+    if (csrfToken && !headers.has('X-XSRF-TOKEN')) {
+      headers.set('X-XSRF-TOKEN', csrfToken);
+    }
+    const response = await fetch(toApiUrl(options.url), {
+      ...options.init,
+      credentials: options.init.credentials ?? 'include',
+      headers,
+    });
     await assertStreamResponse(response);
     await readStream(response, options);
     options.onComplete();

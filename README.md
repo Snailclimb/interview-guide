@@ -414,9 +414,15 @@ cp .env.example .env
 # APP_INTERVIEW_FOLLOW_UP_COUNT=1         # 每个主问题生成追问数量（默认 1）
 # APP_INTERVIEW_EVALUATION_BATCH_SIZE=8   # 回答评估分批大小（默认 8）
 
+# 登录认证（正式环境建议开启）
+# APP_AUTH_REQUIRED=true
+# APP_AUTH_SECURE_COOKIE=true       # HTTPS 环境开启；HTTP 本地测试保持 false
+
 # 3. 构建并启动所有服务
 docker-compose up -d --build
 ```
+
+登录认证配置、迁移模式和验收命令见 [正式登录认证说明](docs/formal-authentication.md)。
 
 > **仅启动依赖服务**：如果只想本地开发调试（用 `./gradlew :app:bootRun` 启动后端），可以只启动基础设施：`docker compose up -d postgres redis minio createbuckets`。将 `.env.example` 复制为 `.env` 并填写 `AI_BAILIAN_API_KEY` 即可，默认账号与 `docker-compose.yml` 一致；Bucket 会由初始化任务或应用启动检查自动创建。
 

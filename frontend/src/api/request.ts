@@ -24,6 +24,9 @@ export const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL ?? '';
 const instance: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 60000,
+  withCredentials: true,
+  xsrfCookieName: 'XSRF-TOKEN',
+  xsrfHeaderName: 'X-XSRF-TOKEN',
 });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
