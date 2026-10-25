@@ -11,6 +11,7 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -98,6 +99,33 @@ public class AgentChatSessionEntity {
     @Column(name = "loop_next_step", nullable = false)
     @Builder.Default
     private int loopNextStep = 0;
+
+    @Column(name = "run_prompt_tokens")
+    private Integer runPromptTokens;
+
+    @Column(name = "run_completion_tokens")
+    private Integer runCompletionTokens;
+
+    @Column(name = "run_total_tokens")
+    private Integer runTotalTokens;
+
+    @Column(name = "run_model_calls")
+    private Integer runModelCalls;
+
+    @Column(name = "run_duration_millis")
+    private Long runDurationMillis;
+
+    @Column(name = "run_cost", precision = 20, scale = 10)
+    private BigDecimal runCost;
+
+    @Column(name = "run_currency", length = 8)
+    private String runCurrency;
+
+    @Column(name = "run_provider", length = 64)
+    private String runProvider;
+
+    @Column(name = "run_model", length = 128)
+    private String runModel;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

@@ -12,6 +12,7 @@ import interview.guide.modules.agent.repository.AgentChatSessionRepository;
 import java.util.List;
 import java.util.Optional;
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
 import org.springframework.data.domain.Pageable;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -93,6 +94,15 @@ class AgentConversationServiceTest {
             .goal("review")
             .providerId("pixel")
             .runStatus(interview.guide.modules.agent.model.AgentRunStatus.COMPLETED)
+            .runPromptTokens(120)
+            .runCompletionTokens(80)
+            .runTotalTokens(200)
+            .runModelCalls(2)
+            .runDurationMillis(1250L)
+            .runCost(new BigDecimal("0.00048"))
+            .runCurrency("USD")
+            .runProvider("pixel")
+            .runModel("gpt-5.6-luna")
             .build();
         AgentChatMessageEntity user = AgentChatMessageEntity.builder()
             .session(session)
@@ -130,6 +140,10 @@ class AgentConversationServiceTest {
             .containsExactly("user", "assistant");
         assertThat(response.messages()).extracting("content")
             .containsExactly("请复盘", "复盘结果");
+        assertThat(response.runUsage().totalTokens()).isEqualTo(200);
+        assertThat(response.runUsage().modelCalls()).isEqualTo(2);
+        assertThat(response.runUsage().cost()).isEqualByComparingTo("0.00048");
+        assertThat(response.runUsage().model()).isEqualTo("gpt-5.6-luna");
     }
 
     @Test

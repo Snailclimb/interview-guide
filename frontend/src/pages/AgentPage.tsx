@@ -45,6 +45,7 @@ import type {
   AgentConversationResponse,
   AgentHistoryMessage,
   AgentMemoryResponse,
+  AgentRunUsage,
   AgentSource,
   AgentStreamEvent,
 } from '../types/agent';
@@ -174,6 +175,7 @@ export default function AgentPage() {
   const [sources, setSources] = useState<AgentSource[]>([]);
   const [loopPlan, setLoopPlan] = useState('');
   const [runNotice, setRunNotice] = useState('');
+  const [runUsage, setRunUsage] = useState<AgentRunUsage | null>(null);
   const [memoryNotice, setMemoryNotice] = useState('');
   const [memory, setMemory] = useState<AgentMemoryResponse | null>(null);
   const [memoryLoading, setMemoryLoading] = useState(true);
@@ -238,6 +240,7 @@ export default function AgentPage() {
   const restoreRunProgress = useCallback((conversation: AgentConversationResponse) => {
     setSources(conversation.runSources ?? []);
     setRunNotice(conversation.runNotice ?? '');
+    setRunUsage(conversation.runUsage ?? null);
     if (!conversation.runStep) return;
 
     const status = conversation.runStepStatus;
@@ -334,6 +337,7 @@ export default function AgentPage() {
     setRunNotice('');
     setSources([]);
     setLoopPlan('');
+    setRunUsage(null);
     setSteps(createInitialSteps());
     setMessages([createWelcomeMessage()]);
     setInput('');
@@ -570,6 +574,9 @@ export default function AgentPage() {
         onComplete: () => {
           setRunStatus((current) => current === 'running' ? 'completed' : current);
           void loadLongTermMemory();
+          void agentApi.getConversation(sessionId, agentSessionId)
+            .then(restoreRunProgress)
+            .catch(() => undefined);
         },
         onError: (error) => {
           if (controller.signal.aborted) return;
@@ -991,7 +998,7 @@ export default function AgentPage() {
                 </button>
               )}
               {(runStatus === 'completed' || runStatus === 'error') && (
-                <button onClick={() => { setRunStatus('idle'); setRunError(''); setRunNotice(''); setSources([]); setSteps(createInitialSteps()); }} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm">
+              <button onClick={() => { setRunStatus('idle'); setRunError(''); setRunNotice(''); setSources([]); setRunUsage(null); setSteps(createInitialSteps()); }} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm">
                   <RotateCcw className="w-4 h-4" />
                   清空流程
                 </button>
@@ -1003,6 +1010,25 @@ export default function AgentPage() {
             </div>
             {runNotice && <p className="text-sm text-amber-600 dark:text-amber-300 mt-3">{runNotice}</p>}
             {runError && <p className="text-sm text-rose-500 dark:text-rose-300 mt-3">{runError}</p>}
+            {runUsage && (
+              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/60" aria-label="本次 Agent 用量">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold dark-text">本次运行用量</p>
+                  <p className="text-[11px] dark-text-muted">
+                    {[runUsage.provider, runUsage.model].filter(Boolean).join(' · ') || '模型信息暂不可用'}
+                  </p>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                  <div><span className="dark-text-muted">输入 Token</span><p className="font-semibold dark-text">{runUsage.promptTokens.toLocaleString()}</p></div>
+                  <div><span className="dark-text-muted">输出 Token</span><p className="font-semibold dark-text">{runUsage.completionTokens.toLocaleString()}</p></div>
+                  <div><span className="dark-text-muted">模型调用</span><p className="font-semibold dark-text">{runUsage.modelCalls} 次</p></div>
+                  <div><span className="dark-text-muted">模型耗时</span><p className="font-semibold dark-text">{(runUsage.durationMillis / 1000).toFixed(1)} 秒</p></div>
+                </div>
+                <p className="mt-2 text-[11px] dark-text-muted">
+                  总 Token：{runUsage.totalTokens.toLocaleString()} · 费用：{runUsage.cost == null ? '未配置单价' : `${runUsage.cost} ${runUsage.currency || ''}`.trim()}
+                </p>
+              </div>
+            )}
             {sources.length > 0 && (
               <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
                 <p className="text-xs font-semibold dark-text-muted mb-2">本次参考来源</p>

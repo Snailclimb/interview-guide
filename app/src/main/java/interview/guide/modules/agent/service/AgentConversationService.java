@@ -5,6 +5,7 @@ import interview.guide.modules.agent.model.AgentChatSessionEntity;
 import interview.guide.modules.agent.model.AgentConversationResponse;
 import interview.guide.modules.agent.model.AgentConversationSummary;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
+import interview.guide.modules.agent.model.AgentRunUsage;
 import interview.guide.modules.agent.model.AgentSource;
 import interview.guide.modules.agent.model.AgentRunStatus;
 import interview.guide.modules.agent.repository.AgentChatMessageRepository;
@@ -119,6 +120,7 @@ public class AgentConversationService {
         session.setRunSourcesJson(null);
         session.setLoopPlan(null);
         session.setLoopNextStep(0);
+        clearRunUsage(session);
         session = sessionRepository.save(session);
 
         int nextSequence = messageRepository.findTopBySessionIdOrderBySequenceNumDesc(session.getId())
@@ -364,6 +366,18 @@ public class AgentConversationService {
         sessionRepository.save(session);
     }
 
+    /** 持久化最近一次模型运行的聚合用量，供刷新页面和验收查看。 */
+    @Transactional
+    public void updateRunUsage(Long messageId, AgentRunUsage usage) {
+        AgentChatSessionEntity session = lockActiveSession(messageId);
+        if (session == null) {
+            log.info("忽略已失效 Agent 用量事件: messageId={}", messageId);
+            return;
+        }
+        applyRunUsage(session, usage);
+        sessionRepository.save(session);
+    }
+
     /**
      * 判断当前后台任务是否仍是该面试会话的有效运行任务。
      * 用于多实例部署时让执行任务感知另一实例发起的取消或超时回收。
@@ -429,6 +443,7 @@ public class AgentConversationService {
         session.setRunStepStatus("running");
         session.setRunNotice("应用重启后自动恢复中");
         session.setRunSourcesJson(null);
+        clearRunUsage(session);
         assistant.setContent("");
         assistant.setCompleted(false);
         assistant.setErrorMessage(null);
@@ -514,7 +529,8 @@ public class AgentConversationService {
             session.getRunNotice(),
             partialAnswer,
             parseSources(session.getRunSourcesJson()),
-            normalized
+            normalized,
+            readRunUsage(session)
         );
     }
 
@@ -730,6 +746,57 @@ public class AgentConversationService {
         session.setLoopPlan(null);
         session.setLoopNextStep(0);
         sessionRepository.save(session);
+    }
+
+    private void clearRunUsage(AgentChatSessionEntity session) {
+        session.setRunPromptTokens(null);
+        session.setRunCompletionTokens(null);
+        session.setRunTotalTokens(null);
+        session.setRunModelCalls(null);
+        session.setRunDurationMillis(null);
+        session.setRunCost(null);
+        session.setRunCurrency(null);
+        session.setRunProvider(null);
+        session.setRunModel(null);
+    }
+
+    private void applyRunUsage(AgentChatSessionEntity session, AgentRunUsage usage) {
+        AgentRunUsage safe = usage == null ? AgentRunUsage.empty() : usage;
+        session.setRunPromptTokens(safe.promptTokens());
+        session.setRunCompletionTokens(safe.completionTokens());
+        session.setRunTotalTokens(safe.totalTokens());
+        session.setRunModelCalls(safe.modelCalls());
+        session.setRunDurationMillis(safe.durationMillis());
+        session.setRunCost(safe.cost());
+        session.setRunCurrency(safe.currency());
+        session.setRunProvider(safe.provider());
+        session.setRunModel(safe.model());
+    }
+
+    private AgentRunUsage readRunUsage(AgentChatSessionEntity session) {
+        boolean present = session.getRunPromptTokens() != null
+            || session.getRunCompletionTokens() != null
+            || session.getRunTotalTokens() != null
+            || session.getRunModelCalls() != null
+            || session.getRunDurationMillis() != null
+            || session.getRunCost() != null
+            || session.getRunProvider() != null
+            || session.getRunModel() != null;
+        return present ? new AgentRunUsage(
+            value(session.getRunPromptTokens()),
+            value(session.getRunCompletionTokens()),
+            value(session.getRunTotalTokens()),
+            value(session.getRunModelCalls()),
+            session.getRunDurationMillis() == null ? 0 : session.getRunDurationMillis(),
+            session.getRunCost(),
+            session.getRunCurrency(),
+            session.getRunProvider(),
+            session.getRunModel()
+        ) : null;
+    }
+
+    private int value(Integer value) {
+        return value == null ? 0 : value;
     }
 
     /** 锁住会话后再读取运行状态，避免异步进度落在终态之后。 */

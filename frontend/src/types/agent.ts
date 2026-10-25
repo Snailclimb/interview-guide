@@ -31,6 +31,19 @@ export interface AgentConversationResponse {
   runPartialAnswer?: string | null;
   runSources?: AgentSource[];
   messages: AgentHistoryMessage[];
+  runUsage?: AgentRunUsage | null;
+}
+
+export interface AgentRunUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  modelCalls: number;
+  durationMillis: number;
+  cost?: number | string | null;
+  currency?: string | null;
+  provider?: string | null;
+  model?: string | null;
 }
 
 export interface AgentConversationSummary {

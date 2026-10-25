@@ -177,4 +177,33 @@ class AgentMetricsTest {
             .tag("currency", "CNY")
             .counter().count()).isCloseTo(0.00048, offset(0.000000000001));
     }
+
+    @Test
+    @DisplayName("聚合一次 Agent 运行的模型调用、Token、耗时和费用")
+    void snapshotsRunUsage() {
+        AgentCostProperties costProperties = new AgentCostProperties();
+        AgentCostProperties.Pricing pricing = new AgentCostProperties.Pricing();
+        pricing.setInputPerMillion(new BigDecimal("2"));
+        pricing.setOutputPerMillion(new BigDecimal("3"));
+        pricing.setCurrency("CNY");
+        costProperties.getProviders().put("pixel", pricing);
+
+        AgentMetrics metrics = metrics(true, costProperties);
+        AgentMetrics.RunTracker run = metrics.startRun();
+        AgentMetrics.ModelCallTracker first = metrics.startModelCall("pixel", run);
+        metrics.observeModelUsage(first, 120, 80, 200, "gpt-5.6-luna");
+        metrics.finishModelCall(first, "success");
+        AgentMetrics.ModelCallTracker retry = metrics.startModelCall("pixel", run);
+        metrics.observeModelUsage(retry, 10, 5, 15, "gpt-5.6-luna");
+        metrics.finishModelCall(retry, "failure");
+
+        assertThat(metrics.snapshot(run).promptTokens()).isEqualTo(130);
+        assertThat(metrics.snapshot(run).completionTokens()).isEqualTo(85);
+        assertThat(metrics.snapshot(run).totalTokens()).isEqualTo(215);
+        assertThat(metrics.snapshot(run).modelCalls()).isEqualTo(2);
+        assertThat(metrics.snapshot(run).cost()).isEqualByComparingTo("0.000515");
+        assertThat(metrics.snapshot(run).currency()).isEqualTo("CNY");
+        assertThat(metrics.snapshot(run).provider()).isEqualTo("pixel");
+        assertThat(metrics.snapshot(run).model()).isEqualTo("gpt-5.6-luna");
+    }
 }

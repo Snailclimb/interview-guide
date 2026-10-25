@@ -365,7 +365,7 @@ public class InterviewAgentService {
                         (providerId, compacted) -> {
                             PromptVariant prompt = compacted ? compactPrompt : normalPrompt;
                             return () -> {
-                                AgentMetrics.ModelCallTracker modelCall = agentMetrics.startModelCall(providerId);
+                                AgentMetrics.ModelCallTracker modelCall = agentMetrics.startModelCall(providerId, runTracker);
                                 try {
                                     ChatClient chatClient = llmProviderRegistry.getAgentChatClient(providerId);
                                     var promptSpec = chatClient.prompt().system(prompt.systemPrompt());
@@ -608,6 +608,7 @@ public class InterviewAgentService {
             ))
             .doOnComplete(() -> {
                 agentProgressWriter.flush(assistantMessageId);
+                persistRunUsage(assistantMessageId, runTracker);
                 agentConversationService.completeMessage(
                     assistantMessageId,
                     output.get().toString()
@@ -616,6 +617,7 @@ public class InterviewAgentService {
             .doOnComplete(() -> agentMetrics.finishRun(runTracker, "success"))
             .doOnError(error -> {
                 agentProgressWriter.flush(assistantMessageId);
+                persistRunUsage(assistantMessageId, runTracker);
                 agentConversationService.failMessage(
                     assistantMessageId,
                     output.get().toString(),
@@ -625,11 +627,24 @@ public class InterviewAgentService {
             })
             .doOnCancel(() -> {
                 agentProgressWriter.flush(assistantMessageId);
+                persistRunUsage(assistantMessageId, runTracker);
                 if (taskHandle == null || taskHandle.markCancellationPersisted()) {
                     agentConversationService.cancelMessage(assistantMessageId, output.get().toString());
                 }
                 agentMetrics.finishRun(runTracker, "cancelled");
             });
+    }
+
+    private void persistRunUsage(Long assistantMessageId, AgentMetrics.RunTracker runTracker) {
+        if (assistantMessageId == null || runTracker == null) {
+            return;
+        }
+        try {
+            agentConversationService.updateRunUsage(assistantMessageId, agentMetrics.snapshot(runTracker));
+        } catch (Throwable error) {
+            // 用量展示是附加能力，不能因为指标/迁移问题阻断回答终态落库。
+            log.warn("Agent 运行用量持久化失败: messageId={}", assistantMessageId, error);
+        }
     }
 
     private Flux<AgentStreamEvent> streamProviderAttempt(

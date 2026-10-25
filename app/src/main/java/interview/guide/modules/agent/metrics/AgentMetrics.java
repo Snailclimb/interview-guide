@@ -1,11 +1,14 @@
 package interview.guide.modules.agent.metrics;
 
+import interview.guide.modules.agent.model.AgentRunUsage;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.LongAdder;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -108,7 +111,12 @@ public class AgentMetrics {
 
     /** 开始一次实际 Provider 模型调用。一次 Agent 任务可能包含重试和备用模型调用。 */
     public ModelCallTracker startModelCall(String providerId) {
-        return new ModelCallTracker(safeTag(providerId, "unknown"), System.nanoTime());
+        return startModelCall(providerId, null);
+    }
+
+    /** 开始模型调用并把该调用的聚合用量归入当前 Agent 运行。 */
+    public ModelCallTracker startModelCall(String providerId, RunTracker runTracker) {
+        return new ModelCallTracker(safeTag(providerId, "unknown"), System.nanoTime(), runTracker);
     }
 
     /** 记录流式响应中的 usage 快照；Provider 可能只在最后一个 chunk 返回 usage。 */
@@ -136,6 +144,10 @@ public class AgentMetrics {
         if (tracker == null || !tracker.finished.compareAndSet(false, true)) {
             return;
         }
+        TokenUsage usage = tracker.usage.get();
+        if (tracker.runTracker != null) {
+            tracker.runTracker.record(tracker, usage, costProperties);
+        }
         if (!enabled) {
             return;
         }
@@ -152,7 +164,6 @@ public class AgentMetrics {
             .register(registry)
             .record(Duration.ofNanos(Math.max(0, System.nanoTime() - tracker.startedNanos)));
 
-        TokenUsage usage = tracker.usage.get();
         if (usage == null) {
             return;
         }
@@ -198,6 +209,10 @@ public class AgentMetrics {
         return value.trim().length() > 96 ? value.trim().substring(0, 96) : value.trim();
     }
 
+    public AgentRunUsage snapshot(RunTracker tracker) {
+        return tracker == null ? AgentRunUsage.empty() : tracker.snapshot();
+    }
+
     public record TokenUsage(int promptTokens, int completionTokens, int totalTokens) {
     }
 
@@ -206,20 +221,70 @@ public class AgentMetrics {
         private final long startedNanos;
         private final AtomicBoolean finished = new AtomicBoolean();
         private final AtomicReference<TokenUsage> usage = new AtomicReference<>();
+        private final RunTracker runTracker;
         private volatile String model = "unknown";
 
-        private ModelCallTracker(String provider, long startedNanos) {
+        private ModelCallTracker(String provider, long startedNanos, RunTracker runTracker) {
             this.provider = provider;
             this.startedNanos = startedNanos;
+            this.runTracker = runTracker;
         }
     }
 
     public static final class RunTracker {
         private final long startedNanos;
         private final AtomicBoolean finished = new AtomicBoolean();
+        private final AtomicInteger modelCalls = new AtomicInteger();
+        private final LongAdder promptTokens = new LongAdder();
+        private final LongAdder completionTokens = new LongAdder();
+        private final LongAdder totalTokens = new LongAdder();
+        private final LongAdder durationMillis = new LongAdder();
+        private final AtomicReference<BigDecimal> cost = new AtomicReference<>();
+        private final AtomicReference<String> currency = new AtomicReference<>();
+        private final AtomicReference<String> provider = new AtomicReference<>();
+        private final AtomicReference<String> model = new AtomicReference<>();
 
         private RunTracker(long startedNanos) {
             this.startedNanos = startedNanos;
+        }
+
+        private void record(
+            ModelCallTracker tracker,
+            TokenUsage usage,
+            AgentCostProperties costProperties
+        ) {
+            modelCalls.incrementAndGet();
+            durationMillis.add(Math.max(0, (System.nanoTime() - tracker.startedNanos) / 1_000_000));
+            provider.set(tracker.provider);
+            model.set(tracker.model);
+            if (usage == null) {
+                return;
+            }
+            promptTokens.add(usage.promptTokens());
+            completionTokens.add(usage.completionTokens());
+            totalTokens.add(usage.totalTokens() > 0
+                ? usage.totalTokens() : usage.promptTokens() + usage.completionTokens());
+            AgentCostProperties.Pricing pricing = costProperties == null
+                ? null : costProperties.find(tracker.provider);
+            if (pricing != null && pricing.configured()) {
+                currency.set(pricing.getCurrency());
+                BigDecimal callCost = pricing.calculate(usage.promptTokens(), usage.completionTokens());
+                cost.updateAndGet(previous -> previous == null ? callCost : previous.add(callCost));
+            }
+        }
+
+        private AgentRunUsage snapshot() {
+            return new AgentRunUsage(
+                (int) Math.min(Integer.MAX_VALUE, promptTokens.sum()),
+                (int) Math.min(Integer.MAX_VALUE, completionTokens.sum()),
+                (int) Math.min(Integer.MAX_VALUE, totalTokens.sum()),
+                modelCalls.get(),
+                durationMillis.sum(),
+                cost.get(),
+                currency.get(),
+                provider.get(),
+                model.get()
+            );
         }
     }
 }

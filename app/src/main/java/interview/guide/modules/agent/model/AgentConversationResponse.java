@@ -19,8 +19,33 @@ public record AgentConversationResponse(
     String runNotice,
     String runPartialAnswer,
     List<AgentSource> runSources,
-    List<AgentHistoryMessage> messages
+    List<AgentHistoryMessage> messages,
+    AgentRunUsage runUsage
 ) {
+    /** 兼容未携带运行用量的旧调用方。 */
+    public AgentConversationResponse(
+        String interviewSessionId,
+        String agentSessionId,
+        String title,
+        String goal,
+        String providerId,
+        String runId,
+        AgentRunStatus runStatus,
+        java.time.LocalDateTime runStartedAt,
+        java.time.LocalDateTime runFinishedAt,
+        String runError,
+        String runStep,
+        String runStepStatus,
+        String runNotice,
+        String runPartialAnswer,
+        List<AgentSource> runSources,
+        List<AgentHistoryMessage> messages
+    ) {
+        this(interviewSessionId, agentSessionId, title, goal, providerId, runId, runStatus,
+            runStartedAt, runFinishedAt, runError, runStep, runStepStatus, runNotice,
+            runPartialAnswer, runSources, messages, null);
+    }
+
     /** 兼容已有服务和测试调用方。 */
     public AgentConversationResponse(
         String interviewSessionId,
@@ -40,7 +65,7 @@ public record AgentConversationResponse(
     ) {
         this(interviewSessionId, null, null, goal, providerId, runId, runStatus,
             runStartedAt, runFinishedAt, runError, runStep, runStepStatus, runNotice,
-            runPartialAnswer, runSources, messages);
+            runPartialAnswer, runSources, messages, null);
     }
 
     public AgentConversationResponse {
