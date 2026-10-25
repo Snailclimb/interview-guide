@@ -190,7 +190,6 @@ app:
       cost:
         # 费用只在显式配置 Provider 单价后发布；未配置时仍记录 Token，不猜测费用
         enabled: ${APP_AI_AGENT_COST_ENABLED:true}
-        providers: {}
       # Agent 运行进度异步写库的合并窗口（毫秒）
       progress-write-debounce-ms: ${APP_AI_AGENT_PROGRESS_WRITE_DEBOUNCE_MS:100}
       # Agent 首次模型调用失败后的最大重试次数
