@@ -165,6 +165,19 @@ tasks.register('ragEvaluation', Test) {
     }
 }
 
+// Agent 质量评测：普通测试覆盖离线质量门禁与语料契约；该任务提供独立入口，便于 CI 或真实样本扩展。
+tasks.register('agentEvaluation', Test) {
+    description = '运行 Agent 质量基线评测（离线规则与语料契约，不调用付费模型）'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags 'agent-eval'
+    }
+    systemProperty 'agentEval.reportDir', layout.buildDirectory.dir('reports/agent-eval').get().asFile.absolutePath
+    outputs.upToDateWhen { false }
+}
+
 // 将仓库根目录 .env 注入 bootRun，便于本地加载 AI_BAILIAN_API_KEY 等变量（Gradle 进程默认不读 .env）
 // 同时确保 JVM 使用 UTF-8 编码
 tasks.named('bootRun') {

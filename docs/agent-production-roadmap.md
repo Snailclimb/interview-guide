@@ -32,6 +32,11 @@
 增加价格字段，避免把价格变更和 API Key、Provider 生效逻辑绑在同一个迁移中；确认
 指标和报表口径稳定后再接入管理页。
 
+当前已增加离线质量门禁：`AgentQualityEvaluator` 对完整性、事实禁用项、RAG 引用边界、
+Markdown 换行/代码围栏和 Loop 步骤预算做可重复检查；`agent-eval/dataset-v1.jsonl`
+提供 dev/holdout 样本契约，执行入口为 `./gradlew :app:agentEvaluation`。它只证明
+可观测的回归条件，真实模型回答的语义正确性仍需后续真实样本评测和人工抽检。
+
 ### 阶段二：Agent Loop 增强
 
 - 每个步骤独立超时、重试和结果校验；
