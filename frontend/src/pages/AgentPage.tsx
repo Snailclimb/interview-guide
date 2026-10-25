@@ -44,6 +44,7 @@ import type {
   AgentGoal,
   AgentConversationResponse,
   AgentHistoryMessage,
+  AgentMemoryResponse,
   AgentSource,
   AgentStreamEvent,
 } from '../types/agent';
@@ -174,6 +175,8 @@ export default function AgentPage() {
   const [loopPlan, setLoopPlan] = useState('');
   const [runNotice, setRunNotice] = useState('');
   const [memoryNotice, setMemoryNotice] = useState('');
+  const [memory, setMemory] = useState<AgentMemoryResponse | null>(null);
+  const [memoryLoading, setMemoryLoading] = useState(true);
   const [messages, setMessages] = useState<AgentMessage[]>([createWelcomeMessage()]);
   const [input, setInput] = useState('');
   const abortRef = useRef<AbortController | null>(null);
@@ -564,7 +567,10 @@ export default function AgentPage() {
             setRunStatus((current) => current === 'running' ? 'completed' : current);
           }
         },
-        onComplete: () => setRunStatus((current) => current === 'running' ? 'completed' : current),
+        onComplete: () => {
+          setRunStatus((current) => current === 'running' ? 'completed' : current);
+          void loadLongTermMemory();
+        },
         onError: (error) => {
           if (controller.signal.aborted) return;
           const message = getErrorMessage(error) || '连接暂时中断';
@@ -591,10 +597,25 @@ export default function AgentPage() {
     );
   };
 
+  const loadLongTermMemory = useCallback(() => {
+    setMemoryLoading(true);
+    return agentApi.getMemory()
+      .then((value) => setMemory(value))
+      .catch(() => setMemoryNotice('长期记忆读取失败，请稍后重试'))
+      .finally(() => setMemoryLoading(false));
+  }, []);
+
+  useEffect(() => {
+    void loadLongTermMemory();
+  }, [loadLongTermMemory]);
+
   const clearLongTermMemory = () => {
     if (runStatus === 'running' || !window.confirm('确定清除当前浏览器保存的 Agent 长期记忆吗？')) return;
     void agentApi.clearMemory()
-      .then(() => setMemoryNotice('长期记忆已清除'))
+      .then(() => {
+        setMemory({ lastSkillId: null, weaknesses: [], recentGoals: [], updatedAt: null });
+        setMemoryNotice('长期记忆已清除');
+      })
       .catch(() => setMemoryNotice('长期记忆清除失败，请稍后重试'));
   };
 
@@ -751,6 +772,48 @@ export default function AgentPage() {
         </div>
       </div>
       {memoryNotice ? <p className="text-xs text-slate-500 dark:text-slate-400 text-right">{memoryNotice}</p> : null}
+      <section className="dark-card px-5 py-4" aria-label="Agent 长期记忆">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold dark-text">长期记忆</h2>
+              <span className="text-[11px] rounded-full bg-slate-100 px-2 py-0.5 text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+                仅保存结构化摘要
+              </span>
+            </div>
+            <p className="text-xs dark-text-muted mt-1">用于跨面试延续训练重点，当前面试报告始终优先。</p>
+          </div>
+          <button
+            onClick={() => void loadLongTermMemory()}
+            disabled={memoryLoading || runStatus === 'running'}
+            className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs disabled:opacity-50"
+            aria-label="刷新长期记忆"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${memoryLoading ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
+        </div>
+        {memoryLoading ? (
+          <p className="text-xs dark-text-muted mt-3">正在读取记忆...</p>
+        ) : memory && (memory.lastSkillId || memory.weaknesses.length || memory.recentGoals.length) ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4 text-xs">
+            <div className="rounded-xl bg-slate-50 dark:bg-slate-800/70 p-3">
+              <p className="font-semibold dark-text mb-1">最近方向</p>
+              <p className="dark-text-muted break-words">{memory.lastSkillId || '暂无'}</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 dark:bg-slate-800/70 p-3">
+              <p className="font-semibold dark-text mb-1">反复薄弱点</p>
+              <p className="dark-text-muted line-clamp-3">{memory.weaknesses.join('；') || '暂无'}</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 dark:bg-slate-800/70 p-3">
+              <p className="font-semibold dark-text mb-1">最近训练目标</p>
+              <p className="dark-text-muted line-clamp-3">{memory.recentGoals.join('；') || '暂无'}</p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs dark-text-muted mt-3">暂无长期记忆，完成一次 Agent 复盘后会自动积累。</p>
+        )}
+      </section>
 
       <div className="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-6 items-start">
         <AgentSessionList

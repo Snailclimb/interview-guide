@@ -42,6 +42,13 @@ export interface AgentConversationSummary {
   updatedAt?: string | null;
 }
 
+export interface AgentMemoryResponse {
+  lastSkillId?: string | null;
+  weaknesses: string[];
+  recentGoals: string[];
+  updatedAt?: string | null;
+}
+
 export type AgentStepStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
 
 export interface AgentSource {

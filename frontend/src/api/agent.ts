@@ -3,6 +3,7 @@ import request from './request.ts';
 import type {
   AgentConversationResponse,
   AgentConversationSummary,
+  AgentMemoryResponse,
   AgentMessageRequest,
   AgentStreamEvent,
 } from '../types/agent.ts';
@@ -68,6 +69,10 @@ export const agentApi = {
 
   clearMemory(): Promise<void> {
     return request.delete<void>('/api/agent/memory', { headers: agentHeaders() });
+  },
+
+  getMemory(): Promise<AgentMemoryResponse> {
+    return request.get<AgentMemoryResponse>('/api/agent/memory', { headers: agentHeaders() });
   },
 
   streamMessage(
