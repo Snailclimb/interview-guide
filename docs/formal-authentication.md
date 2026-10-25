@@ -45,6 +45,11 @@ pwsh -NoProfile -File .\scripts\auth-voice-schedule-acceptance.ps1 -BaseUrl http
 
 # 正式登录下的 Agent 会话、Loop、持久化和模型流式验收
 pwsh -NoProfile -File .\scripts\formal-agent-acceptance.ps1 -BaseUrl http://localhost:18083 -CreateInterview -RunModelTests
+
+# 应用重启后的 Agent 任务恢复（需要手动重启 API 容器）
+pwsh -NoProfile -File .\scripts\agent-restart-acceptance.ps1 -BaseUrl http://localhost:18083 -StatePath $env:TEMP\agent-recovery-state.json
+# 停止并重新启动 API，等待超过 30 秒后：
+pwsh -NoProfile -File .\scripts\agent-restart-acceptance.ps1 -BaseUrl http://localhost:18083 -VerifyStatePath $env:TEMP\agent-recovery-state.json -Cleanup
 ```
 
 验收覆盖：未登录 401、注册、重复注册、登录 Cookie、会话恢复、CSRF、旧 Header 防伪、退出和退出后的会话失效；以及不同账号之间的简历、语音面试、面试日程和 Agent 会话隔离。
