@@ -147,7 +147,13 @@ try {
             Assert-Pass ($stream -match 'event:\s*agent-done' -and $stream -notmatch 'event:\s*agent-error') "Agent 第 $($i + 1) 轮正常完成"
             $conversation = Invoke-JsonApi "/api/agent/interview-sessions/$InterviewSessionId/conversation?agentSessionId=$([Uri]::EscapeDataString([string]$payloads[$i].agentSessionId))"
             Assert-Pass ($conversation.code -eq 200 -and $conversation.data.runStatus -eq 'COMPLETED') "Agent 第 $($i + 1) 轮状态持久化为 COMPLETED"
+            $usage = $conversation.data.runUsage
+            Assert-Pass ($null -ne $usage -and [int]$usage.modelCalls -ge 1 -and [int64]$usage.durationMillis -ge 0) "Agent 第 $($i + 1) 轮用量摘要已持久化"
         }
+
+        $memory = Invoke-JsonApi '/api/agent/memory'
+        Assert-Pass ($memory.code -eq 200 -and $null -ne $memory.data) '正式登录可读取 Agent 长期记忆摘要'
+        Assert-Pass ($memory.data.PSObject.Properties.Name -notcontains 'memoryKey') '长期记忆接口不暴露内部 memoryKey'
     } else {
         Write-Host '跳过真实模型调用：使用 -RunModelTests 启用两轮 Agent SSE 验收。' -ForegroundColor Yellow
     }

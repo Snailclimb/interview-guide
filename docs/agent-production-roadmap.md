@@ -26,7 +26,7 @@
 5. 将质量样本、模型版本、Prompt 版本、代码版本和费用信息绑定，形成可比较的回归报告。
 6. 将最近一次运行的聚合 Token、模型调用次数、模型耗时和已配置费用持久化到 Agent 会话，供页面刷新后查看。
 
-验收：指标能在 `/actuator/prometheus` 查询；一次成功、重试、备用 Provider 和失败请求都有可区分的调用/耗时统计；缺少 Provider usage 时请求仍正常完成。
+验收：指标能在 `/actuator/prometheus` 查询；一次成功、重试、备用 Provider 和失败请求都有可区分的调用/耗时统计；缺少 Provider usage 时请求仍正常完成；正式 Agent 验收脚本能读取 `runUsage` 摘要和长期记忆摘要。
 
 当前实现先支持 `app.ai.agent.cost.providers.<provider>` 的配置文件单价，字段为
 `input-per-million`、`output-per-million` 和 `currency`。数据库 Provider 管理页暂不
