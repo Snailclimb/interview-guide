@@ -140,6 +140,9 @@ public class VoiceInterviewController {
     @GetMapping("/sessions/{sessionId}/messages")
     public Result<List<VoiceInterviewMessageDTO>> getMessages(@PathVariable Long sessionId) {
         log.info("Getting messages for session: {}", sessionId);
+        if (voiceInterviewService.getSession(sessionId) == null) {
+            throw new BusinessException(ErrorCode.VOICE_SESSION_NOT_FOUND, "会话不存在: " + sessionId);
+        }
         List<VoiceInterviewMessageDTO> messages =
                 voiceInterviewService.getConversationHistoryDTO(sessionId.toString());
         return Result.success(messages);

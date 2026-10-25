@@ -8,6 +8,7 @@ import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionEntity;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewEvaluationRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewMessageRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewSessionRepository;
+import interview.guide.modules.resume.repository.ResumeRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -42,6 +43,8 @@ class VoiceInterviewSummaryPersistenceTest {
   private VoiceEvaluateStreamProducer evaluateStreamProducer;
   @Mock
   private LlmProviderRegistry llmProviderRegistry;
+  @Mock
+  private ResumeRepository resumeRepository;
 
   private VoiceInterviewService service;
 
@@ -54,7 +57,8 @@ class VoiceInterviewSummaryPersistenceTest {
         redissonClient,
         properties,
         evaluateStreamProducer,
-        llmProviderRegistry
+        llmProviderRegistry,
+        resumeRepository
     );
   }
 

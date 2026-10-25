@@ -15,6 +15,21 @@ import java.util.List;
 public interface InterviewScheduleRepository extends JpaRepository<InterviewScheduleEntity, Long> {
     List<InterviewScheduleEntity> findByStatusAndInterviewTimeBefore(InterviewStatus status, LocalDateTime time);
 
+    List<InterviewScheduleEntity> findByOwnerIdAndStatus(String ownerId, InterviewStatus status);
+
+    List<InterviewScheduleEntity> findByOwnerIdAndInterviewTimeBetween(
+        String ownerId, LocalDateTime start, LocalDateTime end);
+
+    List<InterviewScheduleEntity> findAllByOwnerIdOrderByInterviewTimeAsc(String ownerId);
+
+    java.util.Optional<InterviewScheduleEntity> findByIdAndOwnerId(Long id, String ownerId);
+
+    long countByOwnerIdIsNotNull();
+
+    @Modifying
+    @Query("UPDATE InterviewScheduleEntity e SET e.ownerId = :ownerId WHERE e.ownerId IS NULL")
+    int claimUnownedRows(@Param("ownerId") String ownerId);
+
     List<InterviewScheduleEntity> findByStatus(InterviewStatus status);
 
     List<InterviewScheduleEntity> findByInterviewTimeBetween(LocalDateTime start, LocalDateTime end);

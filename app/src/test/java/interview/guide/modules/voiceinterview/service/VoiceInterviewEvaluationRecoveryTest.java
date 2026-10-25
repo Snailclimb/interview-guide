@@ -9,6 +9,7 @@ import interview.guide.modules.voiceinterview.model.VoiceInterviewSessionStatus;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewEvaluationRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewMessageRepository;
 import interview.guide.modules.voiceinterview.repository.VoiceInterviewSessionRepository;
+import interview.guide.modules.resume.repository.ResumeRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -58,6 +59,9 @@ class VoiceInterviewEvaluationRecoveryTest {
     private LlmProviderRegistry llmProviderRegistry;
 
     @Mock
+    private ResumeRepository resumeRepository;
+
+    @Mock
     private RBucket<VoiceInterviewSessionEntity> sessionBucket;
 
     private VoiceInterviewService voiceInterviewService;
@@ -71,7 +75,8 @@ class VoiceInterviewEvaluationRecoveryTest {
             redissonClient,
             properties,
             voiceEvaluateStreamProducer,
-            llmProviderRegistry
+            llmProviderRegistry,
+            resumeRepository
         );
         lenient().when(redissonClient.<VoiceInterviewSessionEntity>getBucket(anyString()))
             .thenReturn(sessionBucket);

@@ -12,6 +12,9 @@ public class InterviewScheduleEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "owner_id", length = 36)
+    private String ownerId;
+
     @Column(name = "company_name", nullable = false)
     private String companyName;
 
