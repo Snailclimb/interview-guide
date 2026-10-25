@@ -89,6 +89,20 @@ class AgentProgressWriterTest {
     }
 
     @Test
+    @DisplayName("终态刷盘前持久化 Loop 计划和下一个步骤")
+    void flushesLoopResumeState() {
+        AgentConversationService conversationService = mock(AgentConversationService.class);
+        AgentProgressWriter writer = new AgentProgressWriter(
+            conversationService, Duration.ofSeconds(5)
+        );
+
+        writer.recordLoopState(45L, "1. 读取报告\n2. 整理建议", 1);
+        writer.flush(45L);
+
+        verify(conversationService).updateLoopState(45L, "1. 读取报告\n2. 整理建议", 1);
+    }
+
+    @Test
     @DisplayName("终态刷盘与延迟写入并发时保持写入顺序")
     void serializesTerminalFlushAndDelayedDrain() throws Exception {
         AgentConversationService conversationService = mock(AgentConversationService.class);

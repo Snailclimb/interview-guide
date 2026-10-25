@@ -92,6 +92,13 @@ public class AgentChatSessionEntity {
     @Column(name = "run_sources", columnDefinition = "TEXT")
     private String runSourcesJson;
 
+    @Column(name = "loop_plan", columnDefinition = "TEXT")
+    private String loopPlan;
+
+    @Column(name = "loop_next_step", nullable = false)
+    @Builder.Default
+    private int loopNextStep = 0;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

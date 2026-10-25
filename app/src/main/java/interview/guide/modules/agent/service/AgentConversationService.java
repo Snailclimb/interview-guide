@@ -117,6 +117,8 @@ public class AgentConversationService {
         session.setRunStepStatus(null);
         session.setRunNotice(null);
         session.setRunSourcesJson(null);
+        session.setLoopPlan(null);
+        session.setLoopNextStep(0);
         session = sessionRepository.save(session);
 
         int nextSequence = messageRepository.findTopBySessionIdOrderBySequenceNumDesc(session.getId())
@@ -349,6 +351,19 @@ public class AgentConversationService {
         sessionRepository.save(session);
     }
 
+    /** 持久化 Loop 计划和下一个待执行步骤，供应用重启后的任务接管使用。 */
+    @Transactional
+    public void updateLoopState(Long messageId, String plan, int nextStepIndex) {
+        AgentChatSessionEntity session = lockActiveSession(messageId);
+        if (session == null) {
+            log.info("忽略已失效 Agent Loop 状态事件: messageId={}", messageId);
+            return;
+        }
+        session.setLoopPlan(truncate(plan, 1200));
+        session.setLoopNextStep(Math.max(0, nextStepIndex));
+        sessionRepository.save(session);
+    }
+
     /**
      * 判断当前后台任务是否仍是该面试会话的有效运行任务。
      * 用于多实例部署时让执行任务感知另一实例发起的取消或超时回收。
@@ -428,7 +443,9 @@ public class AgentConversationService {
             session.getMemoryKey(),
             user.getContent(),
             assistant.getId(),
-            session.getRunId()
+            session.getRunId(),
+            session.getLoopPlan(),
+            session.getLoopNextStep()
         );
     }
 
@@ -710,6 +727,8 @@ public class AgentConversationService {
         session.setRunStepStatus(status == AgentRunStatus.COMPLETED ? "completed"
             : status == AgentRunStatus.CANCELLED ? "cancelled" : "failed");
         session.setRunNotice(null);
+        session.setLoopPlan(null);
+        session.setLoopNextStep(0);
         sessionRepository.save(session);
     }
 
@@ -815,7 +834,9 @@ public class AgentConversationService {
         String memoryKey,
         String userContent,
         Long assistantMessageId,
-        String runId
+        String runId,
+        String loopPlan,
+        int loopNextStep
     ) {
         public RecoveredRun(
             String interviewSessionId,
@@ -827,7 +848,7 @@ public class AgentConversationService {
             String runId
         ) {
             this(interviewSessionId, null, goal, providerId, null, memoryKey,
-                userContent, assistantMessageId, runId);
+                userContent, assistantMessageId, runId, null, 0);
         }
 
         public RecoveredRun(
@@ -841,7 +862,7 @@ public class AgentConversationService {
             String runId
         ) {
             this(interviewSessionId, agentSessionId, goal, providerId, null, memoryKey,
-                userContent, assistantMessageId, runId);
+                userContent, assistantMessageId, runId, null, 0);
         }
     }
 }

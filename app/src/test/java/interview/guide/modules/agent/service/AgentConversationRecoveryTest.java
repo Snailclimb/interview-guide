@@ -35,6 +35,8 @@ class AgentConversationRecoveryTest {
             .runId("old-run")
             .runStatus(AgentRunStatus.RUNNING)
             .activeMessageId(3L)
+            .loopPlan("1. 读取报告\n2. 整理建议")
+            .loopNextStep(1)
             .runStartedAt(LocalDateTime.now().minusMinutes(2))
             .build();
         AgentChatMessageEntity user = AgentChatMessageEntity.builder()
@@ -59,5 +61,7 @@ class AgentConversationRecoveryTest {
         assertThat(assistant.getContent()).isEmpty();
         assertThat(assistant.getCompleted()).isFalse();
         assertThat(session.getRunNotice()).contains("自动恢复");
+        assertThat(recovered.loopPlan()).contains("整理建议");
+        assertThat(recovered.loopNextStep()).isEqualTo(1);
     }
 }

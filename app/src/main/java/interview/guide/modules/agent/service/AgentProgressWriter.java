@@ -66,6 +66,19 @@ public class AgentProgressWriter {
         schedule(messageId, state);
     }
 
+    /** 异步持久化 Loop 计划和下一个待执行步骤，供重启接管时跳过已完成步骤。 */
+    public void recordLoopState(Long messageId, String plan, int nextStepIndex) {
+        if (messageId == null) {
+            return;
+        }
+        PendingProgress state = pending.computeIfAbsent(messageId, ignored -> new PendingProgress());
+        if (state.finished.get()) {
+            return;
+        }
+        state.latestLoop.set(new LoopProgress(plan, Math.max(0, nextStepIndex)));
+        schedule(messageId, state);
+    }
+
     /**
      * 在任务终态落库前同步刷出尚未到合并窗口的最后一批进度。
      *
@@ -99,6 +112,7 @@ public class AgentProgressWriter {
             }
             state.latestStep.set(null);
             state.latestSources.set(null);
+            state.latestLoop.set(null);
         }
         Mono.delay(FINISHED_STATE_TTL, Schedulers.boundedElastic())
             .subscribe(ignored -> pending.remove(messageId, state));
@@ -131,7 +145,9 @@ public class AgentProgressWriter {
         state.scheduled.set(false);
         if (state.finished.get()) {
             pending.remove(messageId, state);
-        } else if (state.latestStep.get() != null || state.latestSources.get() != null) {
+        } else if (state.latestStep.get() != null
+            || state.latestSources.get() != null
+            || state.latestLoop.get() != null) {
             schedule(messageId, state);
         } else {
             pending.remove(messageId, state);
@@ -141,12 +157,16 @@ public class AgentProgressWriter {
     private void persistLatest(Long messageId, PendingProgress state) {
         StepProgress step = state.latestStep.getAndSet(null);
         List<AgentSource> sources = state.latestSources.getAndSet(null);
+        LoopProgress loop = state.latestLoop.getAndSet(null);
         try {
             if (step != null && !state.finished.get()) {
                 conversationService.updateRunProgress(messageId, step.step(), step.status(), step.notice());
             }
             if (sources != null && !state.finished.get()) {
                 conversationService.updateRunSources(messageId, sources);
+            }
+            if (loop != null && !state.finished.get()) {
+                conversationService.updateLoopState(messageId, loop.plan(), loop.nextStepIndex());
             }
         } catch (Throwable error) {
             log.warn("Agent 运行进度异步持久化失败: messageId={}", messageId, error);
@@ -156,11 +176,15 @@ public class AgentProgressWriter {
     private static final class PendingProgress {
         private final AtomicReference<StepProgress> latestStep = new AtomicReference<>();
         private final AtomicReference<List<AgentSource>> latestSources = new AtomicReference<>();
+        private final AtomicReference<LoopProgress> latestLoop = new AtomicReference<>();
         private final AtomicBoolean scheduled = new AtomicBoolean();
         private final AtomicBoolean finished = new AtomicBoolean();
         private final Object writeLock = new Object();
     }
 
     private record StepProgress(String step, String status, String notice) {
+    }
+
+    private record LoopProgress(String plan, int nextStepIndex) {
     }
 }

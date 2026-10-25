@@ -190,7 +190,7 @@ public class InterviewAgentService {
 
                 Flux<AgentStreamEvent> workflow = buildWorkflow(
                     sessionId, resolvedAgentSessionId, request, message, historyMessages, context, preparedMessage,
-                    cancellationSignal, taskHandle, runTracker
+                    cancellationSignal, taskHandle, runTracker, null
                 );
                 // SSE 断开后不缓存全部 token；最终答案由 AgentConversationService 持久化。
                 return Flux.create(emitter -> {
@@ -276,7 +276,8 @@ public class InterviewAgentService {
                 persistRunProgress(recoveredRun.assistantMessageId(), "context", "running", "应用重启后自动恢复中");
                 Flux<AgentStreamEvent> workflow = buildWorkflow(
                     recoveredRun.interviewSessionId(), activeKey, request, message, historyMessages, context,
-                    prepared, cancellationSignal, taskHandle, runTracker
+                    prepared, cancellationSignal, taskHandle, runTracker,
+                    new LoopResumeState(recoveredRun.loopPlan(), recoveredRun.loopNextStep())
                 );
                 taskHandle.subscription = workflow.subscribe(
                     ignored -> { },
@@ -305,9 +306,12 @@ public class InterviewAgentService {
         AgentConversationService.PreparedMessage preparedMessage,
         Sinks.One<Void> cancellationSignal,
         AgentTaskHandle taskHandle,
-        AgentMetrics.RunTracker runTracker
+        AgentMetrics.RunTracker runTracker,
+        LoopResumeState resumeState
     ) {
-        Flux<String> planFlux = agentLoopPlanner == null
+        Flux<String> planFlux = resumeState != null && resumeState.hasPlan()
+            ? Flux.just(resumeState.plan())
+            : agentLoopPlanner == null
             ? Flux.just(AgentLoopPlanner.DEFAULT_PLAN)
             : Mono.fromCallable(() -> agentLoopPlanner.plan(context, request, message, historyMessages))
                 .subscribeOn(Schedulers.boundedElastic())
@@ -318,22 +322,33 @@ public class InterviewAgentService {
                 AgentStreamEvent.step("planning", "running")
             ),
             planFlux.flatMap(plan -> {
-                    AgentLoopEngine.LoopResult loopResult = agentLoopPlanner == null
-                        ? new AgentLoopEngine().execute(
-                            context, List.of("读取面试报告并确认当前目标")
-                        )
-                        : new AgentLoopEngine().execute(
+                    AgentLoopEngine loopEngine = new AgentLoopEngine();
+                    List<String> loopSteps = agentLoopPlanner == null
+                        ? List.of("读取面试报告并确认当前目标")
+                        : agentLoopPlanner.steps(plan);
+                    AgentLoopEngine.ExecutionPolicy loopPolicy = new AgentLoopEngine.ExecutionPolicy(
+                        retryProperties.getLoopMaxSteps(),
+                        retryProperties.getLoopStepRetryAttempts(),
+                        retryProperties.getLoopStepTimeoutMillis(),
+                        retryProperties.getLoopTotalTimeoutMillis()
+                    );
+                    AgentLoopEngine.LoopResult loopResult = resumeState != null
+                        && resumeState.nextStepIndex() > 0
+                        ? loopEngine.resume(
                             context,
-                            agentLoopPlanner.steps(plan),
-                            new AgentLoopEngine.ExecutionPolicy(
-                                retryProperties.getLoopMaxSteps(),
-                                retryProperties.getLoopStepRetryAttempts(),
-                                retryProperties.getLoopStepTimeoutMillis(),
-                                retryProperties.getLoopTotalTimeoutMillis()
+                            loopSteps,
+                            new AgentLoopEngine.LoopResult(
+                                List.of(), "recovered", resumeState.nextStepIndex()
                             ),
+                            loopPolicy,
                             null
-                        );
-                    String loopTrace = loopResult.trace();
+                        )
+                        : loopEngine.execute(context, loopSteps, loopPolicy, null);
+                    agentProgressWriter.recordLoopState(
+                        preparedMessage.assistantMessageId(), plan, loopResult.nextStepIndex()
+                    );
+                    String loopTrace = loopResult.trace()
+                        + "\nLoop 终态：" + loopResult.termination();
                     List<Message> history = buildModelHistory(historyMessages);
                     List<Message> compactHistory = buildModelHistory(AgentHistoryPolicy.normalize(
                         historyMessages, CONTEXT_RETRY_HISTORY_CHARS, CONTEXT_RETRY_MESSAGE_CHARS
@@ -1000,6 +1015,12 @@ public class InterviewAgentService {
             }
         }
         return result;
+    }
+
+    private record LoopResumeState(String plan, int nextStepIndex) {
+        private boolean hasPlan() {
+            return plan != null && !plan.isBlank();
+        }
     }
 
     private record PromptVariant(String systemPrompt, String userPrompt, List<Message> history) {
