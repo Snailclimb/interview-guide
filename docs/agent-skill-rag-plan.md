@@ -177,6 +177,15 @@ done
 3. 在 Agent 运行期间重启应用，确认任务从 `RUNNING` 自动恢复且不会重复创建消息。
 4. 调用清除记忆接口后重新执行，确认提示词中不再出现旧记忆。
 
+正式登录和跨账号隔离验收可直接执行：
+
+```powershell
+pwsh -NoProfile -File .\scripts\formal-agent-acceptance.ps1 -BaseUrl http://localhost:18083 -CreateInterview -RunModelTests
+pwsh -NoProfile -File .\scripts\auth-voice-schedule-acceptance.ps1 -BaseUrl http://localhost:18083
+```
+
+前一个脚本验证正式登录下的 Agent 会话创建、同一报告多线程、重命名/归档、Loop 事件、运行状态持久化和真实模型流式完成；后一个脚本验证语音面试和面试日程不发生跨账号读取或删除。应用重启恢复仍建议结合部署环境做一次手工演练，因为脚本不会在运行中的请求中途重启服务。
+
 后续按风险从低到高推进：
 
 1. 先增加只读工具的明确审计事件和耗时指标，再考虑让模型自主选择工具。
