@@ -9,6 +9,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 
 /**
  * Agent 的显式有限状态循环。
@@ -39,7 +40,18 @@ public class AgentLoopEngine {
         ExecutionPolicy policy,
         StepExecutor stepExecutor
     ) {
-        return executeFrom(context, plannedSteps, policy, stepExecutor, 0);
+        return execute(context, plannedSteps, policy, stepExecutor, null);
+    }
+
+    /** 执行 Loop，并在每个步骤产生结果后通知检查点持久化器。 */
+    public LoopResult execute(
+        AgentContextService.AgentContext context,
+        List<String> plannedSteps,
+        ExecutionPolicy policy,
+        StepExecutor stepExecutor,
+        Consumer<LoopIteration> progressListener
+    ) {
+        return executeFrom(context, plannedSteps, policy, stepExecutor, 0, progressListener);
     }
 
     /**
@@ -53,8 +65,21 @@ public class AgentLoopEngine {
         ExecutionPolicy policy,
         StepExecutor stepExecutor
     ) {
+        return resume(context, plannedSteps, previous, policy, stepExecutor, null);
+    }
+
+    public LoopResult resume(
+        AgentContextService.AgentContext context,
+        List<String> plannedSteps,
+        LoopResult previous,
+        ExecutionPolicy policy,
+        StepExecutor stepExecutor,
+        Consumer<LoopIteration> progressListener
+    ) {
         int startIndex = previous == null ? 0 : previous.nextStepIndex();
-        return executeFrom(context, plannedSteps, policy, stepExecutor, startIndex);
+        return executeFrom(
+            context, plannedSteps, policy, stepExecutor, startIndex, progressListener
+        );
     }
 
     private LoopResult executeFrom(
@@ -62,7 +87,8 @@ public class AgentLoopEngine {
         List<String> plannedSteps,
         ExecutionPolicy policy,
         StepExecutor stepExecutor,
-        int startIndex
+        int startIndex,
+        Consumer<LoopIteration> progressListener
     ) {
         List<String> safeSteps = plannedSteps == null || plannedSteps.isEmpty()
             ? List.of("读取面试报告并确认当前目标")
@@ -115,18 +141,24 @@ public class AgentLoopEngine {
                     ? "timeout" : "failed";
                 String errorName = lastError == null
                     ? "unknown" : lastError.getClass().getSimpleName();
-                iterations.add(new LoopIteration(
+                LoopIteration failedIteration = new LoopIteration(
                     index + 1,
                     step,
                     "步骤执行失败（" + errorName + "）",
                     status,
                     attempts
-                ));
+                );
+                iterations.add(failedIteration);
+                notifyProgress(progressListener, failedIteration);
                 termination = "timeout".equals(status) ? "step_timeout" : "step_failed";
                 nextStepIndex = index;
                 break;
             }
-            iterations.add(new LoopIteration(index + 1, step, observation, "completed", attempts));
+            LoopIteration completedIteration = new LoopIteration(
+                index + 1, step, observation, "completed", attempts
+            );
+            iterations.add(completedIteration);
+            notifyProgress(progressListener, completedIteration);
             nextStepIndex = index + 1;
         }
         if ("completed".equals(termination) && nextStepIndex < safeSteps.size()) {
@@ -136,6 +168,17 @@ public class AgentLoopEngine {
             termination = "empty_plan";
         }
         return new LoopResult(List.copyOf(iterations), termination, nextStepIndex);
+    }
+
+    private void notifyProgress(Consumer<LoopIteration> progressListener, LoopIteration iteration) {
+        if (progressListener == null) {
+            return;
+        }
+        try {
+            progressListener.accept(iteration);
+        } catch (Throwable ignored) {
+            // 检查点是附加能力，不能因为写入进度失败而改变 Agent 主流程结果。
+        }
     }
 
     private String executeWithTimeout(

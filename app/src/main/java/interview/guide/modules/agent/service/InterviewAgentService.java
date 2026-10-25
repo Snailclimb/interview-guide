@@ -188,7 +188,8 @@ public class InterviewAgentService {
                 activeAgentSessionKeyRef.set(resolvedAgentSessionId);
                 activeTasks.put(resolvedAgentSessionId, taskHandle);
                 persistRunProgress(
-                    preparedMessage.assistantMessageId(), "context", "running", null
+                    preparedMessage.assistantMessageId(), "context", "running", null,
+                    preparedMessage.runId()
                 );
 
                 Flux<AgentStreamEvent> workflow = buildWorkflow(
@@ -278,7 +279,10 @@ public class InterviewAgentService {
                 AgentConversationService.PreparedMessage prepared = new AgentConversationService.PreparedMessage(
                     recoveredRun.assistantMessageId(), null, recoveredRun.runId(), recoveredRun.agentSessionId()
                 );
-                persistRunProgress(recoveredRun.assistantMessageId(), "context", "running", "应用重启后自动恢复中");
+                persistRunProgress(
+                    recoveredRun.assistantMessageId(), "context", "running", "应用重启后自动恢复中",
+                    recoveredRun.runId()
+                );
                 Flux<AgentStreamEvent> workflow = buildWorkflow(
                     recoveredRun.interviewSessionId(), activeKey, request, message, historyMessages, context,
                     prepared, cancellationSignal, taskHandle, runTracker,
@@ -337,6 +341,19 @@ public class InterviewAgentService {
                         retryProperties.getLoopStepTimeoutMillis(),
                         retryProperties.getLoopTotalTimeoutMillis()
                     );
+                    int resumeIndex = resumeState == null
+                        ? 0 : Math.max(0, resumeState.nextStepIndex());
+                    persistLoopCheckpoint(
+                        preparedMessage.assistantMessageId(), preparedMessage.runId(), plan, resumeIndex
+                    );
+                    java.util.function.Consumer<AgentLoopEngine.LoopIteration> checkpointListener =
+                        iteration -> persistLoopCheckpoint(
+                            preparedMessage.assistantMessageId(),
+                            preparedMessage.runId(),
+                            plan,
+                            "completed".equals(iteration.status())
+                                ? iteration.iteration() : Math.max(0, iteration.iteration() - 1)
+                        );
                     AgentLoopEngine.LoopResult loopResult = resumeState != null
                         && resumeState.nextStepIndex() > 0
                         ? loopEngine.resume(
@@ -346,11 +363,15 @@ public class InterviewAgentService {
                                 List.of(), "recovered", resumeState.nextStepIndex()
                             ),
                             loopPolicy,
-                            null
+                            null,
+                            checkpointListener
                         )
-                        : loopEngine.execute(context, loopSteps, loopPolicy, null);
-                    agentProgressWriter.recordLoopState(
-                        preparedMessage.assistantMessageId(), plan, loopResult.nextStepIndex()
+                        : loopEngine.execute(
+                            context, loopSteps, loopPolicy, null, checkpointListener
+                        );
+                    persistLoopCheckpoint(
+                        preparedMessage.assistantMessageId(), preparedMessage.runId(),
+                        plan, loopResult.nextStepIndex()
                     );
                     String loopTrace = loopResult.trace()
                         + "\nLoop 终态：" + loopResult.termination();
@@ -444,7 +465,9 @@ public class InterviewAgentService {
                     );
                 })
         )
-            .doOnNext(event -> persistRunProgress(preparedMessage.assistantMessageId(), event))
+            .doOnNext(event -> persistRunProgress(
+                preparedMessage.assistantMessageId(), event, preparedMessage.runId()
+            ))
             .doOnError(error -> failPreparedMessage(
                 preparedMessage.assistantMessageId(), error, preparedMessage.runId()
             ))
@@ -558,16 +581,34 @@ public class InterviewAgentService {
     }
 
     /** 进度写库失败不能中断模型主流程，数据库状态仅用于断线后的展示恢复。 */
-    private void persistRunProgress(Long assistantMessageId, AgentStreamEvent event) {
+    private void persistRunProgress(
+        Long assistantMessageId, AgentStreamEvent event, String runId
+    ) {
         if ("step".equals(event.type())) {
-            agentProgressWriter.recordStep(assistantMessageId, event.step(), event.status(), event.message());
+            agentProgressWriter.recordStep(
+                assistantMessageId, runId, event.step(), event.status(), event.message()
+            );
         } else if ("sources".equals(event.type())) {
-            agentProgressWriter.recordSources(assistantMessageId, event.sources());
+            agentProgressWriter.recordSources(assistantMessageId, runId, event.sources());
         }
     }
 
     private void persistRunProgress(Long assistantMessageId, String step, String status, String notice) {
-        agentProgressWriter.recordStep(assistantMessageId, step, status, notice);
+        persistRunProgress(assistantMessageId, step, status, notice, null);
+    }
+
+    private void persistRunProgress(
+        Long assistantMessageId, String step, String status, String notice, String runId
+    ) {
+        agentProgressWriter.recordStep(assistantMessageId, runId, step, status, notice);
+    }
+
+    private void persistLoopCheckpoint(
+        Long assistantMessageId, String runId, String plan, int nextStepIndex
+    ) {
+        agentProgressWriter.recordLoopState(assistantMessageId, runId, plan, nextStepIndex);
+        // Loop 步骤之间可能发生进程退出，检查点必须在步骤边界立即落库。
+        agentProgressWriter.flush(assistantMessageId);
     }
 
     private Flux<Boolean> monitorRemoteCancellation(String sessionId, String agentSessionId, String runId) {
@@ -651,7 +692,7 @@ public class InterviewAgentService {
             // 模型流自己的 doFinally 会先结束 ModelCallTracker；在这里再读取聚合快照，
             // 避免真实 SSE 在完成/断开时把 modelCalls 持久化成 0。
             .doFinally(signal -> {
-                persistRunUsage(assistantMessageId, runTracker);
+                persistRunUsage(assistantMessageId, runId, runTracker);
                 agentMetrics.finishRun(runTracker, switch (signal) {
                     case ON_COMPLETE -> "success";
                     case CANCEL -> "cancelled";
@@ -660,12 +701,16 @@ public class InterviewAgentService {
             });
     }
 
-    private void persistRunUsage(Long assistantMessageId, AgentMetrics.RunTracker runTracker) {
+    private void persistRunUsage(
+        Long assistantMessageId, String runId, AgentMetrics.RunTracker runTracker
+    ) {
         if (assistantMessageId == null || runTracker == null) {
             return;
         }
         try {
-            agentConversationService.updateRunUsage(assistantMessageId, agentMetrics.snapshot(runTracker));
+            agentConversationService.updateRunUsage(
+                assistantMessageId, agentMetrics.snapshot(runTracker), runId
+            );
         } catch (Throwable error) {
             // 用量展示是附加能力，不能因为指标/迁移问题阻断回答终态落库。
             log.warn("Agent 运行用量持久化失败: messageId={}", assistantMessageId, error);
@@ -786,11 +831,11 @@ public class InterviewAgentService {
                 .map(AgentStreamEvent::delta);
             return withModelHeartbeat(attemptStream)
             .doOnComplete(() -> finishModelCallAndPersist(
-                currentCall.tracker(), "success", assistantMessageId, runTracker))
+                currentCall.tracker(), "success", assistantMessageId, runId, runTracker))
             .doOnError(error -> finishModelCallAndPersist(
-                currentCall.tracker(), "failure", assistantMessageId, runTracker))
+                currentCall.tracker(), "failure", assistantMessageId, runId, runTracker))
             .doOnCancel(() -> finishModelCallAndPersist(
-                currentCall.tracker(), "cancelled", assistantMessageId, runTracker))
+                currentCall.tracker(), "cancelled", assistantMessageId, runId, runTracker))
             .onErrorResume(error -> {
                 if (!modelOutputStarted.get() && isContextLimitError(error) && !compacted) {
                     agentMetrics.recordRetry("context_limit");
@@ -859,11 +904,12 @@ public class InterviewAgentService {
         AgentMetrics.ModelCallTracker tracker,
         String result,
         Long assistantMessageId,
+        String runId,
         AgentMetrics.RunTracker runTracker
     ) {
         agentMetrics.finishModelCall(tracker, result);
         // 必须在外层 completeMessage/failMessage 之前写入，避免活动消息栅栏关闭后被忽略。
-        persistRunUsage(assistantMessageId, runTracker);
+        persistRunUsage(assistantMessageId, runId, runTracker);
     }
 
     private record ModelStream(

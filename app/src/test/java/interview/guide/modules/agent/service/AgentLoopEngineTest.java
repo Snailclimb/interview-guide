@@ -2,6 +2,7 @@ package interview.guide.modules.agent.service;
 
 import interview.guide.modules.agent.model.AgentSource;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -97,6 +98,24 @@ class AgentLoopEngineTest {
         assertThat(resumed.iterations()).hasSize(2);
         assertThat(resumed.iterations().getFirst().iteration()).isEqualTo(2);
         assertThat(resumed.completed()).isTrue();
+    }
+
+    @Test
+    void notifiesCheckpointAfterEachCompletedStepAndFailedStep() {
+        List<AgentLoopEngine.LoopIteration> checkpoints = new ArrayList<>();
+        AgentLoopEngine.LoopResult result = new AgentLoopEngine().execute(
+            context(),
+            List.of("第一步", "第二步"),
+            new AgentLoopEngine.ExecutionPolicy(2, 0, 1_000, 3_000),
+            (ignored, action, index) -> index == 1 ? throwFailure() : "完成 " + action,
+            checkpoints::add
+        );
+
+        assertThat(result.termination()).isEqualTo("step_failed");
+        assertThat(checkpoints).hasSize(2);
+        assertThat(checkpoints.get(0).status()).isEqualTo("completed");
+        assertThat(checkpoints.get(1).status()).isEqualTo("failed");
+        assertThat(result.nextStepIndex()).isEqualTo(1);
     }
 
     private AgentContextService.AgentContext context() {

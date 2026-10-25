@@ -346,7 +346,15 @@ public class AgentConversationService {
     /** 持久化当前 Agent 编排阶段，供断线和页面刷新后恢复展示。 */
     @Transactional
     public void updateRunProgress(Long messageId, String step, String status, String notice) {
-        AgentChatSessionEntity session = lockActiveSession(messageId);
+        updateRunProgress(messageId, step, status, notice, null);
+    }
+
+    /** 仅允许指定运行代次写入进度，防止恢复前的旧任务迟到覆盖新任务。 */
+    @Transactional
+    public void updateRunProgress(
+        Long messageId, String step, String status, String notice, String expectedRunId
+    ) {
+        AgentChatSessionEntity session = lockActiveSession(messageId, expectedRunId);
         if (session == null) {
             log.info("忽略已失效 Agent 进度事件: messageId={}", messageId);
             return;
@@ -360,8 +368,13 @@ public class AgentConversationService {
     /** 持久化本次 Agent 实际使用的来源摘要，不保存原始 RAG 文本。 */
     @Transactional
     public void updateRunSources(Long messageId, List<AgentSource> sources) {
+        updateRunSources(messageId, sources, null);
+    }
+
+    @Transactional
+    public void updateRunSources(Long messageId, List<AgentSource> sources, String expectedRunId) {
         String serialized = serializeSources(sources);
-        AgentChatSessionEntity session = lockActiveSession(messageId);
+        AgentChatSessionEntity session = lockActiveSession(messageId, expectedRunId);
         if (session == null) {
             log.info("忽略已失效 Agent 来源事件: messageId={}", messageId);
             return;
@@ -373,7 +386,14 @@ public class AgentConversationService {
     /** 持久化 Loop 计划和下一个待执行步骤，供应用重启后的任务接管使用。 */
     @Transactional
     public void updateLoopState(Long messageId, String plan, int nextStepIndex) {
-        AgentChatSessionEntity session = lockActiveSession(messageId);
+        updateLoopState(messageId, plan, nextStepIndex, null);
+    }
+
+    @Transactional
+    public void updateLoopState(
+        Long messageId, String plan, int nextStepIndex, String expectedRunId
+    ) {
+        AgentChatSessionEntity session = lockActiveSession(messageId, expectedRunId);
         if (session == null) {
             log.info("忽略已失效 Agent Loop 状态事件: messageId={}", messageId);
             return;
@@ -386,7 +406,12 @@ public class AgentConversationService {
     /** 持久化最近一次模型运行的聚合用量，供刷新页面和验收查看。 */
     @Transactional
     public void updateRunUsage(Long messageId, AgentRunUsage usage) {
-        AgentChatSessionEntity session = lockActiveSession(messageId);
+        updateRunUsage(messageId, usage, null);
+    }
+
+    @Transactional
+    public void updateRunUsage(Long messageId, AgentRunUsage usage, String expectedRunId) {
+        AgentChatSessionEntity session = lockActiveSession(messageId, expectedRunId);
         if (session == null) {
             log.info("忽略已失效 Agent 用量事件: messageId={}", messageId);
             return;
@@ -818,6 +843,10 @@ public class AgentConversationService {
 
     /** 锁住会话后再读取运行状态，避免异步进度落在终态之后。 */
     private AgentChatSessionEntity lockActiveSession(Long messageId) {
+        return lockActiveSession(messageId, null);
+    }
+
+    private AgentChatSessionEntity lockActiveSession(Long messageId, String expectedRunId) {
         if (messageId == null) {
             return null;
         }
@@ -826,6 +855,8 @@ public class AgentConversationService {
             .flatMap(this::findSessionForUpdateByIdentity)
             .filter(session -> session.getRunStatus() == AgentRunStatus.RUNNING)
             .filter(session -> messageId.equals(session.getActiveMessageId()))
+            .filter(session -> expectedRunId == null
+                || expectedRunId.equals(session.getRunId()))
             .orElse(null);
     }
 

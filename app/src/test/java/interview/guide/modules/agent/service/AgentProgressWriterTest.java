@@ -103,6 +103,20 @@ class AgentProgressWriterTest {
     }
 
     @Test
+    @DisplayName("带运行代次写入进度，避免恢复前旧任务覆盖新任务")
+    void carriesRunIdToPersistenceBoundary() {
+        AgentConversationService conversationService = mock(AgentConversationService.class);
+        AgentProgressWriter writer = new AgentProgressWriter(
+            conversationService, Duration.ofSeconds(5)
+        );
+
+        writer.recordLoopState(46L, "run-new", "1. 读取报告", 1);
+        writer.flush(46L);
+
+        verify(conversationService).updateLoopState(46L, "1. 读取报告", 1, "run-new");
+    }
+
+    @Test
     @DisplayName("终态刷盘与延迟写入并发时保持写入顺序")
     void serializesTerminalFlushAndDelayedDrain() throws Exception {
         AgentConversationService conversationService = mock(AgentConversationService.class);

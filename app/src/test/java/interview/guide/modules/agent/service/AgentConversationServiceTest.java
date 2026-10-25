@@ -5,6 +5,7 @@ import interview.guide.modules.agent.model.AgentChatSessionEntity;
 import interview.guide.modules.agent.model.AgentConversationResponse;
 import interview.guide.modules.agent.model.AgentConversationSummary;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
+import interview.guide.modules.agent.model.AgentRunUsage;
 import interview.guide.modules.agent.model.AgentRunStatus;
 import interview.guide.modules.agent.model.AgentSource;
 import interview.guide.modules.agent.repository.AgentChatMessageRepository;
@@ -26,6 +27,7 @@ import tools.jackson.databind.ObjectMapper;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -362,6 +364,39 @@ class AgentConversationServiceTest {
         assertThat(session.getRunNotice()).isEqualTo("正在等待检索资源");
         assertThat(session.getRunSourcesJson()).contains("知识库片段").doesNotContain("原始 RAG");
         verify(sessionRepository, times(2)).save(session);
+    }
+
+    @Test
+    @DisplayName("恢复后旧运行代次的进度、来源和用量不能覆盖新任务")
+    void ignoresProgressFromPreviousRunId() {
+        AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+            .id(11L)
+            .interviewSessionId("interview-1")
+            .runId("run-new")
+            .runStatus(AgentRunStatus.RUNNING)
+            .activeMessageId(22L)
+            .runStep("loop")
+            .runStepStatus("running")
+            .runNotice("新任务正在执行")
+            .build();
+        AgentChatMessageEntity message = AgentChatMessageEntity.builder()
+            .id(22L)
+            .session(session)
+            .role(AgentChatMessageEntity.MessageRole.ASSISTANT)
+            .content("")
+            .sequenceNum(1)
+            .completed(false)
+            .build();
+        when(messageRepository.findById(22L)).thenReturn(Optional.of(message));
+        when(sessionRepository.findByInterviewSessionIdForUpdate("interview-1"))
+            .thenReturn(Optional.of(session));
+
+        service.updateRunProgress(22L, "context", "running", "旧任务迟到事件", "run-old");
+        service.updateRunUsage(22L, AgentRunUsage.empty(), "run-old");
+
+        assertThat(session.getRunStep()).isEqualTo("loop");
+        assertThat(session.getRunNotice()).isEqualTo("新任务正在执行");
+        verify(sessionRepository, never()).save(session);
     }
 
     @Test
