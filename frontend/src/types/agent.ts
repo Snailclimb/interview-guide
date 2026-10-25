@@ -60,6 +60,17 @@ export interface AgentMemoryResponse {
   weaknesses: string[];
   recentGoals: string[];
   updatedAt?: string | null;
+  items: AgentMemoryItem[];
+}
+
+export interface AgentMemoryItem {
+  id: string;
+  category: 'weakness' | 'goal' | string;
+  content: string;
+  source?: string | null;
+  jobScope?: string | null;
+  confidence?: number | null;
+  updatedAt?: string | null;
 }
 
 export type AgentStepStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';

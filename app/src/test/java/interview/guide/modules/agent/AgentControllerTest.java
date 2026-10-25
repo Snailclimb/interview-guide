@@ -3,6 +3,7 @@ package interview.guide.modules.agent;
 import interview.guide.common.result.Result;
 import interview.guide.modules.agent.model.AgentMemoryResponse;
 import interview.guide.modules.agent.model.AgentMemorySnapshot;
+import interview.guide.modules.agent.model.UpdateAgentMemoryItemRequest;
 import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.AgentMemoryService;
 import interview.guide.modules.agent.service.InterviewAgentService;
@@ -46,5 +47,29 @@ class AgentControllerTest {
         assertThat(result.getData().lastSkillId()).isEqualTo("java-backend");
         assertThat(result.getData().weaknesses()).containsExactly("Redis");
         assertThat(result.getData().toString()).doesNotContain("internal-key");
+    }
+
+    @Test
+    @DisplayName("编辑和删除记忆项使用当前身份并返回最新摘要")
+    void managesMemoryItem() {
+        when(authIdentityService.requireIdentity("user-1")).thenReturn("user-1");
+        AgentMemorySnapshot snapshot = new AgentMemorySnapshot(
+            "internal-key", "java-backend", List.of("Redis"), List.of(),
+            LocalDateTime.of(2026, 10, 25, 12, 0)
+        );
+        when(memoryService.updateItem("user-1", "w-1", "Redis 穿透", "java-backend"))
+            .thenReturn(snapshot);
+        when(memoryService.deleteItem("user-1", "w-1")).thenReturn(snapshot);
+
+        Result<AgentMemoryResponse> updated = controller.updateMemoryItem(
+            "w-1", new UpdateAgentMemoryItemRequest("Redis 穿透", "java-backend"), "user-1"
+        );
+        Result<AgentMemoryResponse> deleted = controller.deleteMemoryItem("w-1", "user-1");
+
+        assertThat(updated.isSuccess()).isTrue();
+        assertThat(deleted.isSuccess()).isTrue();
+        org.mockito.Mockito.verify(memoryService)
+            .updateItem("user-1", "w-1", "Redis 穿透", "java-backend");
+        org.mockito.Mockito.verify(memoryService).deleteItem("user-1", "w-1");
     }
 }

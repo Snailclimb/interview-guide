@@ -15,7 +15,8 @@ param(
     [string]$Password = 'StrongPass123',
     [string]$InterviewSessionId = '',
     [switch]$CreateInterview,
-    [switch]$RunModelTests
+    [switch]$RunModelTests,
+    [switch]$RunMemoryManagementTests
 )
 
 $ErrorActionPreference = 'Stop'
@@ -155,6 +156,23 @@ try {
         $memory = Invoke-JsonApi '/api/agent/memory'
         Assert-Pass ($memory.code -eq 200 -and $null -ne $memory.data) '正式登录可读取 Agent 长期记忆摘要'
         Assert-Pass ($memory.data.PSObject.Properties.Name -notcontains 'memoryKey') '长期记忆接口不暴露内部 memoryKey'
+        if ($RunMemoryManagementTests) {
+            $memoryItems = @($memory.data.items)
+            Assert-Pass ($memoryItems.Count -gt 0) '长期记忆存在可管理的结构化记忆项'
+            $item = $memoryItems[0]
+            $editedContent = "$($item.content)（验收编辑）"
+            $updated = Invoke-JsonApi "/api/agent/memory/items/$([Uri]::EscapeDataString([string]$item.id))" 'PATCH' @{
+                content = $editedContent
+                jobScope = 'java-backend'
+            }
+            $updatedItem = @($updated.data.items) | Where-Object { $_.id -eq $item.id } | Select-Object -First 1
+            Assert-Pass ($updated.code -eq 200 -and $null -ne $updatedItem -and $updatedItem.content -eq $editedContent -and $updatedItem.jobScope -eq 'java-backend') `
+                '长期记忆单项编辑和岗位范围保存成功'
+
+            $deleted = Invoke-JsonApi "/api/agent/memory/items/$([Uri]::EscapeDataString([string]$item.id))" 'DELETE'
+            $deletedItem = @($deleted.data.items) | Where-Object { $_.id -eq $item.id }
+            Assert-Pass ($deleted.code -eq 200 -and $null -eq $deletedItem) '长期记忆单项删除成功'
+        }
     } else {
         Write-Host '跳过真实模型调用：使用 -RunModelTests 启用两轮 Agent SSE 验收。' -ForegroundColor Yellow
     }

@@ -70,6 +70,16 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
       { agentSessionId: 'thread-a', interviewSessionId: 'interview-1', title: '第一轮复盘', runStatus: 'IDLE', createdAt: '2026-10-24T09:01:00', updatedAt: '2026-10-24T09:02:00' },
       { agentSessionId: 'thread-b', interviewSessionId: 'interview-1', title: '第二轮训练', runStatus: 'IDLE', createdAt: '2026-10-24T09:03:00', updatedAt: '2026-10-24T09:04:00' },
     ];
+    let memory = {
+      lastSkillId: 'java-backend',
+      weaknesses: ['Redis 缓存'],
+      recentGoals: ['practice'],
+      updatedAt: '2026-10-24T09:05:00',
+      items: [{
+        id: 'memory-1', category: 'weakness', content: 'Redis 缓存', source: 'interview-report',
+        jobScope: 'java-backend', confidence: 0.9, updatedAt: '2026-10-24T09:05:00',
+      }],
+    };
 
     await page.route('**/api/interview/sessions', async route => {
       await route.fulfill({ contentType: 'application/json', body: envelope(sessions) });
@@ -86,6 +96,28 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     });
     await page.route('**/api/llm-provider/default-provider', async route => {
       await route.fulfill({ contentType: 'application/json', body: envelope({ defaultProvider: 'pixel', defaultEmbeddingProvider: '' }) });
+    });
+    await page.route('**/api/agent/memory', async route => {
+      if (route.request().method() === 'DELETE') {
+        memory = { lastSkillId: null, weaknesses: [], recentGoals: [], updatedAt: null, items: [] };
+      }
+      await route.fulfill({ contentType: 'application/json', body: envelope(memory) });
+    });
+    await page.route('**/api/agent/memory/items/*', async route => {
+      const itemId = route.request().url().split('/').pop()!;
+      if (route.request().method() === 'PATCH') {
+        const body = route.request().postDataJSON() as { content: string; jobScope?: string };
+        memory = {
+          ...memory,
+          weaknesses: memory.weaknesses.map(value => value === 'Redis 缓存' ? body.content : value),
+          items: memory.items.map(item => item.id === itemId
+            ? { ...item, content: body.content, jobScope: body.jobScope || null }
+            : item),
+        };
+      } else if (route.request().method() === 'DELETE') {
+        memory = { ...memory, items: memory.items.filter(item => item.id !== itemId) };
+      }
+      await route.fulfill({ contentType: 'application/json', body: envelope(memory) });
     });
     await page.route('**/api/agent/interview-sessions/interview-1/conversations', async route => {
       if (route.request().method() === 'POST') {
@@ -155,5 +187,20 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await page.getByRole('button', { name: '开始执行' }).click();
     await expect(page.getByText('Loop 已完成，建议优先补充故障定位案例。')).toBeVisible();
     await expect(page.getByText('执行观察：已读取面试报告；识别到 1 个待关注项。')).toBeVisible();
+  });
+
+  test('可以编辑和删除单条长期记忆', async ({ page }) => {
+    await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
+    await expect(page.getByLabel('编辑记忆：Redis 缓存')).toBeVisible();
+
+    await page.getByLabel('编辑记忆：Redis 缓存').click();
+    await page.getByLabel('编辑记忆内容').fill('Redis 缓存穿透与击穿');
+    await page.getByLabel('编辑记忆适用方向').fill('java-backend');
+    await page.getByRole('button', { name: '保存' }).click();
+    await expect(page.getByLabel('删除记忆：Redis 缓存穿透与击穿')).toBeVisible();
+
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByLabel('删除记忆：Redis 缓存穿透与击穿').click();
+    await expect(page.getByText('可管理的记忆项')).not.toBeVisible();
   });
 });

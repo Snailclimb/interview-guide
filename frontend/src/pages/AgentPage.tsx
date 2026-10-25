@@ -15,12 +15,14 @@ import {
   FileText,
   Loader2,
   MessageSquare,
+  Pencil,
   Play,
   RotateCcw,
   Send,
   Settings2,
   Sparkles,
   Target,
+  Trash2,
   UserRound,
   XCircle,
 } from 'lucide-react';
@@ -44,6 +46,7 @@ import type {
   AgentGoal,
   AgentConversationResponse,
   AgentHistoryMessage,
+  AgentMemoryItem,
   AgentMemoryResponse,
   AgentRunUsage,
   AgentSource,
@@ -179,6 +182,9 @@ export default function AgentPage() {
   const [memoryNotice, setMemoryNotice] = useState('');
   const [memory, setMemory] = useState<AgentMemoryResponse | null>(null);
   const [memoryLoading, setMemoryLoading] = useState(true);
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
+  const [editingMemoryContent, setEditingMemoryContent] = useState('');
+  const [editingMemoryScope, setEditingMemoryScope] = useState('');
   const [messages, setMessages] = useState<AgentMessage[]>([createWelcomeMessage()]);
   const [input, setInput] = useState('');
   const abortRef = useRef<AbortController | null>(null);
@@ -620,10 +626,46 @@ export default function AgentPage() {
     if (runStatus === 'running' || !window.confirm('确定清除当前浏览器保存的 Agent 长期记忆吗？')) return;
     void agentApi.clearMemory()
       .then(() => {
-        setMemory({ lastSkillId: null, weaknesses: [], recentGoals: [], updatedAt: null });
+        setMemory({ lastSkillId: null, weaknesses: [], recentGoals: [], updatedAt: null, items: [] });
         setMemoryNotice('长期记忆已清除');
       })
       .catch(() => setMemoryNotice('长期记忆清除失败，请稍后重试'));
+  };
+
+  const startEditMemory = (item: AgentMemoryItem) => {
+    if (runStatus === 'running') return;
+    setEditingMemoryId(item.id);
+    setEditingMemoryContent(item.content);
+    setEditingMemoryScope(item.jobScope || '');
+    setMemoryNotice('');
+  };
+
+  const cancelEditMemory = () => {
+    setEditingMemoryId(null);
+    setEditingMemoryContent('');
+    setEditingMemoryScope('');
+  };
+
+  const saveMemoryItem = () => {
+    if (!editingMemoryId || !editingMemoryContent.trim()) return;
+    void agentApi.updateMemoryItem(editingMemoryId, editingMemoryContent, editingMemoryScope)
+      .then((value) => {
+        setMemory(value);
+        setMemoryNotice('长期记忆已更新');
+        cancelEditMemory();
+      })
+      .catch(() => setMemoryNotice('长期记忆更新失败，请稍后重试'));
+  };
+
+  const deleteMemoryItem = (item: AgentMemoryItem) => {
+    if (runStatus === 'running' || !window.confirm(`确定删除这条长期记忆吗？\n\n${item.content}`)) return;
+    void agentApi.deleteMemoryItem(item.id)
+      .then((value) => {
+        setMemory(value);
+        setMemoryNotice('长期记忆已删除');
+        if (editingMemoryId === item.id) cancelEditMemory();
+      })
+      .catch(() => setMemoryNotice('长期记忆删除失败，请稍后重试'));
   };
 
   const startRun = () => {
@@ -802,8 +844,9 @@ export default function AgentPage() {
         </div>
         {memoryLoading ? (
           <p className="text-xs dark-text-muted mt-3">正在读取记忆...</p>
-        ) : memory && (memory.lastSkillId || memory.weaknesses.length || memory.recentGoals.length) ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4 text-xs">
+        ) : memory && (memory.lastSkillId || memory.weaknesses.length || memory.recentGoals.length || memory.items?.length) ? (
+          <div className="space-y-4 mt-4 text-xs">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="rounded-xl bg-slate-50 dark:bg-slate-800/70 p-3">
               <p className="font-semibold dark-text mb-1">最近方向</p>
               <p className="dark-text-muted break-words">{memory.lastSkillId || '暂无'}</p>
@@ -816,6 +859,68 @@ export default function AgentPage() {
               <p className="font-semibold dark-text mb-1">最近训练目标</p>
               <p className="dark-text-muted line-clamp-3">{memory.recentGoals.join('；') || '暂无'}</p>
             </div>
+            </div>
+            {memory.items?.length ? (
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800/70 flex items-center justify-between">
+                  <p className="font-semibold dark-text">可管理的记忆项</p>
+                  <span className="text-[11px] dark-text-muted">可编辑或删除</span>
+                </div>
+                <div className="divide-y divide-slate-200 dark:divide-slate-700">
+                  {memory.items.map((item) => (
+                    <div key={item.id} className="px-3 py-3 flex items-start gap-3">
+                      {editingMemoryId === item.id ? (
+                        <div className="flex-1 space-y-2">
+                          <textarea
+                            value={editingMemoryContent}
+                            onChange={(event) => setEditingMemoryContent(event.target.value)}
+                            maxLength={160}
+                            rows={2}
+                            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs dark:border-slate-600 dark:bg-slate-900 dark-text outline-none focus:border-primary-500"
+                            aria-label="编辑记忆内容"
+                          />
+                          <input
+                            value={editingMemoryScope}
+                            onChange={(event) => setEditingMemoryScope(event.target.value)}
+                            maxLength={64}
+                            placeholder="适用方向，可选"
+                            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs dark:border-slate-600 dark:bg-slate-900 dark-text outline-none focus:border-primary-500"
+                            aria-label="编辑记忆适用方向"
+                          />
+                          <div className="flex justify-end gap-2">
+                            <button onClick={cancelEditMemory} className="btn-secondary px-2.5 py-1 rounded-lg text-xs">取消</button>
+                            <button onClick={saveMemoryItem} disabled={!editingMemoryContent.trim()} className="btn-primary px-2.5 py-1 rounded-lg text-xs disabled:opacity-50">保存</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2 mb-1">
+                              <span className="font-semibold dark-text">{item.category === 'goal' ? '训练目标' : '薄弱点'}</span>
+                              {item.jobScope ? <span className="text-[11px] dark-text-muted">适用：{item.jobScope}</span> : null}
+                            </div>
+                            <p className="dark-text-muted break-words">{item.content}</p>
+                            <p className="text-[11px] text-slate-400 mt-1">
+                              来源：{item.source || 'Agent'}
+                              {item.confidence != null ? ` · 置信度 ${Math.round(item.confidence * 100)}%` : ''}
+                              {item.updatedAt ? ` · 更新于 ${formatDate(item.updatedAt)}` : ''}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button onClick={() => startEditMemory(item)} className="p-1.5 rounded-lg text-slate-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/20" aria-label={`编辑记忆：${item.content}`}>
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => deleteMemoryItem(item)} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20" aria-label={`删除记忆：${item.content}`}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : (
           <p className="text-xs dark-text-muted mt-3">暂无长期记忆，完成一次 Agent 复盘后会自动积累。</p>

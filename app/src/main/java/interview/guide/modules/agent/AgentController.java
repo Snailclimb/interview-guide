@@ -5,6 +5,7 @@ import interview.guide.modules.agent.model.AgentMessageRequest;
 import interview.guide.modules.agent.model.AgentConversationResponse;
 import interview.guide.modules.agent.model.AgentConversationSummary;
 import interview.guide.modules.agent.model.AgentMemoryResponse;
+import interview.guide.modules.agent.model.UpdateAgentMemoryItemRequest;
 import interview.guide.modules.agent.model.AgentStreamEvent;
 import interview.guide.modules.agent.model.CreateAgentConversationRequest;
 import interview.guide.modules.agent.model.RenameAgentConversationRequest;
@@ -147,6 +148,29 @@ public class AgentController {
         return Result.success(AgentMemoryResponse.from(
             memoryService.load(authIdentityService.requireIdentity(ownerKey))
         ));
+    }
+
+    @PatchMapping("/api/agent/memory/items/{itemId}")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
+    public Result<AgentMemoryResponse> updateMemoryItem(
+        @PathVariable String itemId,
+        @Valid @RequestBody UpdateAgentMemoryItemRequest request,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        String identity = authIdentityService.requireIdentity(ownerKey);
+        return Result.success(AgentMemoryResponse.from(
+            memoryService.updateItem(identity, itemId, request.content(), request.jobScope())
+        ));
+    }
+
+    @DeleteMapping("/api/agent/memory/items/{itemId}")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
+    public Result<AgentMemoryResponse> deleteMemoryItem(
+        @PathVariable String itemId,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        String identity = authIdentityService.requireIdentity(ownerKey);
+        return Result.success(AgentMemoryResponse.from(memoryService.deleteItem(identity, itemId)));
     }
 
     /**

@@ -75,6 +75,21 @@ export const agentApi = {
     return request.get<AgentMemoryResponse>('/api/agent/memory', { headers: agentHeaders() });
   },
 
+  updateMemoryItem(itemId: string, content: string, jobScope?: string): Promise<AgentMemoryResponse> {
+    return request.patch<AgentMemoryResponse>(
+      `/api/agent/memory/items/${encodeURIComponent(itemId)}`,
+      { content, jobScope: jobScope?.trim() ?? '' },
+      { headers: agentHeaders() },
+    );
+  },
+
+  deleteMemoryItem(itemId: string): Promise<AgentMemoryResponse> {
+    return request.delete<AgentMemoryResponse>(
+      `/api/agent/memory/items/${encodeURIComponent(itemId)}`,
+      { headers: agentHeaders() },
+    );
+  },
+
   streamMessage(
     sessionId: string,
     request: AgentMessageRequest,

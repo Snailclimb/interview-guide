@@ -9,35 +9,79 @@ public record AgentMemorySnapshot(
     String lastSkillId,
     List<String> weaknesses,
     List<String> recentGoals,
-    LocalDateTime updatedAt
+    LocalDateTime updatedAt,
+    List<AgentMemoryItem> items
 ) {
+    /** 兼容已有调用方和迁移前的摘要结构。 */
+    public AgentMemorySnapshot(
+        String memoryKey,
+        String lastSkillId,
+        List<String> weaknesses,
+        List<String> recentGoals,
+        LocalDateTime updatedAt
+    ) {
+        this(memoryKey, lastSkillId, weaknesses, recentGoals, updatedAt, List.of());
+    }
+
     public AgentMemorySnapshot {
         weaknesses = weaknesses == null ? List.of() : List.copyOf(weaknesses);
         recentGoals = recentGoals == null ? List.of() : List.copyOf(recentGoals);
+        items = items == null ? List.of() : List.copyOf(items);
     }
 
     public static AgentMemorySnapshot empty(String memoryKey) {
-        return new AgentMemorySnapshot(memoryKey, null, List.of(), List.of(), null);
+        return new AgentMemorySnapshot(memoryKey, null, List.of(), List.of(), null, List.of());
     }
 
     public String toPrompt() {
-        if (lastSkillId == null && weaknesses.isEmpty() && recentGoals.isEmpty()) {
+        return toPrompt(null);
+    }
+
+    /** 只把适用于当前面试方向的记忆注入 Agent 上下文。 */
+    public String toPrompt(String currentJobScope) {
+        List<AgentMemoryItem> applicableItems = items.stream()
+            .filter(item -> item != null && isApplicable(item, currentJobScope))
+            .toList();
+        boolean legacySnapshot = items.isEmpty();
+        boolean skillApplicable = lastSkillId == null || currentJobScope == null
+            || currentJobScope.isBlank() || currentJobScope.equalsIgnoreCase(lastSkillId);
+        List<String> applicableWeaknesses = legacySnapshot
+            ? weaknesses
+            : applicableItems.stream()
+                .filter(item -> "weakness".equals(item.category()))
+                .map(AgentMemoryItem::content)
+                .toList();
+        List<String> applicableGoals = legacySnapshot
+            ? recentGoals
+            : applicableItems.stream()
+                .filter(item -> "goal".equals(item.category()))
+                .map(AgentMemoryItem::content)
+                .toList();
+        if (lastSkillId == null && applicableWeaknesses.isEmpty() && applicableGoals.isEmpty()) {
             return "暂无长期记忆";
         }
         StringBuilder value = new StringBuilder();
         value.append("仅供参考的长期记忆（当前面试报告优先）：\n");
-        if (lastSkillId != null && !lastSkillId.isBlank()) {
+        if (skillApplicable && lastSkillId != null && !lastSkillId.isBlank()) {
             value.append("最近方向：").append(lastSkillId).append('\n');
         }
-        if (!weaknesses.isEmpty()) {
+        if (!applicableWeaknesses.isEmpty()) {
             value.append("反复出现的薄弱点：\n");
-            weaknesses.forEach(item -> value.append("- ").append(item).append('\n'));
+            applicableWeaknesses.forEach(item -> value.append("- ").append(item).append('\n'));
         }
-        if (!recentGoals.isEmpty()) {
+        if (!applicableGoals.isEmpty()) {
             value.append("最近训练目标：\n");
-            recentGoals.forEach(item -> value.append("- ").append(item).append('\n'));
+            applicableGoals.forEach(item -> value.append("- ").append(item).append('\n'));
         }
         value.append("如果长期记忆与本场报告冲突，以本场报告为准。\n");
         return value.toString();
+    }
+
+    private boolean isApplicable(AgentMemoryItem item, String currentJobScope) {
+        if (item.jobScope() == null || item.jobScope().isBlank()
+            || currentJobScope == null || currentJobScope.isBlank()) {
+            return true;
+        }
+        return item.jobScope().equalsIgnoreCase(currentJobScope);
     }
 }

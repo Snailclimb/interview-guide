@@ -1,6 +1,7 @@
 package interview.guide.modules.agent.service;
 
 import interview.guide.modules.agent.model.AgentUserMemoryEntity;
+import interview.guide.modules.agent.model.AgentMemoryItem;
 import interview.guide.modules.agent.repository.AgentUserMemoryRepository;
 import java.util.List;
 import java.util.Optional;
@@ -49,5 +50,58 @@ class AgentMemoryServiceTest {
 
         service.clear(null);
         verify(repository).deleteByMemoryKey("anonymous");
+    }
+
+    @Test
+    void editsAndDeletesOneMemoryItemWithoutChangingOtherItems() throws Exception {
+        AgentUserMemoryRepository repository = mock(AgentUserMemoryRepository.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+        AgentUserMemoryEntity entity = AgentUserMemoryEntity.builder()
+            .memoryKey("browser-key")
+            .memoryJson(objectMapper.writeValueAsString(java.util.Map.of(
+                "lastSkillId", "java-backend",
+                "weaknesses", List.of("Redis 缓存"),
+                "recentGoals", List.of("practice"),
+                "items", List.of(
+                    new AgentMemoryItem("w-1", "weakness", "Redis 缓存", "interview-report", "java-backend", null),
+                    new AgentMemoryItem("g-1", "goal", "practice", "interview-report", "java-backend", null)
+                )
+            )))
+            .build();
+        when(repository.findByMemoryKey("browser-key")).thenReturn(Optional.of(entity));
+        when(repository.save(any(AgentUserMemoryEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AgentMemoryService service = new AgentMemoryService(repository, objectMapper);
+        var updated = service.updateItem("browser-key", "w-1", "Redis 穿透与击穿", "java-backend");
+        assertThat(updated.items()).extracting(AgentMemoryItem::content)
+            .containsExactly("Redis 穿透与击穿", "practice");
+        assertThat(updated.weaknesses()).containsExactly("Redis 穿透与击穿");
+
+        var deleted = service.deleteItem("browser-key", "g-1");
+        assertThat(deleted.items()).extracting(AgentMemoryItem::id).containsExactly("w-1");
+        assertThat(deleted.recentGoals()).isEmpty();
+    }
+
+    @Test
+    void filtersMemoryPromptByCurrentJobScopeWhenStructuredItemsExist() {
+        var snapshot = new interview.guide.modules.agent.model.AgentMemorySnapshot(
+            "browser-key",
+            "java-backend",
+            List.of("Redis 缓存"),
+            List.of("Java 训练"),
+            null,
+            List.of(
+                new AgentMemoryItem("java-1", "weakness", "Redis 缓存", "report", "java-backend", 0.9d, null),
+                new AgentMemoryItem("python-1", "weakness", "Python 异步", "report", "python-backend", 0.9d, null),
+                new AgentMemoryItem("java-2", "goal", "Java 训练", "report", "java-backend", 0.8d, null)
+            )
+        );
+
+        assertThat(snapshot.toPrompt("python-backend"))
+            .contains("Python 异步")
+            .doesNotContain("Redis 缓存")
+            .doesNotContain("Java 训练")
+            .doesNotContain("java-backend");
     }
 }

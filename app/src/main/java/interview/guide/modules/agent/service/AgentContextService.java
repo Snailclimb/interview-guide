@@ -100,7 +100,7 @@ public class AgentContextService {
             ragContext,
             retrievalQuery,
             List.copyOf(sources),
-            memory.toPrompt(),
+            memory.toPrompt(detail.skillId()),
             extractWeaknesses(detail)
         );
     }
