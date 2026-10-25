@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.data.Offset.offset;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -221,5 +222,22 @@ class AgentMetricsTest {
         assertThat(metrics.snapshot(run).currency()).isEqualTo("CNY");
         assertThat(metrics.snapshot(run).provider()).isEqualTo("pixel");
         assertThat(metrics.snapshot(run).model()).isEqualTo("gpt-5.6-luna");
+    }
+
+    @Test
+    @DisplayName("单次运行达到模型调用预算后不再发起新请求")
+    void enforcesModelCallBudget() {
+        AgentMetrics metrics = metrics(true);
+        AgentMetrics.RunTracker run = metrics.startRun(2);
+
+        AgentMetrics.ModelCallTracker first = metrics.startModelCall("pixel", run);
+        metrics.finishModelCall(first, "failure");
+        AgentMetrics.ModelCallTracker second = metrics.startModelCall("pixel", run);
+        metrics.finishModelCall(second, "success");
+
+        assertThatThrownBy(() -> metrics.startModelCall("pixel", run))
+            .isInstanceOf(AgentRunBudgetExceededException.class)
+            .hasMessageContaining("2");
+        assertThat(metrics.snapshot(run).modelCalls()).isEqualTo(2);
     }
 }

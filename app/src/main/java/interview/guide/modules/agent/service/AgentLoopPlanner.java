@@ -2,6 +2,8 @@ package interview.guide.modules.agent.service;
 
 import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.ai.PromptSanitizer;
+import interview.guide.modules.agent.metrics.AgentMetrics;
+import interview.guide.modules.agent.metrics.AgentRunBudgetExceededException;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
 import interview.guide.modules.agent.model.AgentMessageRequest;
 import java.util.List;
@@ -9,6 +11,7 @@ import java.util.Arrays;
 import java.util.stream.IntStream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.stereotype.Service;
 
@@ -32,15 +35,27 @@ public class AgentLoopPlanner {
     private final LlmProviderRegistry providerRegistry;
     private final PromptSanitizer promptSanitizer;
     private final AgentRetryProperties retryProperties;
+    private final AgentMetrics agentMetrics;
 
+    @Autowired
     public AgentLoopPlanner(
         LlmProviderRegistry providerRegistry,
         PromptSanitizer promptSanitizer,
         AgentRetryProperties retryProperties
     ) {
+        this(providerRegistry, promptSanitizer, retryProperties, null);
+    }
+
+    public AgentLoopPlanner(
+        LlmProviderRegistry providerRegistry,
+        PromptSanitizer promptSanitizer,
+        AgentRetryProperties retryProperties,
+        AgentMetrics agentMetrics
+    ) {
         this.providerRegistry = providerRegistry;
         this.promptSanitizer = promptSanitizer;
         this.retryProperties = retryProperties;
+        this.agentMetrics = agentMetrics;
     }
 
     public String plan(
@@ -48,6 +63,16 @@ public class AgentLoopPlanner {
         AgentMessageRequest request,
         String message,
         List<AgentHistoryMessage> history
+    ) {
+        return plan(context, request, message, history, null);
+    }
+
+    public String plan(
+        AgentContextService.AgentContext context,
+        AgentMessageRequest request,
+        String message,
+        List<AgentHistoryMessage> history,
+        AgentMetrics.RunTracker runTracker
     ) {
         if (!retryProperties.isLoopEnabled()) {
             return DEFAULT_PLAN;
@@ -66,18 +91,31 @@ public class AgentLoopPlanner {
             promptSanitizer.sanitize(context.retrievalQuery())
         );
         for (String providerId : providerRegistry.resolveChatProviderCandidates(request.providerId())) {
+            AgentMetrics.ModelCallTracker modelCall = null;
             try {
+                if (agentMetrics != null) {
+                    modelCall = agentMetrics.startModelCall(providerId, runTracker);
+                }
                 ChatClient client = providerRegistry.getAgentChatClient(providerId);
                 String content = client.prompt()
                     .system("你是一个严格受控的 Agent Loop planner，只返回执行计划，不要编造资料。")
                     .user(prompt)
                     .call()
                     .content();
+                if (agentMetrics != null) {
+                    agentMetrics.finishModelCall(modelCall, "success");
+                }
                 String normalized = normalize(content);
                 if (!normalized.isBlank()) {
                     return normalized;
                 }
             } catch (Throwable error) {
+                if (agentMetrics != null) {
+                    agentMetrics.finishModelCall(modelCall, "failure");
+                }
+                if (error instanceof AgentRunBudgetExceededException) {
+                    throw (AgentRunBudgetExceededException) error;
+                }
                 log.debug("Agent Loop 规划阶段失败，将尝试下一个 Provider: providerId={}", providerId, error);
             }
         }

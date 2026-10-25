@@ -63,10 +63,15 @@ public class AgentMetrics {
     }
 
     public RunTracker startRun() {
+        return startRun(Integer.MAX_VALUE);
+    }
+
+    /** 创建带模型请求预算的 Agent 运行追踪器。 */
+    public RunTracker startRun(int maxModelCalls) {
         if (enabled) {
             registry.counter(RUNS, "result", "started").increment();
         }
-        return new RunTracker(System.nanoTime());
+        return new RunTracker(System.nanoTime(), maxModelCalls);
     }
 
     public void finishRun(RunTracker tracker, String result) {
@@ -132,6 +137,9 @@ public class AgentMetrics {
 
     /** 开始模型调用并把该调用的聚合用量归入当前 Agent 运行。 */
     public ModelCallTracker startModelCall(String providerId, RunTracker runTracker) {
+        if (runTracker != null) {
+            runTracker.reserveModelCall();
+        }
         return new ModelCallTracker(safeTag(providerId, "unknown"), System.nanoTime(), runTracker);
     }
 
@@ -249,7 +257,9 @@ public class AgentMetrics {
 
     public static final class RunTracker {
         private final long startedNanos;
+        private final int maxModelCalls;
         private final AtomicBoolean finished = new AtomicBoolean();
+        private final AtomicInteger reservedModelCalls = new AtomicInteger();
         private final AtomicInteger modelCalls = new AtomicInteger();
         private final LongAdder promptTokens = new LongAdder();
         private final LongAdder completionTokens = new LongAdder();
@@ -260,8 +270,17 @@ public class AgentMetrics {
         private final AtomicReference<String> provider = new AtomicReference<>();
         private final AtomicReference<String> model = new AtomicReference<>();
 
-        private RunTracker(long startedNanos) {
+        private RunTracker(long startedNanos, int maxModelCalls) {
             this.startedNanos = startedNanos;
+            this.maxModelCalls = Math.max(1, maxModelCalls);
+        }
+
+        private void reserveModelCall() {
+            int reserved = reservedModelCalls.incrementAndGet();
+            if (reserved > maxModelCalls) {
+                reservedModelCalls.decrementAndGet();
+                throw new AgentRunBudgetExceededException(maxModelCalls);
+            }
         }
 
         private void record(

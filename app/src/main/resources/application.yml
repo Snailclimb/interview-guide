@@ -198,6 +198,8 @@ app:
       retry-max-delay-seconds: ${APP_AI_AGENT_RETRY_MAX_DELAY_SECONDS:30}
       # 模型等待首 token 或重试等待期间的 SSE 心跳间隔（秒）
       retry-heartbeat-interval-seconds: ${APP_AI_AGENT_RETRY_HEARTBEAT_INTERVAL_SECONDS:10}
+      # 单次 Agent 运行最多发起的模型请求数（含规划、重试、压缩重试和备用模型）
+      max-model-calls-per-run: ${APP_AI_AGENT_MAX_MODEL_CALLS_PER_RUN:12}
       loop-enabled: ${APP_AI_AGENT_LOOP_ENABLED:true}
       loop-max-steps: ${APP_AI_AGENT_LOOP_MAX_STEPS:3}
       loop-step-timeout-millis: ${APP_AI_AGENT_LOOP_STEP_TIMEOUT_MILLIS:5000}

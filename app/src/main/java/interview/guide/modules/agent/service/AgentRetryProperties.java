@@ -34,6 +34,11 @@ public class AgentRetryProperties {
     @Max(value = 60, message = "Agent 重试心跳间隔不能超过 60 秒")
     private int retryHeartbeatIntervalSeconds = 10;
 
+    /** 一次 Agent 运行最多发起的模型请求数，包含规划、重试、压缩重试和备用 Provider。 */
+    @Min(value = 1, message = "Agent 单次运行模型调用预算必须大于 0")
+    @Max(value = 32, message = "Agent 单次运行模型调用预算不能超过 32 次")
+    private int maxModelCallsPerRun = 12;
+
     /** 是否启用受控 Agent Loop；关闭时回退到现有单次回答流程。 */
     private boolean loopEnabled = true;
 
