@@ -608,30 +608,34 @@ public class InterviewAgentService {
             ))
             .doOnComplete(() -> {
                 agentProgressWriter.flush(assistantMessageId);
-                persistRunUsage(assistantMessageId, runTracker);
                 agentConversationService.completeMessage(
                     assistantMessageId,
                     output.get().toString()
                 );
             })
-            .doOnComplete(() -> agentMetrics.finishRun(runTracker, "success"))
             .doOnError(error -> {
                 agentProgressWriter.flush(assistantMessageId);
-                persistRunUsage(assistantMessageId, runTracker);
                 agentConversationService.failMessage(
                     assistantMessageId,
                     output.get().toString(),
                     toAgentErrorMessage(error)
                 );
-                agentMetrics.finishRun(runTracker, "failure");
             })
             .doOnCancel(() -> {
                 agentProgressWriter.flush(assistantMessageId);
-                persistRunUsage(assistantMessageId, runTracker);
                 if (taskHandle == null || taskHandle.markCancellationPersisted()) {
                     agentConversationService.cancelMessage(assistantMessageId, output.get().toString());
                 }
-                agentMetrics.finishRun(runTracker, "cancelled");
+            })
+            // 模型流自己的 doFinally 会先结束 ModelCallTracker；在这里再读取聚合快照，
+            // 避免真实 SSE 在完成/断开时把 modelCalls 持久化成 0。
+            .doFinally(signal -> {
+                persistRunUsage(assistantMessageId, runTracker);
+                agentMetrics.finishRun(runTracker, switch (signal) {
+                    case ON_COMPLETE -> "success";
+                    case CANCEL -> "cancelled";
+                    default -> "failure";
+                });
             });
     }
 
