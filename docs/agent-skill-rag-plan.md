@@ -182,9 +182,10 @@ done
 ```powershell
 pwsh -NoProfile -File .\scripts\formal-agent-acceptance.ps1 -BaseUrl http://localhost:18083 -CreateInterview -RunModelTests
 pwsh -NoProfile -File .\scripts\auth-voice-schedule-acceptance.ps1 -BaseUrl http://localhost:18083
+pwsh -NoProfile -File .\scripts\agent-restart-acceptance.ps1 -BaseUrl http://localhost:18083 -StatePath $env:TEMP\agent-recovery-state.json
 ```
 
-前一个脚本验证正式登录下的 Agent 会话创建、同一报告多线程、重命名/归档、Loop 事件、运行状态持久化和真实模型流式完成；后一个脚本验证语音面试和面试日程不发生跨账号读取或删除。应用重启恢复仍建议结合部署环境做一次手工演练，因为脚本不会在运行中的请求中途重启服务。
+前两个脚本验证正式登录下的 Agent 会话创建、同一报告多线程、重命名/归档、Loop 事件、运行状态持久化、真实模型流式完成，以及语音面试和面试日程的跨账号隔离。重启脚本先启动一个真实 Agent 请求；手动重启应用并等待超过 30 秒后，再使用 `-VerifyStatePath ... -Cleanup` 验证任务被接管、完成且消息没有重复。脚本不负责执行容器重启。
 
 后续按风险从低到高推进：
 
