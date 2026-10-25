@@ -39,6 +39,14 @@ APP_AUTH_COOKIE_SAME_SITE=Lax
 
 ```powershell
 pwsh -NoProfile -File .\scripts\auth-acceptance.ps1 -BaseUrl http://localhost:18083
+
+# 账号隔离：简历、语音面试和面试日程
+pwsh -NoProfile -File .\scripts\auth-voice-schedule-acceptance.ps1 -BaseUrl http://localhost:18083
+
+# 正式登录下的 Agent 会话、Loop、持久化和模型流式验收
+pwsh -NoProfile -File .\scripts\formal-agent-acceptance.ps1 -BaseUrl http://localhost:18083 -CreateInterview -RunModelTests
 ```
 
-验收覆盖：未登录 401、注册、重复注册、登录 Cookie、会话恢复、CSRF、旧 Header 防伪、退出和退出后的会话失效。
+验收覆盖：未登录 401、注册、重复注册、登录 Cookie、会话恢复、CSRF、旧 Header 防伪、退出和退出后的会话失效；以及不同账号之间的简历、语音面试、面试日程和 Agent 会话隔离。
+
+`-RunModelTests` 会发起真实模型流式请求；如果只想验证登录、会话归属和 Agent 数据生命周期，可以去掉该参数。脚本会清理本轮创建的临时面试记录。
