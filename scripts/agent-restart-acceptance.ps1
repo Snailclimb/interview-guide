@@ -15,7 +15,8 @@ param(
     [string]$BaseUrl = 'http://localhost:18083',
     [string]$StatePath = '',
     [string]$VerifyStatePath = '',
-    [int]$RecoveryWaitSeconds = 45,
+    # 启动恢复后还要经历上下文构建和一次模型生成，远程真实模型可能超过 1 分钟。
+    [int]$RecoveryWaitSeconds = 180,
     [switch]$Cleanup
 )
 
