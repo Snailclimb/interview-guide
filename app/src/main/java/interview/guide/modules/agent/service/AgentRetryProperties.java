@@ -42,6 +42,21 @@ public class AgentRetryProperties {
     @Max(value = 3, message = "Agent Loop 步骤数不能超过 3")
     private int loopMaxSteps = 3;
 
+    /** 单个 Loop 步骤的最大执行时间（毫秒）。 */
+    @Min(value = 100, message = "Agent Loop 步骤超时不能小于 100 毫秒")
+    @Max(value = 60000, message = "Agent Loop 步骤超时不能超过 60000 毫秒")
+    private long loopStepTimeoutMillis = 5000;
+
+    /** 单个 Loop 步骤失败后的重试次数。 */
+    @Min(value = 0, message = "Agent Loop 步骤重试次数不能为负数")
+    @Max(value = 3, message = "Agent Loop 步骤重试次数不能超过 3 次")
+    private int loopStepRetryAttempts = 1;
+
+    /** 一次 Loop 的总执行时间预算（毫秒）。 */
+    @Min(value = 100, message = "Agent Loop 总超时不能小于 100 毫秒")
+    @Max(value = 180000, message = "Agent Loop 总超时不能超过 180000 毫秒")
+    private long loopTotalTimeoutMillis = 15000;
+
     /** 启动恢复扫描是否启用。 */
     private boolean recoveryEnabled = true;
 

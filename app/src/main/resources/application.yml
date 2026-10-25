@@ -197,6 +197,9 @@ app:
       retry-heartbeat-interval-seconds: ${APP_AI_AGENT_RETRY_HEARTBEAT_INTERVAL_SECONDS:10}
       loop-enabled: ${APP_AI_AGENT_LOOP_ENABLED:true}
       loop-max-steps: ${APP_AI_AGENT_LOOP_MAX_STEPS:3}
+      loop-step-timeout-millis: ${APP_AI_AGENT_LOOP_STEP_TIMEOUT_MILLIS:5000}
+      loop-step-retry-attempts: ${APP_AI_AGENT_LOOP_STEP_RETRY_ATTEMPTS:1}
+      loop-total-timeout-millis: ${APP_AI_AGENT_LOOP_TOTAL_TIMEOUT_MILLIS:15000}
       recovery-enabled: ${APP_AI_AGENT_RECOVERY_ENABLED:true}
       recovery-min-age-seconds: ${APP_AI_AGENT_RECOVERY_MIN_AGE_SECONDS:30}
       recovery-scan-interval-ms: ${APP_AI_AGENT_RECOVERY_SCAN_INTERVAL_MS:10000}

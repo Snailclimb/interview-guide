@@ -458,8 +458,9 @@ export default function AgentPage() {
       setLoopPlan(event.content ?? '');
       return;
     }
-    if (event.type === 'loop' && event.status === 'completed' && event.message) {
-      setLoopPlan((current) => `${current}${current ? '\n\n' : ''}执行观察：${event.message}`);
+    if (event.type === 'loop' && event.status !== 'running' && event.message) {
+      const prefix = event.status === 'completed' ? '执行观察' : '执行异常';
+      setLoopPlan((current) => `${current}${current ? '\n\n' : ''}${prefix}：${event.message}`);
       return;
     }
     if (event.type !== 'step' || !event.step || !event.status) return;

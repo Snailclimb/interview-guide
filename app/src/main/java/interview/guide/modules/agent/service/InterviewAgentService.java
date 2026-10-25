@@ -322,7 +322,17 @@ public class InterviewAgentService {
                         ? new AgentLoopEngine().execute(
                             context, List.of("读取面试报告并确认当前目标")
                         )
-                        : new AgentLoopEngine().execute(context, agentLoopPlanner.steps(plan));
+                        : new AgentLoopEngine().execute(
+                            context,
+                            agentLoopPlanner.steps(plan),
+                            new AgentLoopEngine.ExecutionPolicy(
+                                retryProperties.getLoopMaxSteps(),
+                                retryProperties.getLoopStepRetryAttempts(),
+                                retryProperties.getLoopStepTimeoutMillis(),
+                                retryProperties.getLoopTotalTimeoutMillis()
+                            ),
+                            null
+                        );
                     String loopTrace = loopResult.trace();
                     List<Message> history = buildModelHistory(historyMessages);
                     List<Message> compactHistory = buildModelHistory(AgentHistoryPolicy.normalize(
@@ -359,7 +369,11 @@ public class InterviewAgentService {
                         Flux.fromIterable(loopResult.iterations())
                             .concatMap(iteration -> Flux.just(
                                 AgentStreamEvent.loop(iteration.iteration(), "running", iteration.action()),
-                                AgentStreamEvent.loop(iteration.iteration(), "completed", iteration.observation())
+                                AgentStreamEvent.loop(
+                                    iteration.iteration(),
+                                    "completed".equals(iteration.status()) ? "completed" : "failed",
+                                    iteration.observation()
+                                )
                             )),
                         Flux.just(
                             AgentStreamEvent.step("insight", "running"),
