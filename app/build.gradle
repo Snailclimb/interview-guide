@@ -175,6 +175,15 @@ tasks.register('agentEvaluation', Test) {
         includeTags 'agent-eval'
     }
     systemProperty 'agentEval.reportDir', layout.buildDirectory.dir('reports/agent-eval').get().asFile.absolutePath
+    if (project.findProperty('agentEvalInput') != null) {
+        systemProperty 'agentEval.input', rootProject.file(project.findProperty('agentEvalInput')).absolutePath
+    }
+    if (project.findProperty('agentEvalReportDir') != null) {
+        systemProperty 'agentEval.reportDir', rootProject.file(project.findProperty('agentEvalReportDir')).absolutePath
+    }
+    if (project.findProperty('agentEvalRunId') != null) {
+        systemProperty 'agentEval.runId', project.findProperty('agentEvalRunId')
+    }
     outputs.upToDateWhen { false }
 }
 
