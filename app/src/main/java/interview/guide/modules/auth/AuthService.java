@@ -10,17 +10,38 @@ import interview.guide.modules.auth.model.UserAccountEntity;
 import interview.guide.modules.auth.repository.UserAccountRepository;
 import java.time.LocalDateTime;
 import java.util.Locale;
-import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Service
-@RequiredArgsConstructor
 public class AuthService {
     private final UserAccountRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthProperties properties;
+    private final LegacyDataOwnershipService legacyDataOwnershipService;
+
+    public AuthService(
+        UserAccountRepository userRepository,
+        PasswordEncoder passwordEncoder,
+        AuthProperties properties
+    ) {
+        this(userRepository, passwordEncoder, properties, null);
+    }
+
+    @Autowired
+    public AuthService(
+        UserAccountRepository userRepository,
+        PasswordEncoder passwordEncoder,
+        AuthProperties properties,
+        LegacyDataOwnershipService legacyDataOwnershipService
+    ) {
+        this.userRepository = userRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.properties = properties;
+        this.legacyDataOwnershipService = legacyDataOwnershipService;
+    }
 
     @Transactional
     public AuthUserResponse register(RegisterRequest request) {
@@ -36,7 +57,9 @@ public class AuthService {
             .passwordHash(passwordEncoder.encode(request.password()))
             .nickname(normalizeNickname(request.nickname(), email))
             .build();
-        return AuthUserResponse.from(userRepository.save(user));
+        UserAccountEntity saved = userRepository.save(user);
+        claimLegacyData(saved);
+        return AuthUserResponse.from(saved);
     }
 
     @Transactional
@@ -51,7 +74,9 @@ public class AuthService {
             throw new BusinessException(ErrorCode.AUTH_ACCOUNT_DISABLED);
         }
         user.setLastLoginAt(LocalDateTime.now());
-        return userRepository.save(user);
+        UserAccountEntity saved = userRepository.save(user);
+        claimLegacyData(saved);
+        return saved;
     }
 
     @Transactional(readOnly = true)
@@ -68,6 +93,12 @@ public class AuthService {
 
     private String normalizeEmail(String email) {
         return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private void claimLegacyData(UserAccountEntity user) {
+        if (legacyDataOwnershipService != null) {
+            legacyDataOwnershipService.claimForSingleUser(user.getId());
+        }
     }
 
     private String normalizeNickname(String nickname, String email) {

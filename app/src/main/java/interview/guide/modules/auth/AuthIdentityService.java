@@ -27,9 +27,10 @@ public class AuthIdentityService {
         if (legacyIdentity == null || legacyIdentity.isBlank()) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "缺少登录身份");
         }
-        return legacyIdentity.trim().length() > 64
+        String normalized = legacyIdentity.trim().length() > 64
             ? legacyIdentity.trim().substring(0, 64)
             : legacyIdentity.trim();
+        return normalized;
     }
 
     public boolean isAuthenticated() {

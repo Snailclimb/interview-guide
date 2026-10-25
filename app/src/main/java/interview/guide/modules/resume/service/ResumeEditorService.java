@@ -5,6 +5,7 @@ import interview.guide.common.ai.PromptSanitizer;
 import interview.guide.common.ai.StructuredOutputInvoker;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.modules.auth.AuthUserContext;
 import interview.guide.common.log.ErrorLogSanitizer;
 import interview.guide.modules.interview.model.ResumeAnalysisResponse;
 import interview.guide.modules.resume.model.ResumeEditDraftEntity;
@@ -169,7 +170,9 @@ public class ResumeEditorService {
 
     @Transactional
     public ResumeEditorDTO applyToInterview(Long resumeId) {
-        ResumeEntity resume = resumeRepository.findByIdForUpdate(resumeId)
+        ResumeEntity resume = AuthUserContext.currentUserId()
+            .map(ownerId -> resumeRepository.findByIdForUpdateAndOwnerId(resumeId, ownerId))
+            .orElseGet(() -> resumeRepository.findByIdForUpdate(resumeId))
             .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND));
         ResumeEditDraftEntity draft = draftRepository.findByResumeId(resumeId)
             .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST, "还没有保存简历编辑版"));
@@ -186,7 +189,10 @@ public class ResumeEditorService {
     }
 
     private ResumeEntity findResume(Long resumeId) {
-        return resumeRepository.findById(resumeId)
+        Optional<ResumeEntity> resume = AuthUserContext.currentUserId()
+            .map(ownerId -> resumeRepository.findByIdAndOwnerId(resumeId, ownerId))
+            .orElseGet(() -> resumeRepository.findById(resumeId));
+        return resume
             .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND));
     }
 

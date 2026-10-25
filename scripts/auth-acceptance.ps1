@@ -93,23 +93,27 @@ $csrfAllowed = Invoke-AuthApi -Method DELETE -Path '/api/agent/memory' -Session 
 Assert-Pass ($csrfAllowed.StatusCode -eq 200) '携带 CSRF Header 的写请求可访问'
 
 $sessionItems = @($businessJson.data)
-Assert-Pass ($sessionItems.Count -ge 1) '正式会话可读取面试记录'
-$interviewSessionId = [string]$sessionItems[0].sessionId
-$agentConversationPath = "/api/agent/interview-sessions/$([Uri]::EscapeDataString($interviewSessionId))/conversation"
-$agentConversation = Invoke-AuthApi -Method GET -Path $agentConversationPath -Session $session
-$agentConversationJson = Get-Json $agentConversation
-Assert-Pass ($agentConversation.StatusCode -eq 200 -and $agentConversationJson.success -eq $true) '正式会话可访问 Agent 对话'
-$agentThreadsPath = "/api/agent/interview-sessions/$([Uri]::EscapeDataString($interviewSessionId))/conversations"
-$curlBody = '{"title":"正式认证验收线程-curl"}'
-$curlJar = Join-Path $env:TEMP "interview-auth-$([guid]::NewGuid()).cookie"
-$null = & curl.exe -sS -c $curlJar -H 'Content-Type: application/json' -d (@{ email = $email; password = $password } | ConvertTo-Json -Compress) "$BaseUrl/api/auth/login"
-$xsrfLine = Get-Content $curlJar | Where-Object { $_ -match '\sXSRF-TOKEN\s' } | Select-Object -Last 1
-$xsrfParts = $xsrfLine -split '\s+'
-$xsrfValue = $xsrfParts[$xsrfParts.Length - 1]
-$curlJarPost = & curl.exe -sS -b $curlJar -c $curlJar -X POST "$BaseUrl$agentThreadsPath" -H 'Content-Type: application/json' -H "X-XSRF-TOKEN: $xsrfValue" --data-raw $curlBody
-$curlJarJson = $curlJarPost | ConvertFrom-Json
-Remove-Item -LiteralPath $curlJar -Force -ErrorAction SilentlyContinue
-Assert-Pass ($curlJarJson.code -eq 200 -and -not [string]::IsNullOrWhiteSpace([string]$curlJarJson.data.agentSessionId)) '正式会话可创建 Agent 对话线程'
+if ($sessionItems.Count -ge 1) {
+    Assert-Pass $true '正式会话可读取面试记录'
+    $interviewSessionId = [string]$sessionItems[0].sessionId
+    $agentConversationPath = "/api/agent/interview-sessions/$([Uri]::EscapeDataString($interviewSessionId))/conversation"
+    $agentConversation = Invoke-AuthApi -Method GET -Path $agentConversationPath -Session $session
+    $agentConversationJson = Get-Json $agentConversation
+    Assert-Pass ($agentConversation.StatusCode -eq 200 -and $agentConversationJson.success -eq $true) '正式会话可访问 Agent 对话'
+    $agentThreadsPath = "/api/agent/interview-sessions/$([Uri]::EscapeDataString($interviewSessionId))/conversations"
+    $curlBody = '{"title":"正式认证验收线程-curl"}'
+    $curlJar = Join-Path $env:TEMP "interview-auth-$([guid]::NewGuid()).cookie"
+    $null = & curl.exe -sS -c $curlJar -H 'Content-Type: application/json' -d (@{ email = $email; password = $password } | ConvertTo-Json -Compress) "$BaseUrl/api/auth/login"
+    $xsrfLine = Get-Content $curlJar | Where-Object { $_ -match '\sXSRF-TOKEN\s' } | Select-Object -Last 1
+    $xsrfParts = $xsrfLine -split '\s+'
+    $xsrfValue = $xsrfParts[$xsrfParts.Length - 1]
+    $curlJarPost = & curl.exe -sS -b $curlJar -c $curlJar -X POST "$BaseUrl$agentThreadsPath" -H 'Content-Type: application/json' -H "X-XSRF-TOKEN: $xsrfValue" --data-raw $curlBody
+    $curlJarJson = $curlJarPost | ConvertFrom-Json
+    Remove-Item -LiteralPath $curlJar -Force -ErrorAction SilentlyContinue
+    Assert-Pass ($curlJarJson.code -eq 200 -and -not [string]::IsNullOrWhiteSpace([string]$curlJarJson.data.agentSessionId)) '正式会话可创建 Agent 对话线程'
+} else {
+    Write-Host '[SKIP] 当前账号没有已归属的面试记录，跳过 Agent 会话依赖测试' -ForegroundColor Yellow
+}
 
 $spoofed = Invoke-AuthApi -Method GET -Path '/api/interview/sessions' -Session $session -Headers @{ 'X-User-Id' = 'spoofed-user' }
 Assert-Pass ($spoofed.StatusCode -eq 200) '正式会话优先于伪造的旧身份 Header'

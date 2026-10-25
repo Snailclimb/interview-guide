@@ -17,6 +17,36 @@ import java.util.Optional;
 @Repository
 public interface InterviewSessionRepository extends JpaRepository<InterviewSessionEntity, Long> {
 
+    long countByOwnerIdIsNotNull();
+
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE InterviewSessionEntity s SET s.ownerId = :ownerId WHERE s.ownerId IS NULL")
+    int claimUnownedRows(@Param("ownerId") String ownerId);
+
+    Optional<InterviewSessionEntity> findBySessionIdAndOwnerId(String sessionId, String ownerId);
+
+    Optional<InterviewSessionEntity> findByRequestIdAndOwnerId(String requestId, String ownerId);
+
+    @Query("SELECT s FROM InterviewSessionEntity s LEFT JOIN FETCH s.resume "
+        + "WHERE s.sessionId = :sessionId AND s.ownerId = :ownerId")
+    Optional<InterviewSessionEntity> findBySessionIdWithResumeAndOwnerId(
+        @Param("sessionId") String sessionId, @Param("ownerId") String ownerId);
+
+    List<InterviewSessionEntity> findByResumeIdAndOwnerIdOrderByCreatedAtDesc(
+        Long resumeId, String ownerId);
+
+    List<InterviewSessionEntity> findAllByOwnerIdOrderByCreatedAtDesc(String ownerId);
+
+    Optional<InterviewSessionEntity> findFirstByResumeIdAndOwnerIdAndStatusInOrderByCreatedAtDesc(
+        Long resumeId, String ownerId, List<SessionStatus> statuses);
+
+    List<InterviewSessionEntity> findTop10ByResumeIdAndOwnerIdAndSkillIdOrderByCreatedAtDesc(
+        Long resumeId, String ownerId, String skillId);
+
+    List<InterviewSessionEntity> findTop10ByOwnerIdAndSkillIdOrderByCreatedAtDesc(
+        String ownerId, String skillId);
+
     /**
      * 根据会话ID查找
      */

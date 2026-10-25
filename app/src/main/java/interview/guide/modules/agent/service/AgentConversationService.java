@@ -11,6 +11,8 @@ import interview.guide.modules.agent.repository.AgentChatMessageRepository;
 import interview.guide.modules.agent.repository.AgentChatSessionRepository;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.modules.interview.service.InterviewPersistenceService;
+import interview.guide.modules.auth.AuthUserContext;
 import jakarta.transaction.Transactional;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,6 +45,7 @@ public class AgentConversationService {
     private final AgentChatSessionRepository sessionRepository;
     private final AgentChatMessageRepository messageRepository;
     private final ObjectMapper objectMapper;
+    private final InterviewPersistenceService interviewPersistenceService;
 
     @Transactional
     public PreparedMessage prepareMessage(
@@ -169,6 +172,7 @@ public class AgentConversationService {
         String interviewSessionId, String title, String ownerKey
     ) {
         String normalizedOwnerKey = normalizeOwnerKey(ownerKey, false);
+        assertInterviewAccess(interviewSessionId, normalizedOwnerKey);
         String normalizedTitle = title == null || title.isBlank() ? "新 Agent 对话" : truncate(title.trim(), 120);
         AgentChatSessionEntity session = AgentChatSessionEntity.builder()
             .interviewSessionId(interviewSessionId)
@@ -188,6 +192,7 @@ public class AgentConversationService {
     @Transactional
     public List<AgentConversationSummary> listConversations(String interviewSessionId, String ownerKey) {
         String normalizedOwnerKey = normalizeOwnerKey(ownerKey, false);
+        assertInterviewAccess(interviewSessionId, normalizedOwnerKey);
         return sessionRepository.findByInterviewSessionIdOrderByUpdatedAtDesc(interviewSessionId).stream()
             .filter(session -> !session.isArchived())
             .filter(session -> normalizedOwnerKey == null || isOwnedBy(session, normalizedOwnerKey))
@@ -235,6 +240,7 @@ public class AgentConversationService {
         if (normalizedOwnerKey == null) {
             return;
         }
+        assertInterviewAccess(interviewSessionId, normalizedOwnerKey);
         Optional<AgentChatSessionEntity> session = findRawSession(interviewSessionId, agentSessionId);
         if (agentSessionId != null && !agentSessionId.isBlank() && session.isEmpty()) {
             throw accessDenied();
@@ -418,6 +424,7 @@ public class AgentConversationService {
             session.getAgentSessionId(),
             session.getGoal(),
             session.getProviderId(),
+            session.getOwnerKey(),
             session.getMemoryKey(),
             user.getContent(),
             assistant.getId(),
@@ -642,6 +649,17 @@ public class AgentConversationService {
         return new BusinessException(ErrorCode.FORBIDDEN, "无权访问该 Agent 会话");
     }
 
+    private void assertInterviewAccess(String interviewSessionId, String ownerKey) {
+        if (ownerKey != null && AuthUserContext.currentUserId().isPresent()
+            && interviewPersistenceService != null) {
+            Optional<?> ownedSession = interviewPersistenceService.findBySessionIdForOwner(
+                interviewSessionId, ownerKey);
+            if (ownedSession != null && ownedSession.isEmpty()) {
+                throw accessDenied();
+            }
+        }
+    }
+
     private Optional<AgentChatSessionEntity> findSessionForUpdate(
         String interviewSessionId, String agentSessionId
     ) {
@@ -793,6 +811,7 @@ public class AgentConversationService {
         String agentSessionId,
         String goal,
         String providerId,
+        String ownerKey,
         String memoryKey,
         String userContent,
         Long assistantMessageId,
@@ -807,7 +826,22 @@ public class AgentConversationService {
             Long assistantMessageId,
             String runId
         ) {
-            this(interviewSessionId, null, goal, providerId, memoryKey, userContent, assistantMessageId, runId);
+            this(interviewSessionId, null, goal, providerId, null, memoryKey,
+                userContent, assistantMessageId, runId);
+        }
+
+        public RecoveredRun(
+            String interviewSessionId,
+            String agentSessionId,
+            String goal,
+            String providerId,
+            String memoryKey,
+            String userContent,
+            Long assistantMessageId,
+            String runId
+        ) {
+            this(interviewSessionId, agentSessionId, goal, providerId, null, memoryKey,
+                userContent, assistantMessageId, runId);
         }
     }
 }

@@ -5,6 +5,7 @@ import interview.guide.modules.agent.model.AgentChatSessionEntity;
 import interview.guide.modules.agent.model.AgentRunStatus;
 import interview.guide.modules.agent.repository.AgentChatMessageRepository;
 import interview.guide.modules.agent.repository.AgentChatSessionRepository;
+import interview.guide.modules.interview.service.InterviewPersistenceService;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -22,7 +23,9 @@ class AgentConversationRecoveryTest {
     void claimsStaleRunAndResetsAssistantPlaceholderWithoutDuplicatingMessages() {
         AgentChatSessionRepository sessions = mock(AgentChatSessionRepository.class);
         AgentChatMessageRepository messages = mock(AgentChatMessageRepository.class);
-        AgentConversationService service = new AgentConversationService(sessions, messages, mock(ObjectMapper.class));
+        AgentConversationService service = new AgentConversationService(
+            sessions, messages, mock(ObjectMapper.class), mock(InterviewPersistenceService.class)
+        );
         AgentChatSessionEntity session = AgentChatSessionEntity.builder()
             .id(1L)
             .interviewSessionId("session-1")

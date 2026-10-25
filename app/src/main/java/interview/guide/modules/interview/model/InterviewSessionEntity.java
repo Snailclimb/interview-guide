@@ -22,6 +22,10 @@ public class InterviewSessionEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /** 服务端用户主体；旧数据迁移前允许为空。 */
+    @Column(name = "owner_id", length = 36)
+    private String ownerId;
     
     // 会话ID (UUID)
     @Column(nullable = false, unique = true, length = 36)
@@ -136,6 +140,14 @@ public class InterviewSessionEntity {
     // Getters and Setters
     public Long getId() {
         return id;
+    }
+
+    public String getOwnerId() {
+        return ownerId;
+    }
+
+    public void setOwnerId(String ownerId) {
+        this.ownerId = ownerId;
     }
     
     public void setId(Long id) {

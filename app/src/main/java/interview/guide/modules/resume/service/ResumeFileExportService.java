@@ -2,6 +2,7 @@ package interview.guide.modules.resume.service;
 
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.modules.auth.AuthUserContext;
 import interview.guide.modules.resume.model.ResumeEditorContent;
 import interview.guide.modules.resume.model.ResumeEditorDTO;
 import interview.guide.modules.resume.model.ResumeEntity;
@@ -50,7 +51,9 @@ public class ResumeFileExportService {
     }
 
     private ExportContent loadContent(Long resumeId) {
-        ResumeEntity resume = resumeRepository.findById(resumeId)
+        ResumeEntity resume = AuthUserContext.currentUserId()
+            .map(ownerId -> resumeRepository.findByIdAndOwnerId(resumeId, ownerId))
+            .orElseGet(() -> resumeRepository.findById(resumeId))
             .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND));
         ResumeEditorDTO editor = editorService.getEditor(resumeId);
         if (editor.content() == null || editor.content().isEmpty()) {

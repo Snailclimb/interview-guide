@@ -11,16 +11,21 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "resumes", indexes = {
-    @Index(name = "idx_resume_hash", columnList = "fileHash", unique = true)
+    @Index(name = "idx_resume_owner_hash", columnList = "owner_id,fileHash", unique = true),
+    @Index(name = "idx_resume_owner_uploaded", columnList = "owner_id,uploadedAt")
 })
 public class ResumeEntity {
     
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /** 服务端用户主体；旧数据允许为空，正式模式下不会向未归属数据开放访问。 */
+    @Column(name = "owner_id", length = 36)
+    private String ownerId;
     
     // 文件内容的SHA-256哈希值，用于去重
-    @Column(nullable = false, unique = true, length = 64)
+    @Column(nullable = false, length = 64)
     private String fileHash;
     
     // 原始文件名
@@ -96,6 +101,14 @@ public class ResumeEntity {
     // Getters and Setters
     public Long getId() {
         return id;
+    }
+
+    public String getOwnerId() {
+        return ownerId;
+    }
+
+    public void setOwnerId(String ownerId) {
+        this.ownerId = ownerId;
     }
     
     public void setId(Long id) {
