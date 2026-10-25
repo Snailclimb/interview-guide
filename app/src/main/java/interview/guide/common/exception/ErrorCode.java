@@ -82,7 +82,14 @@ public enum ErrorCode {
     MODULE_NOT_FOUND(11008, "模块不存在"),
     VOICE_CONFIG_READ_FAILED(11009, "读取语音服务配置失败"),
     VOICE_CONFIG_WRITE_FAILED(11010, "写入语音服务配置失败"),
-    VOICE_CONFIG_TEST_FAILED(11011, "语音服务连通性测试失败");
+    VOICE_CONFIG_TEST_FAILED(11011, "语音服务连通性测试失败"),
+
+    // ========== 认证模块错误 12xxx ==========
+    AUTH_EMAIL_EXISTS(12001, "该邮箱已注册"),
+    AUTH_INVALID_CREDENTIALS(12002, "邮箱或密码错误"),
+    AUTH_ACCOUNT_DISABLED(12003, "账号已被禁用"),
+    AUTH_PASSWORD_TOO_WEAK(12004, "密码强度不足"),
+    AUTH_SESSION_INVALID(12005, "登录状态已失效，请重新登录");
 
     private final Integer code;
     private final String message;
