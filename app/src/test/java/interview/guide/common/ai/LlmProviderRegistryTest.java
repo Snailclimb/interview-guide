@@ -210,6 +210,30 @@ class LlmProviderRegistryTest {
     }
 
     @Test
+    @DisplayName("Agent 备用 Provider 排除未配置 API Key 的聊天配置")
+    void resolveChatProviderCandidatesFiltersProvidersWithoutCredentials() {
+        ProviderConfig configured = new ProviderConfig();
+        configured.setBaseUrl("http://configured/v1");
+        configured.setApiKey("configured-key");
+        configured.setModel("configured-chat");
+
+        ProviderConfig missingCredential = new ProviderConfig();
+        missingCredential.setBaseUrl("http://missing/v1");
+        missingCredential.setModel("missing-chat");
+
+        when(properties.getProviders()).thenReturn(java.util.Map.of(
+            "configured", configured,
+            "missing", missingCredential
+        ));
+        when(properties.getDefaultProvider()).thenReturn("configured");
+
+        assertEquals(
+            java.util.List.of("configured"),
+            registry.resolveChatProviderCandidates("configured")
+        );
+    }
+
+    @Test
     @DisplayName("Agent Provider 失败后进入短期熔断，成功后恢复")
     void failedChatProviderIsTemporarilySkipped() {
         ProviderConfig config = new ProviderConfig();

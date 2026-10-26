@@ -244,6 +244,9 @@ public class LlmProviderRegistry {
     }
 
     private boolean isChatCapableProvider(LlmProviderEntity provider) {
+        if (provider == null || !hasProviderCredential(provider)) {
+            return false;
+        }
         return isChatCapableProvider(
             provider.getId(),
             provider.getModel(),
@@ -253,7 +256,7 @@ public class LlmProviderRegistry {
     }
 
     private boolean isChatCapableProvider(String providerId, ProviderConfig config) {
-        if (config == null) {
+        if (config == null || isBlank(config.getApiKey())) {
             return false;
         }
         return isChatCapableProvider(
@@ -277,6 +280,24 @@ public class LlmProviderRegistry {
         return !supportsEmbedding
             || isBlank(embeddingModel)
             || !model.trim().equalsIgnoreCase(embeddingModel.trim());
+    }
+
+    /**
+     * 只有已配置凭证的数据库 Provider 才能进入 Agent 候选链路。
+     * API Key 解密失败按不可用处理，避免在模型请求阶段反复重试一个必然失败的 Provider。
+     */
+    private boolean hasProviderCredential(LlmProviderEntity provider) {
+        if (encryptionService == null) {
+            return false;
+        }
+        try {
+            return !isBlank(encryptionService.decrypt(
+                provider.getApiKeyNonce(), provider.getApiKeyCiphertext()
+            ));
+        } catch (RuntimeException error) {
+            log.warn("[LlmProviderRegistry] Provider 凭证解密失败，跳过候选: {}", provider.getId());
+            return false;
+        }
     }
 
     /**
