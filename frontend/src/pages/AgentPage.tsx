@@ -41,6 +41,7 @@ import {
   rememberAgentSessionId,
   rememberAgentThreadId,
   resolveAgentSessionId,
+  resolveAgentThreadId,
 } from './agentSession';
 import type {
   AgentGoal,
@@ -165,7 +166,12 @@ export default function AgentPage() {
   const storedAgentSessionId = useMemo(() => getStoredAgentThreadId(), []);
   const sessionId = resolveAgentSessionId(routeSessionId, storedSessionId);
   // 地址带有报告 ID 时不使用上一次报告的线程；无参数进入 /agent 时才从 sessionStorage 恢复。
-  const agentSessionId = routeAgentSessionId || (!routeSessionId ? storedAgentSessionId : null);
+  const agentSessionId = resolveAgentThreadId(
+    routeSessionId,
+    routeAgentSessionId,
+    storedSessionId,
+    storedAgentSessionId,
+  );
   const [goal, setGoal] = useState<AgentGoal>('review');
   const [providerId, setProviderId] = useState('');
   const [providers, setProviders] = useState<ProviderItem[]>([]);
@@ -412,7 +418,8 @@ export default function AgentPage() {
         if (cancelled) return;
 
         const resolvedAgentSessionId = conversation.agentSessionId || null;
-        if (resolvedAgentSessionId && resolvedAgentSessionId !== agentSessionId) {
+        if (resolvedAgentSessionId
+          && (!routeAgentSessionId || resolvedAgentSessionId !== routeAgentSessionId)) {
           rememberAgentThreadId(resolvedAgentSessionId);
           setSearchParams((current) => {
             current.set('sessionId', sessionId);
@@ -454,7 +461,30 @@ export default function AgentPage() {
       cancelled = true;
       clearReconciliationTimer();
     };
-  }, [agentSessionId, reconcileConversation, rememberRetryableRequest, restoreConversationMessages, restoreRunProgress, sessionId, setSearchParams]);
+  }, [agentSessionId, reconcileConversation, rememberRetryableRequest, restoreConversationMessages, restoreRunProgress, routeAgentSessionId, sessionId, setSearchParams]);
+
+  useEffect(() => {
+    if (!sessionId || !agentSessionId || runStatus !== 'running') return;
+
+    const reconcileWhenActive = () => {
+      if (document.visibilityState === 'hidden') return;
+      // 某些代理会保持 TCP 连接但停止转发 SSE；重新获得焦点或网络恢复时，
+      // 主动读取持久化状态，避免页面长期停在“执行中”。
+      reconcileConversation(sessionId, undefined, agentSessionId);
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') reconcileWhenActive();
+    };
+
+    window.addEventListener('focus', reconcileWhenActive);
+    window.addEventListener('online', reconcileWhenActive);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', reconcileWhenActive);
+      window.removeEventListener('online', reconcileWhenActive);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [agentSessionId, reconcileConversation, runStatus, sessionId]);
 
   useEffect(() => () => {
     abortRef.current?.abort();

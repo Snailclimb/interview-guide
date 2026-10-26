@@ -181,6 +181,19 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page.getByText('线程 B 的训练内容')).toBeVisible();
   });
 
+  test('从其他页面返回 Agent 时恢复保存的面试报告和线程', async ({ page }) => {
+    await page.addInitScript(() => {
+      sessionStorage.setItem('agent-active-interview-session', 'interview-1');
+      sessionStorage.setItem('agent-active-thread-session', 'thread-b');
+    });
+
+    await page.goto('/agent');
+    await expect(page).toHaveURL(/sessionId=interview-1/);
+    await expect(page).toHaveURL(/agentSessionId=thread-b/);
+    await expect(page.getByText('线程 B 的训练内容')).toBeVisible();
+    await expect(page.getByText('线程 A 的复盘内容')).not.toBeVisible();
+  });
+
   test('执行任务时展示 Loop 事件并保留最终回答', async ({ page }) => {
     await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
     await expect(page.getByRole('button', { name: '开始执行' })).toBeEnabled();

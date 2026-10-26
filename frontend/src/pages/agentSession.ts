@@ -27,6 +27,24 @@ export function resolveAgentSessionId(
   return routeSessionId || storedSessionId || null;
 }
 
+/**
+ * 恢复 Agent 线程时，只有保存的面试报告仍然是当前报告，才能复用保存的线程。
+ *
+ * 页面从 /agent 离开后再回来时，路由通常先没有参数，随后才补回 sessionId；
+ * 不能因为 sessionId 已经补回而误认为用户主动切换了报告，否则会丢失当前线程。
+ */
+export function resolveAgentThreadId(
+  routeSessionId: string | null,
+  routeAgentSessionId: string | null,
+  storedSessionId: string | null,
+  storedAgentSessionId: string | null,
+): string | null {
+  if (routeAgentSessionId) return routeAgentSessionId;
+  if (!storedAgentSessionId) return null;
+  if (!routeSessionId || routeSessionId === storedSessionId) return storedAgentSessionId;
+  return null;
+}
+
 export function getStoredAgentThreadId(): string | null {
   if (typeof window === 'undefined') return null;
   try {
