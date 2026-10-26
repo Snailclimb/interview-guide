@@ -82,10 +82,20 @@ public class AgentProgressWriter {
 
     /** 异步持久化 Loop 计划和下一个待执行步骤，供重启接管时跳过已完成步骤。 */
     public void recordLoopState(Long messageId, String plan, int nextStepIndex) {
-        recordLoopState(messageId, null, plan, nextStepIndex);
+        recordLoopState(messageId, null, plan, nextStepIndex, List.of());
     }
 
     public void recordLoopState(Long messageId, String runId, String plan, int nextStepIndex) {
+        recordLoopState(messageId, runId, plan, nextStepIndex, List.of());
+    }
+
+    public void recordLoopState(
+        Long messageId,
+        String runId,
+        String plan,
+        int nextStepIndex,
+        List<Integer> completedStepIndices
+    ) {
         if (messageId == null) {
             return;
         }
@@ -94,7 +104,9 @@ public class AgentProgressWriter {
             return;
         }
         state.latestLoop.set(new LoopProgress(
-            plan, Math.max(0, nextStepIndex), normalizeRunId(runId)
+            plan, Math.max(0, nextStepIndex),
+            completedStepIndices == null ? List.of() : List.copyOf(completedStepIndices),
+            normalizeRunId(runId)
         ));
         schedule(messageId, state);
     }
@@ -126,10 +138,10 @@ public class AgentProgressWriter {
             return;
         }
         PendingProgress state = pending.computeIfAbsent(messageId, ignored -> new PendingProgress());
+        if (!state.finished.compareAndSet(false, true)) {
+            return;
+        }
         synchronized (state.writeLock) {
-            if (!state.finished.compareAndSet(false, true)) {
-                return;
-            }
             state.latestStep.set(null);
             state.latestSources.set(null);
             state.latestLoop.set(null);
@@ -200,13 +212,22 @@ public class AgentProgressWriter {
                 }
             }
             if (loop != null && !state.finished.get()) {
-                if (loop.runId() == null) {
+                if (loop.completedStepIndices().isEmpty() && loop.runId() == null) {
                     conversationService.updateLoopState(
                         messageId, loop.plan(), loop.nextStepIndex()
                     );
-                } else {
+                } else if (loop.completedStepIndices().isEmpty()) {
                     conversationService.updateLoopState(
                         messageId, loop.plan(), loop.nextStepIndex(), loop.runId()
+                    );
+                } else if (loop.runId() == null) {
+                    conversationService.updateLoopState(
+                        messageId, loop.plan(), loop.nextStepIndex(), loop.completedStepIndices()
+                    );
+                } else {
+                    conversationService.updateLoopState(
+                        messageId, loop.plan(), loop.nextStepIndex(),
+                        loop.completedStepIndices(), loop.runId()
                     );
                 }
             }
@@ -234,6 +255,8 @@ public class AgentProgressWriter {
     private record SourceProgress(List<AgentSource> sources, String runId) {
     }
 
-    private record LoopProgress(String plan, int nextStepIndex, String runId) {
+    private record LoopProgress(
+        String plan, int nextStepIndex, List<Integer> completedStepIndices, String runId
+    ) {
     }
 }

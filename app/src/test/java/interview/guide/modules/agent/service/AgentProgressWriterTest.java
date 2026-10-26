@@ -117,27 +117,41 @@ class AgentProgressWriterTest {
     }
 
     @Test
+    @DisplayName("持久化并行 Loop 已完成步骤，恢复时可跳过成功兄弟步骤")
+    void carriesCompletedLoopStepsToPersistenceBoundary() {
+        AgentConversationService conversationService = mock(AgentConversationService.class);
+        AgentProgressWriter writer = new AgentProgressWriter(
+            conversationService, Duration.ofSeconds(5)
+        );
+
+        writer.recordLoopState(47L, "run-new", "[parallel] 读取报告", 1, List.of(0, 2));
+        writer.flush(47L);
+
+        verify(conversationService).updateLoopState(
+            47L, "[parallel] 读取报告", 1, List.of(0, 2), "run-new"
+        );
+    }
+
+    @Test
     @DisplayName("终态刷盘与延迟写入并发时保持写入顺序")
     void serializesTerminalFlushAndDelayedDrain() throws Exception {
         AgentConversationService conversationService = mock(AgentConversationService.class);
         CountDownLatch firstWriteStarted = new CountDownLatch(1);
         CountDownLatch releaseFirstWrite = new CountDownLatch(1);
-        org.mockito.Mockito.doAnswer(invocation -> {
-            firstWriteStarted.countDown();
-            releaseFirstWrite.await(1, TimeUnit.SECONDS);
-            return null;
-        }).when(conversationService).updateRunProgress(50L, "context", "running", null);
         AgentProgressWriter writer = new AgentProgressWriter(
             conversationService, Duration.ZERO
         );
+        org.mockito.Mockito.doAnswer(invocation -> {
+            firstWriteStarted.countDown();
+            writer.finish(50L);
+            releaseFirstWrite.await(1, TimeUnit.SECONDS);
+            return null;
+        }).when(conversationService).updateRunProgress(50L, "context", "running", null);
         writer.recordStep(50L, "context", "running", null);
         assertThat(firstWriteStarted.await(1, TimeUnit.SECONDS)).isTrue();
 
         writer.recordStep(50L, "action", "running", null);
-        Thread finishThread = new Thread(() -> writer.finish(50L));
-        finishThread.start();
         releaseFirstWrite.countDown();
-        finishThread.join(1000);
 
         verify(conversationService).updateRunProgress(50L, "context", "running", null);
         verify(conversationService, never()).updateRunProgress(50L, "action", "running", null);

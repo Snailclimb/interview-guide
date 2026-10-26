@@ -100,6 +100,10 @@ public class AgentChatSessionEntity {
     @Builder.Default
     private int loopNextStep = 0;
 
+    /** 已完成的 Loop 步骤索引，支持并行组部分成功后的跨重启恢复。 */
+    @Column(name = "loop_completed_steps", columnDefinition = "TEXT")
+    private String loopCompletedSteps;
+
     @Column(name = "run_prompt_tokens")
     private Integer runPromptTokens;
 
