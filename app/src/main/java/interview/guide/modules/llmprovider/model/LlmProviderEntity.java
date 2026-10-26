@@ -6,6 +6,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -46,6 +47,15 @@ public class LlmProviderEntity {
   private boolean supportsEmbedding;
 
   private Double temperature;
+
+  @Column(name = "input_price_per_million", precision = 20, scale = 8)
+  private BigDecimal inputPricePerMillion;
+
+  @Column(name = "output_price_per_million", precision = 20, scale = 8)
+  private BigDecimal outputPricePerMillion;
+
+  @Column(name = "price_currency", length = 3)
+  private String priceCurrency;
 
   @Column(nullable = false)
   private boolean enabled;

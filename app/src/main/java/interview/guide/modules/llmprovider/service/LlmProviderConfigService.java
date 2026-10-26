@@ -6,11 +6,14 @@ import interview.guide.common.config.LlmProviderProperties;
 import interview.guide.common.config.LlmProviderProperties.ProviderConfig;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
+import interview.guide.modules.agent.metrics.AgentProviderPricingService;
 import interview.guide.modules.llmprovider.dto.AsrConfigDTO;
 import interview.guide.modules.llmprovider.dto.AsrConfigRequest;
 import interview.guide.modules.llmprovider.dto.CreateProviderRequest;
 import interview.guide.modules.llmprovider.dto.DefaultProviderDTO;
 import interview.guide.modules.llmprovider.dto.ProviderDTO;
+import interview.guide.modules.llmprovider.dto.ProviderPricingDTO;
+import interview.guide.modules.llmprovider.dto.ProviderPricingRequest;
 import interview.guide.modules.llmprovider.dto.ProviderTestResult;
 import interview.guide.modules.llmprovider.dto.TtsConfigDTO;
 import interview.guide.modules.llmprovider.dto.TtsConfigRequest;
@@ -68,6 +71,7 @@ public class LlmProviderConfigService {
   private final VoiceInterviewProperties voiceProperties;
   private final QwenAsrService asrService;
   private final QwenTtsService ttsService;
+  private final AgentProviderPricingService pricingService;
 
   @Autowired
   public LlmProviderConfigService(
@@ -78,7 +82,8 @@ public class LlmProviderConfigService {
       ApiKeyEncryptionService encryptionService,
       VoiceInterviewProperties voiceProperties,
       QwenAsrService asrService,
-      QwenTtsService ttsService) {
+      QwenTtsService ttsService,
+      AgentProviderPricingService pricingService) {
     this.properties = properties;
     this.registry = registry;
     this.providerRepository = providerRepository;
@@ -89,6 +94,7 @@ public class LlmProviderConfigService {
     this.voiceProperties = voiceProperties;
     this.asrService = asrService;
     this.ttsService = ttsService;
+    this.pricingService = pricingService;
   }
 
   public LlmProviderConfigService(
@@ -97,7 +103,21 @@ public class LlmProviderConfigService {
       VoiceInterviewProperties voiceProperties,
       QwenAsrService asrService,
       QwenTtsService ttsService) {
-    this(properties, registry, null, null, null, voiceProperties, asrService, ttsService);
+    this(properties, registry, null, null, null, voiceProperties, asrService, ttsService, null);
+  }
+
+  /** Compatibility constructor for existing unit tests and non-Spring callers. */
+  public LlmProviderConfigService(
+      LlmProviderProperties properties,
+      LlmProviderRegistry registry,
+      LlmProviderRepository providerRepository,
+      LlmGlobalSettingRepository globalSettingRepository,
+      ApiKeyEncryptionService encryptionService,
+      VoiceInterviewProperties voiceProperties,
+      QwenAsrService asrService,
+      QwenTtsService ttsService) {
+    this(properties, registry, providerRepository, globalSettingRepository, encryptionService,
+        voiceProperties, asrService, ttsService, null);
   }
 
   @PostConstruct
@@ -149,6 +169,7 @@ public class LlmProviderConfigService {
                 .temperature(e.getValue().getTemperature())
                 .defaultChatProvider(e.getKey().equals(properties.getDefaultProvider()))
                 .defaultEmbeddingProvider(e.getKey().equals(properties.getDefaultEmbeddingProvider()))
+                .pricing(describePricing(e.getKey()))
                 .build())
             .toList();
       }
@@ -165,6 +186,7 @@ public class LlmProviderConfigService {
               .temperature(provider.getTemperature())
               .defaultChatProvider(provider.getId().equals(setting.getDefaultChatProviderId()))
               .defaultEmbeddingProvider(provider.getId().equals(setting.getDefaultEmbeddingProviderId()))
+              .pricing(describePricing(provider.getId()))
               .build())
           .toList();
     } finally {
@@ -189,6 +211,7 @@ public class LlmProviderConfigService {
             .temperature(config.getTemperature())
             .defaultChatProvider(id.equals(properties.getDefaultProvider()))
             .defaultEmbeddingProvider(id.equals(properties.getDefaultEmbeddingProvider()))
+            .pricing(describePricing(id))
             .build();
       }
       LlmGlobalSettingEntity setting = getGlobalSettingOrThrow();
@@ -204,6 +227,7 @@ public class LlmProviderConfigService {
           .temperature(provider.getTemperature())
           .defaultChatProvider(id.equals(setting.getDefaultChatProviderId()))
           .defaultEmbeddingProvider(id.equals(setting.getDefaultEmbeddingProviderId()))
+          .pricing(describePricing(id))
           .build();
     } finally {
       rwLock.readLock().unlock();
@@ -347,6 +371,9 @@ public class LlmProviderConfigService {
           .builtin(false)
           .build());
       registry.reload();
+      if (pricingService != null) {
+        pricingService.evict(providerId);
+      }
       log.info("Created provider: id={}, baseUrl={}, model={}", providerId, baseUrl, model);
     } finally {
       rwLock.writeLock().unlock();
@@ -402,6 +429,9 @@ public class LlmProviderConfigService {
 
       providerRepository.save(provider);
       registry.reload();
+      if (pricingService != null) {
+        pricingService.evict(id);
+      }
       log.info("Updated provider: id={}", id);
     } finally {
       rwLock.writeLock().unlock();
@@ -424,6 +454,9 @@ public class LlmProviderConfigService {
       getProviderEntityOrThrow(id);
 
       providerRepository.deleteById(id);
+      if (pricingService != null) {
+        pricingService.evict(id);
+      }
       registry.reload();
       log.info("Deleted provider: id={}", id);
     } finally {
@@ -548,10 +581,31 @@ public class LlmProviderConfigService {
     log.info("Manual provider reload triggered");
   }
 
+  @Transactional
+  public ProviderPricingDTO updatePricing(String id, ProviderPricingRequest request) {
+    rwLock.writeLock().lock();
+    try {
+      if (pricingService == null) {
+        throw new BusinessException(ErrorCode.PROVIDER_CONFIG_WRITE_FAILED,
+            "模型费用管理服务未初始化");
+      }
+      if (!isDatabaseBacked()) {
+        getLegacyProviderConfigOrThrow(id);
+      }
+      return pricingService.update(id, request);
+    } finally {
+      rwLock.writeLock().unlock();
+    }
+  }
+
   // ===== Internal helpers =====
 
   private boolean isDatabaseBacked() {
     return providerRepository != null && globalSettingRepository != null && encryptionService != null;
+  }
+
+  private ProviderPricingDTO describePricing(String providerId) {
+    return pricingService == null ? null : pricingService.describe(providerId);
   }
 
   private Map<String, ProviderConfig> getLegacyProvidersOrThrow() {

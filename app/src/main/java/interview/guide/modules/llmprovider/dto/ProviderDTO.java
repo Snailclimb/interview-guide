@@ -13,5 +13,6 @@ public record ProviderDTO(
     boolean supportsEmbedding,
     Double temperature,
     boolean defaultChatProvider,
-    boolean defaultEmbeddingProvider
+    boolean defaultEmbeddingProvider,
+    ProviderPricingDTO pricing
 ) {}

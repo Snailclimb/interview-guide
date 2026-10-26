@@ -29,9 +29,9 @@
 验收：指标能在 `/actuator/prometheus` 查询；一次成功、重试、备用 Provider 和失败请求都有可区分的调用/耗时统计；缺少 Provider usage 时请求仍正常完成；正式 Agent 验收脚本能读取 `runUsage` 摘要和长期记忆摘要。
 
 当前实现先支持 `app.ai.agent.cost.providers.<provider>` 的配置文件单价，字段为
-`input-per-million`、`output-per-million` 和 `currency`。数据库 Provider 管理页暂不
-增加价格字段，避免把价格变更和 API Key、Provider 生效逻辑绑在同一个迁移中；确认
-指标和报表口径稳定后再接入管理页。
+`input-per-million`、`output-per-million` 和 `currency`。模型管理页现在也支持按 Provider
+保存数据库价格覆盖；数据库覆盖优先，清除覆盖后自动回退到配置文件单价。费用仍按每百万
+Token 计算，未配置时只记录 Token，不猜测费用。
 
 当前已增加离线质量门禁：`AgentQualityEvaluator` 对完整性、事实禁用项、RAG 引用边界、
 Markdown 换行/代码围栏和 Loop 步骤预算做可重复检查；`agent-eval/dataset-v1.jsonl`
@@ -76,10 +76,9 @@ Markdown 换行/代码围栏和 Loop 步骤预算做可重复检查；`agent-eva
 ## 当前分支交付边界
 
 当前集成验收分支完成阶段一的“Token/Provider/模型性能观测”、运行用量摘要、可选单价
-费用指标和真实样本报告入口；阶段二的有边界 Loop、逐步骤检查点、步骤可观测性和远程
-重启恢复也已完成验收；阶段三已增加轻量长期记忆项管理、岗位过滤、默认 180 天过期策略
-和页面/断线状态恢复。
-价格管理页和 Loop 并行执行仍属于后续工作，不把未采集的数据当作已完成。
+费用指标、价格管理页和真实样本报告入口；阶段二的有边界 Loop、逐步骤检查点、步骤可观测性
+和远程重启恢复也已完成验收；阶段三已增加轻量长期记忆项管理、岗位过滤、默认 180 天过期策略
+和页面/断线状态恢复。Loop 并行执行仍属于后续工作，不把未采集的数据当作已完成。
 
 ## 本轮可靠性修复
 

@@ -9,6 +9,8 @@ import type {
   TtsConfig,
   AsrConfigRequest,
   TtsConfigRequest,
+  ProviderPricing,
+  ProviderPricingRequest,
 } from '../types/llmProvider';
 
 export const llmProviderApi = {
@@ -21,6 +23,9 @@ export const llmProviderApi = {
 
   update: (id: string, data: UpdateProviderRequest) =>
     request.put<void>(`/api/llm-provider/${id}`, data),
+
+  updatePricing: (id: string, data: ProviderPricingRequest) =>
+    request.put<ProviderPricing>(`/api/llm-provider/${id}/pricing`, data),
 
   delete: (id: string) =>
     request.delete<void>(`/api/llm-provider/${id}`),

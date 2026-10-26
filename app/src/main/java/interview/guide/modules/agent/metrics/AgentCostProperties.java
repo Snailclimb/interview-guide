@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>单价是可选配置，单位为每百万 Token。默认不配置任何单价，因此系统只
  * 记录 Provider 返回的 Token，不会根据未知价格猜测费用。Provider 配置暂时
- * 通过 application.yml / 环境变量维护，后续再接入模型管理页。</p>
+ * 通过 application.yml / 环境变量维护；模型管理页可以写入数据库覆盖值。</p>
  */
 @Data
 @Component
@@ -44,7 +44,7 @@ public class AgentCostProperties {
         private String currency = "USD";
 
         public boolean configured() {
-            return positive(inputPerMillion) || positive(outputPerMillion);
+            return inputPerMillion != null || outputPerMillion != null;
         }
 
         public BigDecimal calculate(int promptTokens, int completionTokens) {
@@ -55,8 +55,5 @@ public class AgentCostProperties {
                 .divide(BigDecimal.valueOf(1_000_000));
         }
 
-        private boolean positive(BigDecimal value) {
-            return value != null && value.signum() > 0;
-        }
     }
 }

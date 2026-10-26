@@ -9,6 +9,21 @@ export interface ProviderItem {
   temperature: number | null;
   defaultChatProvider: boolean;
   defaultEmbeddingProvider: boolean;
+  pricing: ProviderPricing | null;
+}
+
+export interface ProviderPricing {
+  inputPerMillion: number | null;
+  outputPerMillion: number | null;
+  currency: string;
+  configured: boolean;
+  source: 'database' | 'config' | 'none' | string;
+}
+
+export interface ProviderPricingRequest {
+  inputPerMillion: number | null;
+  outputPerMillion: number | null;
+  currency: string;
 }
 
 export interface CreateProviderRequest {

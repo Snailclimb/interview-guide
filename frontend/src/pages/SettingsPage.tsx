@@ -157,6 +157,10 @@ export default function SettingsPage() {
   const [formEmbeddingDimensions, setFormEmbeddingDimensions] = useState('1024');
   const [formSupportsEmbedding, setFormSupportsEmbedding] = useState(false);
   const [formTemperature, setFormTemperature] = useState('');
+  const [formInputPrice, setFormInputPrice] = useState('');
+  const [formOutputPrice, setFormOutputPrice] = useState('');
+  const [formPriceCurrency, setFormPriceCurrency] = useState('USD');
+  const [pricingDirty, setPricingDirty] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [showEmbeddingDropdown, setShowEmbeddingDropdown] = useState(false);
@@ -247,6 +251,11 @@ export default function SettingsPage() {
     setFormEmbeddingModel('');
     setFormEmbeddingDimensions('1024');
     setFormSupportsEmbedding(false);
+    setFormTemperature('');
+    setFormInputPrice('');
+    setFormOutputPrice('');
+    setFormPriceCurrency('USD');
+    setPricingDirty(false);
     setShowApiKey(false);
     setShowModal(true);
   };
@@ -261,6 +270,10 @@ export default function SettingsPage() {
     setFormEmbeddingDimensions(provider.embeddingDimensions != null ? String(provider.embeddingDimensions) : '1024');
     setFormSupportsEmbedding(provider.supportsEmbedding);
     setFormTemperature(provider.temperature != null ? String(provider.temperature) : '');
+    setFormInputPrice(provider.pricing?.inputPerMillion != null ? String(provider.pricing.inputPerMillion) : '');
+    setFormOutputPrice(provider.pricing?.outputPerMillion != null ? String(provider.pricing.outputPerMillion) : '');
+    setFormPriceCurrency(provider.pricing?.currency ?? 'USD');
+    setPricingDirty(false);
     setShowApiKey(false);
     setShowModal(true);
   };
@@ -268,6 +281,26 @@ export default function SettingsPage() {
   const closeModal = () => {
     setShowModal(false);
     setEditingProvider(null);
+  };
+
+  const buildPricingRequest = () => {
+    const parsePrice = (value: string, label: string) => {
+      if (!value.trim()) return null;
+      const parsed = Number(value.trim());
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new Error(`${label}必须是非负数字`);
+      }
+      return parsed;
+    };
+    const currency = formPriceCurrency.trim().toUpperCase() || 'USD';
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      throw new Error('币种必须是 3 位大写字母，例如 USD 或 CNY');
+    }
+    return {
+      inputPerMillion: parsePrice(formInputPrice, '输入价格'),
+      outputPerMillion: parsePrice(formOutputPrice, '输出价格'),
+      currency,
+    };
   };
 
   // --- CRUD handlers ---
@@ -303,6 +336,9 @@ export default function SettingsPage() {
         if (!isNaN(temp)) data.temperature = temp;
       }
       await llmProviderApi.create(data);
+      if (pricingDirty) {
+        await llmProviderApi.updatePricing(formId.trim(), buildPricingRequest());
+      }
       showToast('Provider 创建成功');
       closeModal();
       await loadData();
@@ -348,6 +384,9 @@ export default function SettingsPage() {
         if (!isNaN(temp)) data.temperature = temp;
       }
       await llmProviderApi.update(editingProvider.id, data);
+      if (pricingDirty) {
+        await llmProviderApi.updatePricing(editingProvider.id, buildPricingRequest());
+      }
       showToast('Provider 更新成功');
       closeModal();
       await loadData();
@@ -649,6 +688,18 @@ export default function SettingsPage() {
                         {provider.temperature != null && (
                           <ConfigRow label="温度" value={provider.temperature} />
                         )}
+                        <ConfigRow
+                          label="模型费用"
+                          value={provider.pricing?.configured
+                            ? `${provider.pricing.inputPerMillion ?? 0}/${provider.pricing.outputPerMillion ?? 0} ${provider.pricing.currency}/百万`
+                            : '未配置'}
+                          title={provider.pricing?.source === 'database'
+                            ? '来自设置页保存的数据库价格'
+                            : provider.pricing?.source === 'config'
+                              ? '来自 application.yml / 环境变量配置'
+                              : '未配置价格，不统计费用'}
+                          emphasis={provider.pricing?.configured === true}
+                        />
                         <ConfigRow
                           label="API Key"
                           value={provider.maskedApiKey}
@@ -1143,6 +1194,68 @@ export default function SettingsPage() {
                         placeholder:text-slate-400 focus:outline-none focus:ring-2
                         focus:ring-primary-500/50 focus:border-primary-400 transition-shadow"
                     />
+                  </div>
+
+                  {/* Model pricing */}
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-600 dark:bg-slate-900/30">
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                          模型费用
+                        </label>
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                          按每百万 Token 计价，用于 Agent 用量统计；全部留空则使用配置文件价格。
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormInputPrice('');
+                          setFormOutputPrice('');
+                          setPricingDirty(true);
+                        }}
+                        className="shrink-0 text-xs font-medium text-slate-500 hover:text-primary-600 dark:text-slate-400 dark:hover:text-primary-400"
+                      >
+                        清除覆盖
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <label className="text-xs text-slate-600 dark:text-slate-300">
+                        输入 / 百万
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.000001"
+                          value={formInputPrice}
+                          onChange={(e) => { setFormInputPrice(e.target.value); setPricingDirty(true); }}
+                          placeholder="例如 2"
+                          className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-500/50 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                        />
+                      </label>
+                      <label className="text-xs text-slate-600 dark:text-slate-300">
+                        输出 / 百万
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.000001"
+                          value={formOutputPrice}
+                          onChange={(e) => { setFormOutputPrice(e.target.value); setPricingDirty(true); }}
+                          placeholder="例如 8"
+                          className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-500/50 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                        />
+                      </label>
+                      <label className="text-xs text-slate-600 dark:text-slate-300">
+                        币种
+                        <input
+                          type="text"
+                          maxLength={3}
+                          value={formPriceCurrency}
+                          onChange={(e) => { setFormPriceCurrency(e.target.value.toUpperCase()); setPricingDirty(true); }}
+                          placeholder="USD"
+                          className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm uppercase text-slate-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-500/50 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                        />
+                      </label>
+                    </div>
                   </div>
                 </div>
 

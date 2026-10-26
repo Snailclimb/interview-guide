@@ -7,6 +7,8 @@ import interview.guide.modules.llmprovider.dto.AsrConfigRequest;
 import interview.guide.modules.llmprovider.dto.CreateProviderRequest;
 import interview.guide.modules.llmprovider.dto.DefaultProviderDTO;
 import interview.guide.modules.llmprovider.dto.ProviderDTO;
+import interview.guide.modules.llmprovider.dto.ProviderPricingDTO;
+import interview.guide.modules.llmprovider.dto.ProviderPricingRequest;
 import interview.guide.modules.llmprovider.dto.ProviderTestResult;
 import interview.guide.modules.llmprovider.dto.TtsConfigDTO;
 import interview.guide.modules.llmprovider.dto.TtsConfigRequest;
@@ -59,6 +61,14 @@ public class LlmProviderController {
       @RequestBody UpdateProviderRequest request) {
     configService.updateProvider(id, request);
     return Result.success();
+  }
+
+  @PutMapping("/{id}/pricing")
+  @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
+  public Result<ProviderPricingDTO> updateProviderPricing(
+      @PathVariable String id,
+      @RequestBody ProviderPricingRequest request) {
+    return Result.success(configService.updatePricing(id, request));
   }
 
   @DeleteMapping("/{id}")

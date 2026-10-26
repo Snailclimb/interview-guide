@@ -41,16 +41,20 @@ public class AgentMetrics {
     private final MeterRegistry registry;
     private final boolean enabled;
     private final AgentCostProperties costProperties;
+    private final AgentProviderPricingService pricingService;
 
     @org.springframework.beans.factory.annotation.Autowired
     public AgentMetrics(
         ObjectProvider<MeterRegistry> registryProvider,
         AgentCostProperties costProperties,
+        @org.springframework.beans.factory.annotation.Autowired(required = false)
+        AgentProviderPricingService pricingService,
         @Value("${app.ai.agent.metrics-enabled:true}") boolean metricsEnabled
     ) {
         this.registry = registryProvider == null ? null : registryProvider.getIfAvailable();
         this.enabled = metricsEnabled && this.registry != null;
         this.costProperties = costProperties == null ? new AgentCostProperties() : costProperties;
+        this.pricingService = pricingService;
     }
 
     /** 保留轻量构造方式，便于单元测试和没有 Spring 容器的调用方。 */
@@ -58,7 +62,16 @@ public class AgentMetrics {
         ObjectProvider<MeterRegistry> registryProvider,
         boolean metricsEnabled
     ) {
-        this(registryProvider, new AgentCostProperties(), metricsEnabled);
+        this(registryProvider, new AgentCostProperties(), null, metricsEnabled);
+    }
+
+    /** Constructor retained for metric tests and non-Spring callers with config pricing. */
+    public AgentMetrics(
+        ObjectProvider<MeterRegistry> registryProvider,
+        AgentCostProperties costProperties,
+        boolean metricsEnabled
+    ) {
+        this(registryProvider, costProperties, null, metricsEnabled);
     }
 
     public boolean enabled() {
@@ -192,8 +205,9 @@ public class AgentMetrics {
             return;
         }
         TokenUsage usage = tracker.usage.get();
+        AgentCostProperties.Pricing pricing = pricingFor(tracker.provider);
         if (tracker.runTracker != null) {
-            tracker.runTracker.record(tracker, usage, costProperties);
+            tracker.runTracker.record(tracker, usage, pricing);
         }
         if (!enabled) {
             return;
@@ -217,7 +231,7 @@ public class AgentMetrics {
         recordTokens(tracker, "prompt", usage.promptTokens());
         recordTokens(tracker, "completion", usage.completionTokens());
         recordTokens(tracker, "total", usage.totalTokens());
-        recordCost(tracker, usage);
+        recordCost(tracker, usage, pricing);
     }
 
     private void recordTokens(ModelCallTracker tracker, String direction, int count) {
@@ -229,11 +243,14 @@ public class AgentMetrics {
         }
     }
 
-    private void recordCost(ModelCallTracker tracker, TokenUsage usage) {
+    private void recordCost(
+        ModelCallTracker tracker,
+        TokenUsage usage,
+        AgentCostProperties.Pricing pricing
+    ) {
         if (!costProperties.isEnabled()) {
             return;
         }
-        AgentCostProperties.Pricing pricing = costProperties.find(tracker.provider);
         if (pricing == null || !pricing.configured()) {
             return;
         }
@@ -243,6 +260,10 @@ public class AgentMetrics {
             "model", tracker.model,
             "currency", safeTag(pricing.getCurrency(), "USD"))
             .increment(cost.doubleValue());
+    }
+
+    private AgentCostProperties.Pricing pricingFor(String providerId) {
+        return pricingService == null ? costProperties.find(providerId) : pricingService.find(providerId);
     }
 
     private int nonNegative(Integer value) {
@@ -330,7 +351,7 @@ public class AgentMetrics {
         private void record(
             ModelCallTracker tracker,
             TokenUsage usage,
-            AgentCostProperties costProperties
+            AgentCostProperties.Pricing pricing
         ) {
             modelCalls.incrementAndGet();
             durationMillis.add(Math.max(0, (System.nanoTime() - tracker.startedNanos) / 1_000_000));
@@ -343,8 +364,6 @@ public class AgentMetrics {
             completionTokens.add(usage.completionTokens());
             totalTokens.add(usage.totalTokens() > 0
                 ? usage.totalTokens() : usage.promptTokens() + usage.completionTokens());
-            AgentCostProperties.Pricing pricing = costProperties == null
-                ? null : costProperties.find(tracker.provider);
             if (pricing != null && pricing.configured()) {
                 currency.set(pricing.getCurrency());
                 BigDecimal callCost = pricing.calculate(usage.promptTokens(), usage.completionTokens());
