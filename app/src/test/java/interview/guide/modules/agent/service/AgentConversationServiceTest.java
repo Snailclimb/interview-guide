@@ -43,6 +43,9 @@ class AgentConversationServiceTest {
     @Mock
     private ObjectMapper objectMapper;
 
+    @Mock
+    private AgentAuditService auditService;
+
     @InjectMocks
     private AgentConversationService service;
 
@@ -446,6 +449,50 @@ class AgentConversationServiceTest {
         assertThat(first.interviewSessionId()).isEqualTo("interview-1");
         assertThat(first.title()).isEqualTo("复盘线程");
         assertThat(second.title()).isEqualTo("训练线程");
+    }
+
+    @Test
+    @DisplayName("会话生命周期写入低敏审计，但不把标题或消息正文作为审计资源")
+    void auditsConversationLifecycleWithOnlyStableIdentifiers() {
+        when(sessionRepository.save(any(AgentChatSessionEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AgentConversationSummary created = service.createConversation(
+            "interview-1", "Redis 复盘线程", "browser-a"
+        );
+        AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+            .interviewSessionId("interview-1")
+            .agentSessionId(created.agentSessionId())
+            .ownerKey("browser-a")
+            .memoryKey("browser-a")
+            .title("Redis 复盘线程")
+            .runStatus(AgentRunStatus.IDLE)
+            .build();
+        when(sessionRepository.findByAgentSessionId(created.agentSessionId()))
+            .thenReturn(Optional.of(session));
+        when(sessionRepository.findByAgentSessionIdForUpdate(created.agentSessionId()))
+            .thenReturn(Optional.of(session));
+
+        service.renameConversation(
+            "interview-1", created.agentSessionId(), "新的复盘线程", "browser-a"
+        );
+        service.archiveConversation("interview-1", created.agentSessionId(), "browser-a");
+
+        var actions = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(auditService, org.mockito.Mockito.times(3)).recordQuietly(
+            org.mockito.ArgumentMatchers.eq("browser-a"),
+            org.mockito.ArgumentMatchers.eq("interview-1"),
+            org.mockito.ArgumentMatchers.eq(created.agentSessionId()),
+            org.mockito.ArgumentMatchers.isNull(),
+            actions.capture(),
+            org.mockito.ArgumentMatchers.eq("agent-session"),
+            org.mockito.ArgumentMatchers.eq(created.agentSessionId()),
+            org.mockito.ArgumentMatchers.eq("success")
+        );
+
+        assertThat(actions.getAllValues()).containsExactly(
+            "CONVERSATION_CREATED", "CONVERSATION_RENAMED", "CONVERSATION_ARCHIVED"
+        );
     }
 
     @Test
