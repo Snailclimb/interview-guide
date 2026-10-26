@@ -58,23 +58,23 @@ export function removeLastRunMessages(
     ? messages.filter((message) => message.id !== ids.userMessageId && message.id !== ids.assistantMessageId)
     : [...messages];
 
-  if (!ids) {
-    const lastIndex = remaining.length - 1;
-    const previousIndex = lastIndex - 1;
-    if (
-      lastIndex >= 1
-      && remaining[lastIndex].role === 'assistant'
-      && remaining[previousIndex].role === 'user'
-      && remaining[previousIndex].content === request.message
-    ) {
-      remaining = remaining.slice(0, previousIndex);
-    } else if (
-      lastIndex >= 0
-      && remaining[lastIndex].role === 'user'
-      && remaining[lastIndex].content === request.message
-    ) {
-      remaining = remaining.slice(0, lastIndex);
-    }
+  // 页面恢复会重新生成展示消息 ID；即使持久化前的临时 ID 已失效，
+  // 重试仍应删除末尾那一对失败请求，避免把错误提示再次留在聊天历史中。
+  const lastIndex = remaining.length - 1;
+  const previousIndex = lastIndex - 1;
+  if (
+    lastIndex >= 1
+    && remaining[lastIndex].role === 'assistant'
+    && remaining[previousIndex].role === 'user'
+    && remaining[previousIndex].content === request.message
+  ) {
+    remaining = remaining.slice(0, previousIndex);
+  } else if (
+    lastIndex >= 0
+    && remaining[lastIndex].role === 'user'
+    && remaining[lastIndex].content === request.message
+  ) {
+    remaining = remaining.slice(0, lastIndex);
   }
 
   return remaining;
