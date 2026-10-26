@@ -356,7 +356,8 @@ public class InterviewAgentService {
                         retryProperties.getLoopMaxSteps(),
                         retryProperties.getLoopStepRetryAttempts(),
                         retryProperties.getLoopStepTimeoutMillis(),
-                        retryProperties.getLoopTotalTimeoutMillis()
+                        retryProperties.getLoopTotalTimeoutMillis(),
+                        retryProperties.getLoopMaxParallelSteps()
                     );
                     int resumeIndex = resumeState == null
                         ? 0 : Math.max(0, resumeState.nextStepIndex());

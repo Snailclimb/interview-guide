@@ -52,6 +52,11 @@ public class AgentRetryProperties {
     @Max(value = 3, message = "Agent Loop 步骤数不能超过 3")
     private int loopMaxSteps = 3;
 
+    /** 相邻且明确标记为独立只读步骤时允许的最大并行数。 */
+    @Min(value = 1, message = "Agent Loop 并行步骤数必须大于 0")
+    @Max(value = 3, message = "Agent Loop 并行步骤数不能超过 3")
+    private int loopMaxParallelSteps = 2;
+
     /** 单个 Loop 步骤的最大执行时间（毫秒）。 */
     @Min(value = 100, message = "Agent Loop 步骤超时不能小于 100 毫秒")
     @Max(value = 60000, message = "Agent Loop 步骤超时不能超过 60000 毫秒")

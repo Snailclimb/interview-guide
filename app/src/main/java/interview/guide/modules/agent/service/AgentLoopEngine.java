@@ -3,6 +3,8 @@ package interview.guide.modules.agent.service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -106,8 +108,29 @@ public class AgentLoopEngine {
         long startedNanos = System.nanoTime();
         String termination = "completed";
         int nextStepIndex = first;
-        for (int index = first; index < last; index++) {
-            String step = safeSteps.get(index);
+        int index = first;
+        while (index < last) {
+            int groupEnd = parallelGroupEnd(safeSteps, index, last, safePolicy.maxParallelSteps());
+            if (groupEnd - index > 1) {
+                ParallelGroupResult group = executeParallelGroup(
+                    context, safeSteps, index, groupEnd, safePolicy, startedNanos, safeExecutor
+                );
+                iterations.addAll(group.iterations());
+                if (group.failed()) {
+                    group.iterations().stream()
+                        .filter(item -> !"completed".equals(item.status()))
+                        .forEach(item -> notifyProgress(progressListener, item));
+                    termination = group.timeout() ? "step_timeout" : "step_failed";
+                    nextStepIndex = group.nextStepIndex();
+                    break;
+                }
+                group.iterations().forEach(item -> notifyProgress(progressListener, item));
+                nextStepIndex = groupEnd;
+                index = groupEnd;
+                continue;
+            }
+
+            String step = cleanAction(safeSteps.get(index));
             long remainingMillis = safePolicy.remainingMillis(startedNanos);
             if (remainingMillis <= 0) {
                 termination = "total_timeout";
@@ -164,6 +187,7 @@ public class AgentLoopEngine {
             iterations.add(completedIteration);
             notifyProgress(progressListener, completedIteration);
             nextStepIndex = index + 1;
+            index++;
         }
         if ("completed".equals(termination) && nextStepIndex < safeSteps.size()) {
             termination = "step_budget";
@@ -172,6 +196,139 @@ public class AgentLoopEngine {
             termination = "empty_plan";
         }
         return new LoopResult(List.copyOf(iterations), termination, nextStepIndex);
+    }
+
+    private int parallelGroupEnd(
+        List<String> steps, int start, int last, int maxParallelSteps
+    ) {
+        if (maxParallelSteps <= 1 || !isParallelStep(steps.get(start))) {
+            return start + 1;
+        }
+        int end = start;
+        while (end < last && end - start < maxParallelSteps && isParallelStep(steps.get(end))) {
+            end++;
+        }
+        return end;
+    }
+
+    private boolean isParallelStep(String action) {
+        return action != null && action.trim().startsWith("[parallel]");
+    }
+
+    private String cleanAction(String action) {
+        if (!isParallelStep(action)) {
+            return action;
+        }
+        return action.trim().substring("[parallel]".length()).trim();
+    }
+
+    private ParallelGroupResult executeParallelGroup(
+        AgentContextService.AgentContext context,
+        List<String> steps,
+        int start,
+        int end,
+        ExecutionPolicy policy,
+        long loopStartedNanos,
+        StepExecutor executor
+    ) {
+        List<Callable<StepOutcome>> tasks = new ArrayList<>();
+        for (int index = start; index < end; index++) {
+            final int stepIndex = index;
+            tasks.add(() -> executeStepWithRetry(
+                context, cleanAction(steps.get(stepIndex)), stepIndex, policy, loopStartedNanos, executor
+            ));
+        }
+
+        List<Future<StepOutcome>> futures = new ArrayList<>();
+        for (Callable<StepOutcome> task : tasks) {
+            futures.add(PARALLEL_EXECUTOR.submit(task));
+        }
+        long remainingMillis = policy.remainingMillis(loopStartedNanos);
+        long deadlineNanos = System.nanoTime()
+            + TimeUnit.MILLISECONDS.toNanos(Math.max(1, remainingMillis));
+        List<StepOutcome> outcomes = new ArrayList<>();
+        for (int offset = 0; offset < futures.size(); offset++) {
+            Future<StepOutcome> future = futures.get(offset);
+            int stepIndex = start + offset;
+            try {
+                long waitMillis = Math.max(1, TimeUnit.NANOSECONDS.toMillis(
+                    Math.max(1, deadlineNanos - System.nanoTime())
+                ));
+                outcomes.add(future.get(waitMillis, TimeUnit.MILLISECONDS));
+            } catch (TimeoutException | CancellationException error) {
+                future.cancel(true);
+                outcomes.add(StepOutcome.failure(
+                    stepIndex, cleanAction(steps.get(stepIndex)), 1, true, error
+                ));
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                future.cancel(true);
+                outcomes.add(StepOutcome.failure(
+                    stepIndex, cleanAction(steps.get(stepIndex)), 1, true, error
+                ));
+            } catch (ExecutionException error) {
+                Throwable cause = error.getCause() == null ? error : error.getCause();
+                outcomes.add(StepOutcome.failure(
+                    stepIndex, cleanAction(steps.get(stepIndex)), 1,
+                    cause instanceof LoopStepTimeoutException, cause
+                ));
+            }
+        }
+        futures.forEach(future -> {
+            if (!future.isDone()) {
+                future.cancel(true);
+            }
+        });
+
+        List<LoopIteration> iterations = outcomes.stream()
+            .sorted(java.util.Comparator.comparingInt(StepOutcome::index))
+            .map(StepOutcome::iteration)
+            .toList();
+        int next = outcomes.stream()
+            .filter(outcome -> !outcome.success())
+            .mapToInt(StepOutcome::index)
+            .min()
+            .orElse(end);
+        boolean failed = outcomes.stream().anyMatch(outcome -> !outcome.success());
+        boolean timeout = outcomes.stream().anyMatch(StepOutcome::timeout);
+        return new ParallelGroupResult(iterations, failed, timeout, next);
+    }
+
+    private StepOutcome executeStepWithRetry(
+        AgentContextService.AgentContext context,
+        String action,
+        int index,
+        ExecutionPolicy policy,
+        long loopStartedNanos,
+        StepExecutor executor
+    ) {
+        int attempts = 0;
+        Throwable lastError = null;
+        long stepStartedNanos = System.nanoTime();
+        while (attempts < policy.maxStepRetries() + 1) {
+            attempts++;
+            try {
+                long remaining = policy.remainingMillis(loopStartedNanos);
+                if (remaining <= 0) {
+                    throw new LoopStepTimeoutException();
+                }
+                String observation = executeWithTimeout(
+                    executor, context, action, index,
+                    Math.min(policy.stepTimeoutMillis(), remaining)
+                );
+                if (observation == null || observation.isBlank()) {
+                    throw new IllegalStateException("empty_observation");
+                }
+                return StepOutcome.success(index, action, observation, attempts, elapsedMillis(stepStartedNanos));
+            } catch (Throwable error) {
+                lastError = error;
+                if (policy.remainingMillis(loopStartedNanos) <= 0) {
+                    break;
+                }
+            }
+        }
+        boolean timeout = lastError instanceof LoopStepTimeoutException;
+        return StepOutcome.failure(index, action, attempts, timeout, lastError, elapsedMillis(stepStartedNanos));
     }
 
     private void notifyProgress(Consumer<LoopIteration> progressListener, LoopIteration iteration) {
@@ -217,6 +374,10 @@ public class AgentLoopEngine {
             return future.get(timeoutMillis, TimeUnit.MILLISECONDS);
         } catch (TimeoutException error) {
             future.cancel(true);
+            throw new LoopStepTimeoutException();
+        } catch (InterruptedException error) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
             throw new LoopStepTimeoutException();
         } catch (ExecutionException error) {
             Throwable cause = error.getCause();
@@ -296,7 +457,8 @@ public class AgentLoopEngine {
         int maxSteps,
         int maxStepRetries,
         long stepTimeoutMillis,
-        long totalTimeoutMillis
+        long totalTimeoutMillis,
+        int maxParallelSteps
     ) {
         private static final long DEFAULT_STEP_TIMEOUT_MILLIS = 5_000;
         private static final long DEFAULT_TOTAL_TIMEOUT_MILLIS = 15_000;
@@ -306,11 +468,18 @@ public class AgentLoopEngine {
             maxStepRetries = Math.max(0, maxStepRetries);
             stepTimeoutMillis = Math.max(1, stepTimeoutMillis);
             totalTimeoutMillis = Math.max(stepTimeoutMillis, totalTimeoutMillis);
+            maxParallelSteps = Math.max(1, maxParallelSteps);
+        }
+
+        public ExecutionPolicy(
+            int maxSteps, int maxStepRetries, long stepTimeoutMillis, long totalTimeoutMillis
+        ) {
+            this(maxSteps, maxStepRetries, stepTimeoutMillis, totalTimeoutMillis, 1);
         }
 
         public static ExecutionPolicy defaults(int maxSteps) {
             return new ExecutionPolicy(
-                maxSteps, 0, DEFAULT_STEP_TIMEOUT_MILLIS, DEFAULT_TOTAL_TIMEOUT_MILLIS
+                maxSteps, 0, DEFAULT_STEP_TIMEOUT_MILLIS, DEFAULT_TOTAL_TIMEOUT_MILLIS, 1
             );
         }
 
@@ -324,6 +493,52 @@ public class AgentLoopEngine {
         4,
         new LoopThreadFactory()
     );
+
+    private static final ExecutorService PARALLEL_EXECUTOR = Executors.newFixedThreadPool(
+        3,
+        runnable -> {
+            Thread thread = new Thread(runnable, "agent-loop-parallel-step");
+            thread.setDaemon(true);
+            return thread;
+        }
+    );
+
+    private record ParallelGroupResult(
+        List<LoopIteration> iterations,
+        boolean failed,
+        boolean timeout,
+        int nextStepIndex
+    ) {
+    }
+
+    private record StepOutcome(
+        int index,
+        LoopIteration iteration,
+        boolean success,
+        boolean timeout
+    ) {
+        static StepOutcome success(int index, String action, String observation, int attempts, long duration) {
+            return new StepOutcome(index,
+                new LoopIteration(index + 1, action, observation, "completed", attempts, duration, null),
+                true, false);
+        }
+
+        static StepOutcome failure(int index, String action, int attempts, boolean timeout, Throwable error) {
+            return failure(index, action, attempts, timeout, error, 0);
+        }
+
+        static StepOutcome failure(
+            int index, String action, int attempts, boolean timeout, Throwable error, long duration
+        ) {
+            String errorName = error == null ? "unknown" : error.getClass().getSimpleName();
+            String status = timeout ? "timeout" : "failed";
+            String reason = error == null ? "unknown" : errorName + ": " + error.getMessage();
+            return new StepOutcome(index,
+                new LoopIteration(index + 1, action,
+                    "步骤执行失败（" + errorName + "）", status, attempts, duration, reason),
+                false, timeout);
+        }
+    }
 
     private static final class LoopThreadFactory implements ThreadFactory {
         private int sequence;

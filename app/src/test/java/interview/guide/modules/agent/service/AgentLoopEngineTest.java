@@ -4,6 +4,8 @@ import interview.guide.modules.agent.model.AgentSource;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -119,6 +121,42 @@ class AgentLoopEngineTest {
         assertThat(checkpoints.get(1).failureReason()).contains("IllegalStateException");
         assertThat(result.trace()).contains("耗时：").contains("失败原因：");
         assertThat(result.nextStepIndex()).isEqualTo(1);
+    }
+
+    @Test
+    void runsOnlyExplicitlyMarkedAdjacentStepsInParallel() {
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        AgentLoopEngine.LoopResult result = new AgentLoopEngine().execute(
+            context(),
+            List.of("[parallel] 核对 Skill", "[parallel] 核对 RAG", "汇总建议"),
+            new AgentLoopEngine.ExecutionPolicy(3, 0, 1_000, 3_000, 2),
+            (ignored, action, index) -> {
+                if (index < 2) {
+                    barrier.await(500, TimeUnit.MILLISECONDS);
+                }
+                return "已完成 " + action;
+            }
+        );
+
+        assertThat(result.completed()).isTrue();
+        assertThat(result.iterations()).extracting(AgentLoopEngine.LoopIteration::action)
+            .containsExactly("核对 Skill", "核对 RAG", "汇总建议");
+        assertThat(result.iterations().get(0).status()).isEqualTo("completed");
+    }
+
+    @Test
+    void parallelFailureKeepsResumeIndexAtFirstFailedStep() {
+        AgentLoopEngine.LoopResult result = new AgentLoopEngine().execute(
+            context(),
+            List.of("[parallel] 成功读取", "[parallel] 失败读取", "汇总建议"),
+            new AgentLoopEngine.ExecutionPolicy(3, 0, 1_000, 3_000, 2),
+            (ignored, action, index) -> index == 1 ? throwFailure() : "完成 " + action
+        );
+
+        assertThat(result.completed()).isFalse();
+        assertThat(result.termination()).isEqualTo("step_failed");
+        assertThat(result.nextStepIndex()).isEqualTo(1);
+        assertThat(result.iterations()).hasSize(2);
     }
 
     private AgentContextService.AgentContext context() {

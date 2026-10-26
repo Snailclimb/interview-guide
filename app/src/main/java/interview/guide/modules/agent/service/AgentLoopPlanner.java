@@ -81,6 +81,7 @@ public class AgentLoopPlanner {
         String prompt = """
             你是 AI 面试教练的规划器。请只输出最多 3 条短步骤，不要输出隐藏推理、长篇解释或 Markdown 标题。
             规划必须围绕：读取面试报告、必要时使用只读 Skill/RAG 资料、给出可执行回答。
+            只有相邻且互不依赖的只读步骤才可以在步骤开头加 [parallel] 标记；不要为了凑并行而标记有先后依赖的步骤。
             当前目标：%s
             当前请求：%s
             可用 Skill：%s
