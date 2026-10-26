@@ -13,6 +13,7 @@ import interview.guide.modules.knowledgebase.model.KnowledgeBaseInterviewCapacit
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionEntity;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionFollowUpDTO;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseQuestionStatus;
+import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseQuestionRepository;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
 import lombok.RequiredArgsConstructor;
@@ -49,14 +50,20 @@ public class KnowledgeBaseInterviewService {
   private final InterviewSessionService interviewSessionService;
   private final ObjectMapper objectMapper;
 
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private KnowledgeBaseAccessService accessService;
+
   private record QuestionSource(KnowledgeBaseQuestionEntity question,
                                 List<String> keyPoints,
                                 List<KnowledgeBaseQuestionFollowUpDTO> followUps) {
   }
 
   public InterviewSessionDTO createSession(CreateKnowledgeBaseInterviewRequest request) {
-    knowledgeBaseRepository.findById(request.knowledgeBaseId())
+    KnowledgeBaseEntity knowledgeBase = knowledgeBaseRepository.findById(request.knowledgeBaseId())
         .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
+    if (accessService != null) {
+      accessService.requireReadable(knowledgeBase);
+    }
 
     String category = trimToNull(request.category());
     String difficulty = normalizeDifficulty(request.difficulty());
@@ -103,8 +110,11 @@ public class KnowledgeBaseInterviewService {
       String difficulty,
       int mainQuestionCount
   ) {
-    knowledgeBaseRepository.findById(knowledgeBaseId)
+    KnowledgeBaseEntity knowledgeBase = knowledgeBaseRepository.findById(knowledgeBaseId)
         .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
+    if (accessService != null) {
+      accessService.requireReadable(knowledgeBase);
+    }
 
     String normalizedCategory = trimToNull(category);
     String normalizedDifficulty = normalizeDifficulty(difficulty);

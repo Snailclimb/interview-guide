@@ -47,12 +47,16 @@ public class KnowledgeBaseQuestionService {
   private final QuestionGenStreamProducer questionGenStreamProducer;
   private final QuestionGenerationStateService questionGenerationStateService;
 
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private KnowledgeBaseAccessService accessService;
+
   @Transactional(readOnly = true)
   public List<KnowledgeBaseQuestionDTO> listQuestions(Long knowledgeBaseId,
                                                       KnowledgeBaseQuestionStatus status,
                                                       String category,
                                                       String difficulty,
                                                       String keyword) {
+    requireReadableIfAuthenticated(knowledgeBaseId);
     List<KnowledgeBaseQuestionEntity> questions = status == null
         ? questionRepository.findByKnowledgeBase_IdOrderByUpdatedAtDesc(knowledgeBaseId)
         : questionRepository.findByKnowledgeBase_IdAndStatusOrderByUpdatedAtDesc(knowledgeBaseId, status);
@@ -73,6 +77,7 @@ public class KnowledgeBaseQuestionService {
    */
   @Transactional(readOnly = true)
   public List<CategoryCount> listCategories(Long knowledgeBaseId) {
+    requireReadableIfAuthenticated(knowledgeBaseId);
     return questionRepository.findCategoryCounts(knowledgeBaseId);
   }
 
@@ -142,9 +147,7 @@ public class KnowledgeBaseQuestionService {
 
   @Transactional(rollbackFor = Exception.class)
   public void deleteQuestion(Long questionId) {
-    if (!questionRepository.existsById(questionId)) {
-      throw new BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND);
-    }
+    getQuestion(questionId);
     questionRepository.deleteById(questionId);
   }
 
@@ -155,6 +158,7 @@ public class KnowledgeBaseQuestionService {
   public QuestionGenStatusResponse submitGenerationTask(
       Long knowledgeBaseId,
       GenerateKnowledgeBaseQuestionsRequest request) {
+    requireReadableIfAuthenticated(knowledgeBaseId);
     String difficulty = normalizeDifficulty(request.difficulty());
     int followUpCount = request.followUpCount() == null
         ? DEFAULT_FOLLOW_UP_COUNT
@@ -178,6 +182,7 @@ public class KnowledgeBaseQuestionService {
 
   @Transactional(readOnly = true)
   public QuestionGenStatusResponse getGenerationStatus(Long knowledgeBaseId) {
+    requireReadableIfAuthenticated(knowledgeBaseId);
     return questionGenerationStateService.getStatus(knowledgeBaseId);
   }
 
@@ -224,13 +229,32 @@ public class KnowledgeBaseQuestionService {
   }
 
   private KnowledgeBaseEntity getKnowledgeBase(Long knowledgeBaseId) {
-    return knowledgeBaseRepository.findById(knowledgeBaseId)
+    KnowledgeBaseEntity knowledgeBase = knowledgeBaseRepository.findById(knowledgeBaseId)
         .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
+    if (accessService != null) {
+      accessService.requireModifiable(knowledgeBase);
+    }
+    return knowledgeBase;
   }
 
   private KnowledgeBaseQuestionEntity getQuestion(Long questionId) {
-    return questionRepository.findById(questionId)
+    KnowledgeBaseQuestionEntity question = questionRepository.findById(questionId)
         .orElseThrow(() -> new BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND));
+    if (accessService != null && accessService.hasAuthenticatedUser()) {
+      KnowledgeBaseEntity knowledgeBase = knowledgeBaseRepository.findById(question.getKnowledgeBaseId())
+          .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
+      accessService.requireModifiable(knowledgeBase);
+    }
+    return question;
+  }
+
+  private void requireReadableIfAuthenticated(Long knowledgeBaseId) {
+    if (accessService == null || !accessService.hasAuthenticatedUser()) {
+      return;
+    }
+    KnowledgeBaseEntity knowledgeBase = knowledgeBaseRepository.findById(knowledgeBaseId)
+        .orElseThrow(() -> new BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND));
+    accessService.requireReadable(knowledgeBase);
   }
 
   private boolean containsKeyword(KnowledgeBaseQuestionEntity question, String keyword) {

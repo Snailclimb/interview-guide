@@ -34,6 +34,10 @@ public class RagChatSessionEntity {
     @Column(nullable = false)
     private String title;
 
+    /** NULL 表示历史共享 RAG 会话。 */
+    @Column(name = "owner_id", length = 64)
+    private String ownerId;
+
     /**
      * 会话状态
      */

@@ -6,6 +6,7 @@ import interview.guide.infrastructure.file.FileHashService;
 import interview.guide.infrastructure.file.FileStorageService;
 import interview.guide.infrastructure.file.FileValidationService;
 import interview.guide.infrastructure.file.KnowledgeBaseUploadLimiter;
+import interview.guide.modules.auth.AuthUserContext;
 import interview.guide.modules.knowledgebase.listener.VectorizeStreamProducer;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
 import interview.guide.modules.knowledgebase.model.VectorStatus;
@@ -37,6 +38,9 @@ public class KnowledgeBaseUploadService {
     private final VectorizeStreamProducer vectorizeStreamProducer;
     private final KnowledgeBaseUploadLimiter uploadLimiter;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private KnowledgeBaseAccessService accessService;
+
     private static final long MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
     
     /**
@@ -65,7 +69,10 @@ public class KnowledgeBaseUploadService {
 
         // 3. 检查知识库是否已存在（去重）
         String fileHash = fileHashService.calculateHash(file);
-        Optional<KnowledgeBaseEntity> existingKb = knowledgeBaseRepository.findByFileHash(fileHash);
+        String ownerId = AuthUserContext.currentUserId().orElse(null);
+        Optional<KnowledgeBaseEntity> existingKb = ownerId == null
+            ? knowledgeBaseRepository.findByFileHash(fileHash)
+            : knowledgeBaseRepository.findByFileHashAndOwnerId(fileHash, ownerId);
         if (existingKb.isPresent()) {
             log.info("检测到重复知识库: hash={}", fileHash);
             return persistenceService.handleDuplicateKnowledgeBase(existingKb.get(), fileHash);
@@ -79,7 +86,11 @@ public class KnowledgeBaseUploadService {
         // 5. 保存知识库元数据到数据库（状态为 PENDING）；失败时补偿删除孤儿对象（按 fileKey，不删实体——此时还没有实体）
         KnowledgeBaseEntity savedKb;
         try {
-            savedKb = persistenceService.saveKnowledgeBase(file, name, category, fileKey, fileUrl, fileHash);
+            savedKb = ownerId == null
+                ? persistenceService.saveKnowledgeBase(file, name, category, fileKey, fileUrl, fileHash)
+                : persistenceService.saveKnowledgeBase(
+                    file, name, category, fileKey, fileUrl, fileHash, ownerId
+                );
         } catch (Exception dbError) {
             compensateOrphanObject(fileKey, dbError);
             throw dbError;
@@ -146,6 +157,9 @@ public class KnowledgeBaseUploadService {
     public void revectorize(Long kbId) {
         KnowledgeBaseEntity kb = knowledgeBaseRepository.findById(kbId)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "知识库不存在"));
+        if (accessService != null) {
+            accessService.requireModifiable(kb);
+        }
 
         if (kb.getStorageKey() == null || kb.getStorageKey().trim().isEmpty()
             || kb.getOriginalFilename() == null || kb.getOriginalFilename().trim().isEmpty()) {

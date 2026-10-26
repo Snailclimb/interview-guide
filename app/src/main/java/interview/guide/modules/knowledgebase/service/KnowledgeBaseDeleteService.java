@@ -28,6 +28,9 @@ public class KnowledgeBaseDeleteService {
     private final KnowledgeBaseVectorService vectorService;
     private final FileStorageService storageService;
     private final TransactionalExecutor transactionalExecutor;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private KnowledgeBaseAccessService accessService;
     
     /**
      * 删除知识库
@@ -54,6 +57,9 @@ public class KnowledgeBaseDeleteService {
         // 1. 获取知识库信息
         KnowledgeBaseEntity kb = knowledgeBaseRepository.findById(id)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "知识库不存在"));
+        if (accessService != null) {
+            accessService.requireModifiable(kb);
+        }
         String storageKey = kb.getStorageKey();
         
         // 2. 删除所有RAG会话中的知识库关联（必须先删除关联，否则外键约束会阻止删除）

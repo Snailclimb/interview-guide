@@ -60,6 +60,9 @@ public class KnowledgeBaseQueryService {
     private final double minScoreShort;
     private final double minScoreDefault;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private KnowledgeBaseAccessService accessService;
+
     public KnowledgeBaseQueryService(
             LlmProviderRegistry llmProviderRegistry,
             RagMetrics ragMetrics,
@@ -127,6 +130,7 @@ public class KnowledgeBaseQueryService {
             ragMetrics.recordStageDuration("total", "reject", System.nanoTime() - totalStart);
             return NO_RESULT_RESPONSE;
         }
+        requireReadableKnowledgeBases(knowledgeBaseIds);
 
         QueryContext queryContext = null;
         long retrievalNanos = 0;
@@ -268,6 +272,7 @@ public class KnowledgeBaseQueryService {
             ragMetrics.recordStageDuration("total", "reject", System.nanoTime() - totalStart);
             return Flux.just(NO_RESULT_RESPONSE);
         }
+        requireReadableKnowledgeBases(knowledgeBaseIds);
 
         try {
             // 1. 验证知识库是否存在并更新问题计数
@@ -437,6 +442,7 @@ public class KnowledgeBaseQueryService {
             return new RagQueryExecution(normalized, normalized, List.of(normalized),
                 topkLong, minScoreDefault, List.of(), 0, 0, 0, NO_RESULT_RESPONSE, "NO_RESULT");
         }
+        requireReadableKnowledgeBases(knowledgeBaseIds);
         long start = System.nanoTime();
         List<Message> effectiveHistory = sanitizeHistory(history);
         QueryContext queryContext = buildQueryContext(question, effectiveHistory);
@@ -463,6 +469,12 @@ public class KnowledgeBaseQueryService {
             0,
             null,
             hit ? "RETRIEVED" : "NO_RESULT");
+    }
+
+    private void requireReadableKnowledgeBases(List<Long> knowledgeBaseIds) {
+        if (accessService != null) {
+            accessService.requireReadableIds(knowledgeBaseIds);
+        }
     }
 
     private QueryContext buildQueryContext(String originalQuestion, List<Message> history) {

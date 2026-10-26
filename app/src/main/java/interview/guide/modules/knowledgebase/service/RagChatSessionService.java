@@ -4,6 +4,7 @@ import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.infrastructure.mapper.KnowledgeBaseMapper;
 import interview.guide.infrastructure.mapper.RagChatMapper;
+import interview.guide.modules.auth.AuthUserContext;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
 import interview.guide.modules.knowledgebase.model.KnowledgeBaseListItemDTO;
 import interview.guide.modules.knowledgebase.model.RagChatDTO.CreateSessionRequest;
@@ -45,6 +46,9 @@ public class RagChatSessionService {
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final KnowledgeBaseQueryProperties queryProperties;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private KnowledgeBaseAccessService accessService;
+
     /**
      * 创建新会话
      */
@@ -57,6 +61,9 @@ public class RagChatSessionService {
         if (knowledgeBases.size() != request.knowledgeBaseIds().size()) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "部分知识库不存在");
         }
+        if (accessService != null) {
+            accessService.requireReadableIds(request.knowledgeBaseIds());
+        }
 
         // 创建会话
         RagChatSessionEntity session = new RagChatSessionEntity();
@@ -64,6 +71,9 @@ public class RagChatSessionService {
             ? request.title()
             : generateTitle(knowledgeBases));
         session.setKnowledgeBases(new HashSet<>(knowledgeBases));
+        if (accessService != null) {
+            session.setOwnerId(AuthUserContext.currentUserId().orElse(null));
+        }
 
         session = sessionRepository.save(session);
 
@@ -78,6 +88,7 @@ public class RagChatSessionService {
     public List<SessionListItemDTO> listSessions() {
         return sessionRepository.findAllOrderByPinnedAndUpdatedAtDesc()
             .stream()
+            .filter(this::isVisible)
             .map(ragChatMapper::toSessionListItemDTO)
             .toList();
     }
@@ -91,6 +102,7 @@ public class RagChatSessionService {
         RagChatSessionEntity session = sessionRepository
             .findByIdWithKnowledgeBases(sessionId)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
+        requireSessionAccess(session);
 
         // 再单独加载消息（避免笛卡尔积）
         List<RagChatMessageEntity> messages = messageRepository
@@ -113,6 +125,7 @@ public class RagChatSessionService {
     public Long prepareStreamMessage(Long sessionId, String question) {
         RagChatSessionEntity session = sessionRepository.findByIdWithKnowledgeBases(sessionId)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
+        requireSessionAccess(session);
 
         // 获取当前消息数量作为起始顺序
         int nextOrder = session.getMessageCount();
@@ -154,6 +167,9 @@ public class RagChatSessionService {
 
         message.setContent(content);
         message.setCompleted(true);
+        if (accessService != null && message.getSession() != null) {
+            requireSessionAccess(message.getSession());
+        }
         messageRepository.save(message);
 
         log.info("完成流式消息: messageId={}, contentLength={}", messageId, content.length());
@@ -165,6 +181,7 @@ public class RagChatSessionService {
     public Flux<String> getStreamAnswer(Long sessionId, String question) {
         RagChatSessionEntity session = sessionRepository.findByIdWithKnowledgeBases(sessionId)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
+        requireSessionAccess(session);
 
         List<Long> kbIds = session.getKnowledgeBaseIds();
         List<Message> history = queryProperties.getHistory().isEnabled()
@@ -181,6 +198,7 @@ public class RagChatSessionService {
     public void updateSessionTitle(Long sessionId, String title) {
         RagChatSessionEntity session = sessionRepository.findById(sessionId)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
+        requireSessionAccess(session);
 
         session.setTitle(title);
         sessionRepository.save(session);
@@ -195,6 +213,7 @@ public class RagChatSessionService {
     public void togglePin(Long sessionId) {
         RagChatSessionEntity session = sessionRepository.findById(sessionId)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
+        requireSessionAccess(session);
 
         // 处理 null 值（兼容旧数据）
         Boolean currentPinned = session.getIsPinned() != null ? session.getIsPinned() : false;
@@ -211,9 +230,17 @@ public class RagChatSessionService {
     public void updateSessionKnowledgeBases(Long sessionId, List<Long> knowledgeBaseIds) {
         RagChatSessionEntity session = sessionRepository.findById(sessionId)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
+        requireSessionAccess(session);
 
         List<KnowledgeBaseEntity> knowledgeBases = knowledgeBaseRepository
             .findAllById(knowledgeBaseIds);
+
+        if (knowledgeBases.size() != knowledgeBaseIds.size()) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "部分知识库不存在");
+        }
+        if (accessService != null) {
+            accessService.requireReadableIds(knowledgeBaseIds);
+        }
 
         session.setKnowledgeBases(new HashSet<>(knowledgeBases));
         sessionRepository.save(session);
@@ -226,10 +253,10 @@ public class RagChatSessionService {
      */
     @Transactional
     public void deleteSession(Long sessionId) {
-        if (!sessionRepository.existsById(sessionId)) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "会话不存在");
-        }
-        sessionRepository.deleteById(sessionId);
+        RagChatSessionEntity session = sessionRepository.findById(sessionId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "会话不存在"));
+        requireSessionAccess(session);
+        sessionRepository.delete(session);
 
         log.info("删除会话: sessionId={}", sessionId);
     }
@@ -270,5 +297,15 @@ public class RagChatSessionService {
             return knowledgeBases.getFirst().getName();
         }
         return knowledgeBases.size() + " 个知识库对话";
+    }
+
+    private boolean isVisible(RagChatSessionEntity session) {
+        return accessService == null || accessService.canAccessOwner(session.getOwnerId());
+    }
+
+    private void requireSessionAccess(RagChatSessionEntity session) {
+        if (!isVisible(session)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该 RAG 会话");
+        }
     }
 }

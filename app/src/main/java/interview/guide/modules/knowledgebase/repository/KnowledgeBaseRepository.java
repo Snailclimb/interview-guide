@@ -28,6 +28,9 @@ public interface KnowledgeBaseRepository extends JpaRepository<KnowledgeBaseEnti
      */
     Optional<KnowledgeBaseEntity> findByFileHash(String fileHash);
 
+    /** 按所有者范围去重，NULL owner 通过 IS NULL 语义兼容历史共享库。 */
+    Optional<KnowledgeBaseEntity> findByFileHashAndOwnerId(String fileHash, String ownerId);
+
     /**
      * 锁定知识库行，用于串行化同一知识库的题目生成状态迁移。
      */

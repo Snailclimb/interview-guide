@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "knowledge_bases", indexes = {
-    @Index(name = "idx_kb_hash", columnList = "fileHash", unique = true),
+    @Index(name = "uk_kb_owner_hash", columnList = "owner_id,fileHash", unique = true),
     @Index(name = "idx_kb_category", columnList = "category")
 })
 public class KnowledgeBaseEntity {
@@ -19,8 +19,14 @@ public class KnowledgeBaseEntity {
     private Long id;
 
     // 文件内容的SHA-256哈希值，用于去重
-    @Column(nullable = false, unique = true, length = 64)
+    @Column(nullable = false, length = 64)
     private String fileHash;
+
+    /**
+     * 登录用户上传的知识库所有者；NULL 表示历史部署级共享知识库。
+     */
+    @Column(name = "owner_id", length = 64)
+    private String ownerId;
 
     // 知识库名称（用户自定义或从文件名提取）
     @Column(nullable = false)
@@ -152,6 +158,14 @@ public class KnowledgeBaseEntity {
     
     public void setFileHash(String fileHash) {
         this.fileHash = fileHash;
+    }
+
+    public String getOwnerId() {
+        return ownerId;
+    }
+
+    public void setOwnerId(String ownerId) {
+        this.ownerId = ownerId;
     }
     
     public String getName() {

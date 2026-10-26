@@ -198,7 +198,6 @@ pwsh -NoProfile -File .\scripts\agent-restart-acceptance.ps1 -BaseUrl http://loc
 
 本轮先不实现以下能力，避免扩大验收面：
 
-- 知识库的个人级权限和所有权校验；当前知识库仍按部署级共享参考资料处理。简历、面试会话和 Agent 线程已接入正式登录主体、owner 过滤和旧数据的单用户迁移。
 - Token、费用和 Provider 账单级统计；当前只保留运行、重试、Provider、工具调用次数和耗时指标。
 - MCP Server/Client 接入；当前已有的 SkillsTool 和 ToolCallingAdvisor 足够支撑面试教练的只读能力。
 - 长期记忆管理页面、记忆编辑和跨面试复杂召回；当前保留轻量结构化摘要和一键清除。
@@ -209,6 +208,7 @@ pwsh -NoProfile -File .\scripts\agent-restart-acceptance.ps1 -BaseUrl http://loc
 - Agent 会话归属：所有 Agent API 在正式登录模式下使用服务端用户 ID，兼容模式下仍接受 `X-User-Id`；会话创建、读取、取消、重命名和归档均按 owner 校验；迁移前已有线程会从 `memory_key` 兼容迁移。普通面试、语音面试和面试日程也已接入同一账号隔离边界，语音 WebSocket 在握手阶段校验会话归属。
 - 多线程管理：同一份面试报告可创建、切换、重命名和归档多个 Agent 对话，归档只隐藏会话，不删除历史消息。
 - Agent Loop：规划结果会进入有限循环，逐步执行“动作 -> 观察”，将观察轨迹注入最终回答，并通过 SSE 暴露每一步；循环步骤受既有 `loopMaxSteps` 限制，不允许无限执行。
+- 知识库/RAG owner 隔离：新登录用户上传的知识库及 RAG 会话写入 `owner_id`，列表、详情、下载、查询、题目管理、开始知识库面试、重向量化和删除均按当前用户校验；迁移前 `owner_id IS NULL` 的知识库继续作为部署级共享资料可读可维护，保证旧数据和现有题库不受影响。
 - 浏览器验收：新增 Agent 会话隔离、页面刷新恢复、重命名和 Loop 事件的 Playwright 用例；真实浏览器运行需要测试机预装 Playwright Chromium。
 
-> 当前已建立用户主体表、Redis 服务端会话和前端登录入口，Agent 的 `owner_key` 已切换为正式登录主体 ID；简历和面试会话已增加 `owner_id` 隔离。知识库目前明确作为部署级共享资料，若改为个人知识库再单独设计其 owner 迁移。
+> 当前已建立用户主体表、Redis 服务端会话和前端登录入口，Agent 的 `owner_key` 已切换为正式登录主体 ID；简历、面试会话、知识库和 RAG 会话已增加 `owner_id` 隔离。知识库通过 NULL owner 兼容迁移前的部署级共享资料；个人知识库的细粒度共享、协作成员和管理员治理仍不在本次范围内。

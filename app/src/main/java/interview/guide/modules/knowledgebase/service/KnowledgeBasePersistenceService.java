@@ -6,6 +6,7 @@ import interview.guide.modules.knowledgebase.model.KnowledgeBaseEntity;
 import interview.guide.modules.knowledgebase.model.VectorStatus;
 import interview.guide.modules.knowledgebase.repository.KnowledgeBaseRepository;
 import interview.guide.modules.knowledgebase.repository.VectorRepository;
+import interview.guide.modules.auth.AuthUserContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -101,9 +102,19 @@ public class KnowledgeBasePersistenceService {
     @Transactional(rollbackFor = Exception.class)
     public KnowledgeBaseEntity saveKnowledgeBase(MultipartFile file, String name, String category,
                                                   String storageKey, String storageUrl, String fileHash) {
+        return saveKnowledgeBase(file, name, category, storageKey, storageUrl, fileHash,
+            AuthUserContext.currentUserId().orElse(null));
+    }
+
+    /** 保存知识库并记录当前登录用户；旧内部调用仍可使用上面的兼容重载。 */
+    @Transactional(rollbackFor = Exception.class)
+    public KnowledgeBaseEntity saveKnowledgeBase(MultipartFile file, String name, String category,
+                                                  String storageKey, String storageUrl, String fileHash,
+                                                  String ownerId) {
         try {
             KnowledgeBaseEntity kb = new KnowledgeBaseEntity();
             kb.setFileHash(fileHash);
+            kb.setOwnerId(ownerId);
             kb.setName(name != null && !name.trim().isEmpty() ? name : extractNameFromFilename(file.getOriginalFilename()));
             kb.setCategory(category != null && !category.trim().isEmpty() ? category.trim() : null);
             kb.setOriginalFilename(file.getOriginalFilename());
