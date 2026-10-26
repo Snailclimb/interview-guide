@@ -64,7 +64,9 @@ public class AuthSecurityConfig {
                 .csrfTokenRepository(csrfRepository)
                 .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
                 .ignoringRequestMatchers(
-                    "/api/auth/login", "/api/auth/register", "/api/auth/logout"
+                    "/api/auth/login", "/api/auth/register", "/api/auth/logout",
+                    "/api/auth/verify-email", "/api/auth/resend-verification",
+                    "/api/auth/password-reset/**"
                 )
             );
         }

@@ -26,4 +26,20 @@ export const authApi = {
   logout(): Promise<void> {
     return request.post<void>('/api/auth/logout');
   },
+
+  verifyEmail(token: string): Promise<void> {
+    return request.post<void>('/api/auth/verify-email', { token });
+  },
+
+  resendVerification(email: string): Promise<void> {
+    return request.post<void>('/api/auth/resend-verification', { email });
+  },
+
+  requestPasswordReset(email: string): Promise<void> {
+    return request.post<void>('/api/auth/password-reset/request', { email });
+  },
+
+  resetPassword(token: string, newPassword: string): Promise<void> {
+    return request.post<void>('/api/auth/password-reset/confirm', { token, newPassword });
+  },
 };

@@ -3,7 +3,10 @@ package interview.guide.modules.auth;
 import interview.guide.common.result.Result;
 import interview.guide.modules.auth.model.AuthStateResponse;
 import interview.guide.modules.auth.model.AuthUserResponse;
+import interview.guide.modules.auth.model.EmailRequest;
+import interview.guide.modules.auth.model.EmailTokenRequest;
 import interview.guide.modules.auth.model.LoginRequest;
+import interview.guide.modules.auth.model.PasswordResetRequest;
 import interview.guide.modules.auth.model.RegisterRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +31,9 @@ public class AuthController {
         HttpServletResponse response
     ) {
         AuthUserResponse user = authService.register(request);
-        sessionService.create(user.id(), response);
+        if (authService.shouldStartSession(user)) {
+            sessionService.create(user.id(), response);
+        }
         return Result.success(user);
     }
 
@@ -45,6 +50,30 @@ public class AuthController {
     @PostMapping("/api/auth/logout")
     public Result<Void> logout(HttpServletRequest request, HttpServletResponse response) {
         sessionService.invalidate(request, response);
+        return Result.success(null);
+    }
+
+    @PostMapping("/api/auth/verify-email")
+    public Result<Void> verifyEmail(@Valid @RequestBody EmailTokenRequest request) {
+        authService.verifyEmail(request.token());
+        return Result.success(null);
+    }
+
+    @PostMapping("/api/auth/resend-verification")
+    public Result<Void> resendVerification(@Valid @RequestBody EmailRequest request) {
+        authService.resendVerification(request.email());
+        return Result.success(null);
+    }
+
+    @PostMapping("/api/auth/password-reset/request")
+    public Result<Void> requestPasswordReset(@Valid @RequestBody EmailRequest request) {
+        authService.requestPasswordReset(request.email());
+        return Result.success(null);
+    }
+
+    @PostMapping("/api/auth/password-reset/confirm")
+    public Result<Void> resetPassword(@Valid @RequestBody PasswordResetRequest request) {
+        authService.resetPassword(request.token(), request.newPassword());
         return Result.success(null);
     }
 

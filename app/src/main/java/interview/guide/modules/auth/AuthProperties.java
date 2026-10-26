@@ -20,4 +20,15 @@ public class AuthProperties {
     private Duration sessionTtl = Duration.ofDays(7);
     private boolean secureCookie;
     private String sameSite = "Lax";
+    private boolean requireEmailVerification;
+    private Mail mail = new Mail();
+
+    @Data
+    public static class Mail {
+        private boolean enabled;
+        private String from = "no-reply@example.com";
+        private String frontendBaseUrl = "http://localhost";
+        private Duration tokenTtl = Duration.ofMinutes(30);
+        private Duration resendCooldown = Duration.ofSeconds(60);
+    }
 }

@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class AuthSessionService {
     private static final String KEY_PREFIX = "auth:session:";
+    private static final String USER_SESSIONS_PREFIX = "auth:user-sessions:";
 
     private final RedissonClient redissonClient;
     private final AuthProperties properties;
@@ -31,6 +32,8 @@ public class AuthSessionService {
     public String create(String userId, HttpServletResponse response) {
         String token = UUID.randomUUID().toString() + UUID.randomUUID();
         bucket(token).set(userId, ttlSeconds(), TimeUnit.SECONDS);
+        userSessions(userId).add(token);
+        userSessions(userId).expire(Duration.ofSeconds(ttlSeconds()));
         writeCookie(response, token, ttlSeconds());
         return token;
     }
@@ -52,9 +55,25 @@ public class AuthSessionService {
     public void invalidate(HttpServletRequest request, HttpServletResponse response) {
         String token = readToken(request);
         if (token != null) {
+            String userId = resolveWithoutRefresh(token);
             bucket(token).delete();
+            if (userId != null) {
+                userSessions(userId).remove(token);
+            }
         }
         writeCookie(response, "", 0);
+    }
+
+    /** 密码重置后撤销该用户已有的所有会话。 */
+    public void invalidateAll(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return;
+        }
+        var sessions = userSessions(userId);
+        for (String token : sessions.readAll()) {
+            bucket(token).delete();
+        }
+        sessions.delete();
     }
 
     public String readToken(HttpServletRequest request) {
@@ -72,6 +91,15 @@ public class AuthSessionService {
 
     private RBucket<String> bucket(String token) {
         return redissonClient.getBucket(KEY_PREFIX + token);
+    }
+
+    private org.redisson.api.RSet<String> userSessions(String userId) {
+        return redissonClient.getSet(USER_SESSIONS_PREFIX + userId);
+    }
+
+    private String resolveWithoutRefresh(String token) {
+        String userId = bucket(token).get();
+        return userId == null || userId.isBlank() ? null : userId;
     }
 
     private long ttlSeconds() {

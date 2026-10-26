@@ -30,6 +30,7 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const InterviewDetailPanel = lazy(() => import('./components/InterviewDetailPanel'));
 const AgentPage = lazy(() => import('./pages/AgentPage'));
 const AuthPage = lazy(() => import('./pages/AuthPage'));
+const AuthActionPage = lazy(() => import('./pages/AuthActionPage'));
 
 // Loading component
 const Loading = () => (
@@ -221,6 +222,8 @@ function App() {
       <Suspense fallback={<Loading />}>
         <Routes>
           <Route path="/login" element={<AuthPage />} />
+          <Route path="/verify-email" element={<AuthActionPage mode="verify" />} />
+          <Route path="/reset-password" element={<AuthActionPage mode="reset" />} />
           <Route path="/" element={<AuthGate><Layout /></AuthGate>}>
             {/* 默认重定向到简历管理页面 */}
             <Route index element={<Navigate to="/history" replace />} />

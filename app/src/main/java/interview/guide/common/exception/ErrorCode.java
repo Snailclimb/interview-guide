@@ -89,7 +89,9 @@ public enum ErrorCode {
     AUTH_INVALID_CREDENTIALS(12002, "邮箱或密码错误"),
     AUTH_ACCOUNT_DISABLED(12003, "账号已被禁用"),
     AUTH_PASSWORD_TOO_WEAK(12004, "密码强度不足"),
-    AUTH_SESSION_INVALID(12005, "登录状态已失效，请重新登录");
+    AUTH_SESSION_INVALID(12005, "登录状态已失效，请重新登录"),
+    AUTH_TOKEN_INVALID(12006, "链接无效或已过期"),
+    AUTH_EMAIL_DELIVERY_UNAVAILABLE(12007, "认证邮件服务暂不可用，请联系管理员");
 
     private final Integer code;
     private final String message;

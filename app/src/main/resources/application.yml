@@ -64,6 +64,18 @@ spring:
       enabled: true
       max-file-size: 50MB  # 支持知识库上传（简历限制在业务层检查）
       max-request-size: 50MB
+
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:true}
+          starttls:
+            enable: ${MAIL_SMTP_STARTTLS:true}
   
 
   # Redisson配置 (使用 spring.redis.redisson，参考官方文档)
@@ -102,6 +114,13 @@ app:
     session-ttl: ${APP_AUTH_SESSION_TTL:7d}
     secure-cookie: ${APP_AUTH_SECURE_COOKIE:false}
     same-site: ${APP_AUTH_COOKIE_SAME_SITE:Lax}
+    require-email-verification: ${APP_AUTH_REQUIRE_EMAIL_VERIFICATION:false}
+    mail:
+      enabled: ${APP_AUTH_MAIL_ENABLED:false}
+      from: ${APP_AUTH_MAIL_FROM:no-reply@example.com}
+      frontend-base-url: ${APP_AUTH_MAIL_FRONTEND_BASE_URL:http://localhost}
+      token-ttl: ${APP_AUTH_MAIL_TOKEN_TTL:30m}
+      resend-cooldown: ${APP_AUTH_MAIL_RESEND_COOLDOWN:60s}
   ai:
     default-provider: ${APP_AI_DEFAULT_PROVIDER:dashscope}
     default-embedding-provider: ${APP_AI_DEFAULT_EMBEDDING_PROVIDER:dashscope}
