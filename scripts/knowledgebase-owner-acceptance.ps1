@@ -1,7 +1,7 @@
-<#!
+<#
 .SYNOPSIS
     验收知识库、RAG 会话在正式登录模式下的用户隔离与历史共享兼容。
-#!>
+#>
 
 param(
     [string]$BaseUrl = 'http://localhost:18083'
@@ -32,16 +32,38 @@ function Register-User([string]$Email) {
 
 function Login-User([string]$Email) {
     $jar = Join-Path $env:TEMP "interview-kb-owner-$([guid]::NewGuid()).cookie"
+    $headers = Join-Path $env:TEMP "interview-kb-owner-$([guid]::NewGuid()).headers"
     $body = @{ email = $Email; password = 'StrongPass123' } | ConvertTo-Json -Compress
-    $raw = & curl.exe -sS -c $jar -H 'Content-Type: application/json' `
+    $raw = & curl.exe -sS -D $headers -c $jar -H 'Content-Type: application/json' `
         -d $body "$BaseUrl/api/auth/login"
     $json = Parse-Json ($raw -join [Environment]::NewLine) "登录 $Email"
     Assert-Pass ($json.code -eq 200) "登录 $Email"
     $xsrfLine = Get-Content -LiteralPath $jar |
-        Where-Object { $_ -match 'sXSRF-TOKENs' } | Select-Object -Last 1
-    if ($null -eq $xsrfLine) { throw "登录 $Email 未下发 CSRF Cookie" }
-    $parts = $xsrfLine -split 's+'
-    [pscustomobject]@{ Jar = $jar; Xsrf = $parts[$parts.Length - 1] }
+        Where-Object { $_ -match 'XSRF-TOKEN' } | Select-Object -Last 1
+    if ($null -ne $xsrfLine) {
+        $parts = $xsrfLine -split "`t"
+        $xsrf = $parts[$parts.Length - 1]
+    } else {
+        $headerLine = Get-Content -LiteralPath $headers |
+            Where-Object { $_ -match '(?i)^Set-Cookie:.*XSRF-TOKEN=' } | Select-Object -Last 1
+        if ($null -eq $headerLine -or $headerLine -notmatch '(?i)^Set-Cookie:.*XSRF-TOKEN=([^;]+)') {
+            throw "登录 $Email 未下发 CSRF Cookie"
+        }
+        $xsrf = $Matches[1]
+        Add-Content -LiteralPath $jar -Value "127.0.0.1`tFALSE`t/`tFALSE`t0`tXSRF-TOKEN`t$xsrf"
+    }
+    Remove-Item -LiteralPath $headers -Force -ErrorAction SilentlyContinue
+    [pscustomobject]@{ Jar = $jar; Xsrf = $xsrf }
+}
+
+function Get-Xsrf([string]$AuthJar, [string]$Fallback) {
+    $line = Get-Content -LiteralPath $AuthJar |
+        Where-Object { $_ -match 'XSRF-TOKEN' } | Select-Object -Last 1
+    if ($null -ne $line) {
+        $parts = $line -split "`t"
+        return $parts[$parts.Length - 1]
+    }
+    return $Fallback
 }
 
 function Invoke-JsonApi(
@@ -53,7 +75,7 @@ function Invoke-JsonApi(
 ) {
     $args = @('-sS', '-b', $AuthJar, '-c', $AuthJar, '-X', $Method, "$BaseUrl$Path")
     if ($Method -ne 'GET') {
-        $args += @('-H', "X-XSRF-TOKEN: $Xsrf", '-H', 'Content-Type: application/json')
+        $args += @('-H', "X-XSRF-TOKEN: $(Get-Xsrf $AuthJar $Xsrf)", '-H', 'Content-Type: application/json')
     }
     if ($null -ne $Body) {
         $args += @('--data-raw', ($Body | ConvertTo-Json -Depth 50 -Compress))
@@ -64,7 +86,7 @@ function Invoke-JsonApi(
 
 function Upload-KnowledgeBase([string]$AuthJar, [string]$Xsrf, [string]$FilePath) {
     $raw = & curl.exe -sS -b $AuthJar -c $AuthJar -X POST "$BaseUrl/api/knowledgebase/upload" `
-        -H "X-XSRF-TOKEN: $Xsrf" -F "file=@$FilePath;type=text/plain" `
+        -H "X-XSRF-TOKEN: $(Get-Xsrf $AuthJar $Xsrf)" -F "file=@$FilePath;type=text/plain" `
         -F 'name=隔离验收知识库' -F 'category=验收'
     Parse-Json ($raw -join [Environment]::NewLine) '上传知识库'
 }
