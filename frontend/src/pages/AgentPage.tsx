@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   ArrowLeft,
+  Activity,
   Bot,
   Check,
   CheckCircle2,
@@ -45,6 +46,7 @@ import {
 } from './agentSession';
 import type {
   AgentGoal,
+  AgentAuditEvent,
   AgentConversationResponse,
   AgentHistoryMessage,
   AgentMemoryItem,
@@ -102,6 +104,20 @@ function formatDate(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function formatAuditAction(action: string) {
+  const labels: Record<string, string> = {
+    RUN_STARTED: '开始运行',
+    RUN_COMPLETED: '运行完成',
+    RUN_FAILED: '运行失败',
+    RUN_CANCELLED: '取消运行',
+    MEMORY_REMEMBERED: '写入记忆',
+    MEMORY_UPDATED: '更新记忆',
+    MEMORY_DELETED: '删除记忆',
+    MEMORY_CLEARED: '清除记忆',
+  };
+  return labels[action] || action;
 }
 
 function getScoreTone(score: number | null | undefined) {
@@ -188,6 +204,9 @@ export default function AgentPage() {
   const [memoryNotice, setMemoryNotice] = useState('');
   const [memory, setMemory] = useState<AgentMemoryResponse | null>(null);
   const [memoryLoading, setMemoryLoading] = useState(true);
+  const [auditEvents, setAuditEvents] = useState<AgentAuditEvent[]>([]);
+  const [auditLoading, setAuditLoading] = useState(true);
+  const [auditNotice, setAuditNotice] = useState('');
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [editingMemoryContent, setEditingMemoryContent] = useState('');
   const [editingMemoryScope, setEditingMemoryScope] = useState('');
@@ -610,6 +629,7 @@ export default function AgentPage() {
         onComplete: () => {
           setRunStatus((current) => current === 'running' ? 'completed' : current);
           void loadLongTermMemory();
+          void loadAuditEvents();
           void agentApi.getConversation(sessionId, agentSessionId)
             .then(restoreRunProgress)
             .catch(() => undefined);
@@ -648,9 +668,22 @@ export default function AgentPage() {
       .finally(() => setMemoryLoading(false));
   }, []);
 
+  const loadAuditEvents = useCallback(() => {
+    setAuditLoading(true);
+    setAuditNotice('');
+    return agentApi.getAuditEvents(20)
+      .then((value) => setAuditEvents(value))
+      .catch(() => setAuditNotice('活动记录读取失败，请稍后重试'))
+      .finally(() => setAuditLoading(false));
+  }, []);
+
   useEffect(() => {
     void loadLongTermMemory();
   }, [loadLongTermMemory]);
+
+  useEffect(() => {
+    void loadAuditEvents();
+  }, [loadAuditEvents]);
 
   const clearLongTermMemory = () => {
     if (runStatus === 'running' || !window.confirm('确定清除当前浏览器保存的 Agent 长期记忆吗？')) return;
@@ -658,6 +691,7 @@ export default function AgentPage() {
       .then(() => {
         setMemory({ lastSkillId: null, weaknesses: [], recentGoals: [], updatedAt: null, items: [] });
         setMemoryNotice('长期记忆已清除');
+        void loadAuditEvents();
       })
       .catch(() => setMemoryNotice('长期记忆清除失败，请稍后重试'));
   };
@@ -682,6 +716,7 @@ export default function AgentPage() {
       .then((value) => {
         setMemory(value);
         setMemoryNotice('长期记忆已更新');
+        void loadAuditEvents();
         cancelEditMemory();
       })
       .catch(() => setMemoryNotice('长期记忆更新失败，请稍后重试'));
@@ -693,6 +728,7 @@ export default function AgentPage() {
       .then((value) => {
         setMemory(value);
         setMemoryNotice('长期记忆已删除');
+        void loadAuditEvents();
         if (editingMemoryId === item.id) cancelEditMemory();
       })
       .catch(() => setMemoryNotice('长期记忆删除失败，请稍后重试'));
@@ -955,6 +991,47 @@ export default function AgentPage() {
           </div>
         ) : (
           <p className="text-xs dark-text-muted mt-3">暂无长期记忆，完成一次 Agent 复盘后会自动积累。</p>
+        )}
+      </section>
+
+      <section className="dark-card px-5 py-4" aria-label="Agent 最近活动">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-primary-500" />
+            <h2 className="text-sm font-semibold dark-text">最近活动</h2>
+            <span className="text-[11px] rounded-full bg-slate-100 px-2 py-0.5 text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+              低敏记录
+            </span>
+          </div>
+          <button
+            onClick={() => void loadAuditEvents()}
+            disabled={auditLoading}
+            className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs disabled:opacity-50"
+            aria-label="刷新 Agent 活动记录"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${auditLoading ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
+        </div>
+        {auditNotice ? (
+          <p className="text-xs text-rose-500 dark:text-rose-300 mt-3">{auditNotice}</p>
+        ) : auditLoading ? (
+          <p className="text-xs dark-text-muted mt-3">正在读取活动记录...</p>
+        ) : auditEvents.length === 0 ? (
+          <p className="text-xs dark-text-muted mt-3">暂无活动记录。</p>
+        ) : (
+          <div className="mt-3 divide-y divide-slate-200 dark:divide-slate-700">
+            {auditEvents.slice(0, 8).map((event, index) => (
+              <div key={`${event.createdAt}-${event.action}-${index}`} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary-400 shrink-0" />
+                  <span className="font-medium dark-text">{formatAuditAction(event.action)}</span>
+                  <span className="dark-text-muted truncate">{event.resourceType}</span>
+                </div>
+                <span className="text-[11px] text-slate-400 shrink-0">{formatDate(event.createdAt)}</span>
+              </div>
+            ))}
+          </div>
         )}
       </section>
 

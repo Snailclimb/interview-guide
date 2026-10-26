@@ -46,6 +46,16 @@ export interface AgentRunUsage {
   model?: string | null;
 }
 
+export interface AgentAuditEvent {
+  interviewSessionId?: string | null;
+  agentSessionId?: string | null;
+  action: string;
+  resourceType: string;
+  resourceId?: string | null;
+  result?: string | null;
+  createdAt: string;
+}
+
 export interface AgentConversationSummary {
   agentSessionId: string;
   interviewSessionId: string;

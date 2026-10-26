@@ -2,6 +2,8 @@ package interview.guide.modules.agent.service;
 
 import interview.guide.modules.agent.model.AgentAuditEventEntity;
 import interview.guide.modules.agent.repository.AgentAuditEventRepository;
+import java.time.LocalDateTime;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,5 +44,34 @@ class AgentAuditServiceTest {
         new AgentAuditService(repository).recordQuietly(
             "user-1", null, null, null, "RUN_STARTED", "agent-run", "run-1", "success"
         );
+    }
+
+    @Test
+    void listsOnlyCurrentOwnerEventsAndHonorsSmallLimit() {
+        AgentAuditEventRepository repository = mock(AgentAuditEventRepository.class);
+        when(repository.findTop100ByOwnerKeyOrderByCreatedAtDesc("user-1"))
+            .thenReturn(List.of(
+                AgentAuditEventEntity.builder()
+                    .interviewSessionId("interview-1")
+                    .agentSessionId("agent-1")
+                    .action("RUN_COMPLETED")
+                    .resourceType("agent-run")
+                    .resourceId("run-1")
+                    .result("COMPLETED")
+                    .createdAt(LocalDateTime.now())
+                    .build(),
+                AgentAuditEventEntity.builder()
+                    .action("MEMORY_UPDATED")
+                    .resourceType("memory-item")
+                    .resourceId("item-1")
+                    .createdAt(LocalDateTime.now().minusMinutes(1))
+                    .build()
+            ));
+
+        var events = new AgentAuditService(repository).listForOwner(" user-1 ", 1);
+
+        assertThat(events).hasSize(1);
+        assertThat(events.getFirst().action()).isEqualTo("RUN_COMPLETED");
+        verify(repository).findTop100ByOwnerKeyOrderByCreatedAtDesc("user-1");
     }
 }

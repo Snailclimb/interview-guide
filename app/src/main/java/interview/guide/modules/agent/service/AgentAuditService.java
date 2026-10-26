@@ -1,9 +1,11 @@
 package interview.guide.modules.agent.service;
 
 import interview.guide.modules.agent.model.AgentAuditEventEntity;
+import interview.guide.modules.agent.model.AgentAuditEventResponse;
 import interview.guide.modules.agent.repository.AgentAuditEventRepository;
 import jakarta.transaction.Transactional;
 import java.time.LocalDateTime;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,8 +27,21 @@ public class AgentAuditService {
     private static final int MAX_RESOURCE_TYPE = 32;
     private static final int MAX_RESOURCE_ID = 128;
     private static final int MAX_RESULT = 32;
+    private static final int MAX_QUERY_LIMIT = 100;
 
     private final AgentAuditEventRepository repository;
+
+    @Transactional(Transactional.TxType.SUPPORTS)
+    public List<AgentAuditEventResponse> listForOwner(String ownerKey, int limit) {
+        if (ownerKey == null || ownerKey.isBlank()) {
+            return List.of();
+        }
+        int safeLimit = Math.max(1, Math.min(MAX_QUERY_LIMIT, limit));
+        return repository.findTop100ByOwnerKeyOrderByCreatedAtDesc(ownerKey.trim()).stream()
+            .limit(safeLimit)
+            .map(AgentAuditEventResponse::from)
+            .toList();
+    }
 
     @Transactional(Transactional.TxType.REQUIRES_NEW)
     public void recordQuietly(

@@ -3,6 +3,7 @@ import request from './request.ts';
 import type {
   AgentConversationResponse,
   AgentConversationSummary,
+  AgentAuditEvent,
   AgentMemoryResponse,
   AgentMessageRequest,
   AgentStreamEvent,
@@ -20,6 +21,13 @@ interface AgentStreamHandlers {
 }
 
 export const agentApi = {
+  getAuditEvents(limit = 20): Promise<AgentAuditEvent[]> {
+    return request.get<AgentAuditEvent[]>(
+      `/api/agent/audit/events?limit=${Math.max(1, Math.min(100, limit))}`,
+      { headers: agentHeaders() },
+    );
+  },
+
   getConversation(sessionId: string, agentSessionId?: string | null): Promise<AgentConversationResponse> {
     const query = agentSessionId ? `?agentSessionId=${encodeURIComponent(agentSessionId)}` : '';
     return request.get<AgentConversationResponse>(

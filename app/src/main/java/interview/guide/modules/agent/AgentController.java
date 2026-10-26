@@ -5,12 +5,14 @@ import interview.guide.modules.agent.model.AgentMessageRequest;
 import interview.guide.modules.agent.model.AgentConversationResponse;
 import interview.guide.modules.agent.model.AgentConversationSummary;
 import interview.guide.modules.agent.model.AgentMemoryResponse;
+import interview.guide.modules.agent.model.AgentAuditEventResponse;
 import interview.guide.modules.agent.model.UpdateAgentMemoryItemRequest;
 import interview.guide.modules.agent.model.AgentStreamEvent;
 import interview.guide.modules.agent.model.CreateAgentConversationRequest;
 import interview.guide.modules.agent.model.RenameAgentConversationRequest;
 import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.AgentMemoryService;
+import interview.guide.modules.agent.service.AgentAuditService;
 import interview.guide.modules.agent.service.InterviewAgentService;
 import interview.guide.modules.auth.AuthIdentityService;
 import interview.guide.common.result.Result;
@@ -53,6 +55,7 @@ public class AgentController {
     private final InterviewAgentService agentService;
     private final AgentConversationService conversationService;
     private final AgentMemoryService memoryService;
+    private final AgentAuditService auditService;
     private final AuthIdentityService authIdentityService;
     private final ObjectMapper objectMapper;
 
@@ -147,6 +150,18 @@ public class AgentController {
     ) {
         return Result.success(AgentMemoryResponse.from(
             memoryService.load(authIdentityService.requireIdentity(ownerKey))
+        ));
+    }
+
+    /** 查询当前登录用户最近的低敏 Agent 操作事件。 */
+    @GetMapping("/api/agent/audit/events")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
+    public Result<List<AgentAuditEventResponse>> listAuditEvents(
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey,
+        @RequestParam(value = "limit", defaultValue = "30") int limit
+    ) {
+        return Result.success(auditService.listForOwner(
+            authIdentityService.requireIdentity(ownerKey), limit
         ));
     }
 
