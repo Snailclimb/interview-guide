@@ -53,7 +53,9 @@ public class AgentLoopEngine {
         StepExecutor stepExecutor,
         Consumer<LoopIteration> progressListener
     ) {
-        return executeFrom(context, plannedSteps, policy, stepExecutor, 0, progressListener);
+        return executeFrom(
+            context, plannedSteps, policy, stepExecutor, 0, List.of(), progressListener
+        );
     }
 
     /**
@@ -80,7 +82,8 @@ public class AgentLoopEngine {
     ) {
         int startIndex = previous == null ? 0 : previous.nextStepIndex();
         return executeFrom(
-            context, plannedSteps, policy, stepExecutor, startIndex, progressListener
+            context, plannedSteps, policy, stepExecutor, startIndex,
+            previous == null ? List.of() : previous.iterations(), progressListener
         );
     }
 
@@ -90,6 +93,7 @@ public class AgentLoopEngine {
         ExecutionPolicy policy,
         StepExecutor stepExecutor,
         int startIndex,
+        List<LoopIteration> recoveredIterations,
         Consumer<LoopIteration> progressListener
     ) {
         List<String> safeSteps = plannedSteps == null || plannedSteps.isEmpty()
@@ -103,17 +107,29 @@ public class AgentLoopEngine {
             ? (loopContext, action, index) -> defaultObservation(loopContext, index)
             : stepExecutor;
         List<LoopIteration> iterations = new ArrayList<>();
-        int first = Math.max(0, Math.min(startIndex, safeSteps.size()));
+        boolean checkpointIndexValid = startIndex >= 0 && startIndex <= safeSteps.size();
+        // 运行记录是持久化数据，异常索引不能被解释成“所有步骤都已完成”。
+        // 安全回退到计划起点，避免恢复任务误报完成。
+        int first = checkpointIndexValid ? startIndex : 0;
+        List<Integer> recoveredCompletedSteps = checkpointIndexValid
+            ? completedStepIndices(recoveredIterations, safeSteps.size())
+            : List.of();
         int last = Math.min(safeSteps.size(), first + safePolicy.maxSteps());
         long startedNanos = System.nanoTime();
         String termination = "completed";
         int nextStepIndex = first;
         int index = first;
         while (index < last) {
+            if (recoveredCompletedSteps.contains(index)) {
+                nextStepIndex = Math.max(nextStepIndex, index + 1);
+                index++;
+                continue;
+            }
             int groupEnd = parallelGroupEnd(safeSteps, index, last, safePolicy.maxParallelSteps());
             if (groupEnd - index > 1) {
                 ParallelGroupResult group = executeParallelGroup(
-                    context, safeSteps, index, groupEnd, safePolicy, startedNanos, safeExecutor
+                    context, safeSteps, index, groupEnd, safePolicy, startedNanos, safeExecutor,
+                    recoveredCompletedSteps
                 );
                 iterations.addAll(group.iterations());
                 if (group.failed()) {
@@ -197,6 +213,22 @@ public class AgentLoopEngine {
         return new LoopResult(List.copyOf(iterations), termination, nextStepIndex);
     }
 
+    private List<Integer> completedStepIndices(
+        List<LoopIteration> recoveredIterations, int stepCount
+    ) {
+        if (recoveredIterations == null || recoveredIterations.isEmpty()) {
+            return List.of();
+        }
+        return recoveredIterations.stream()
+            .filter(iteration -> iteration != null && "completed".equals(iteration.status()))
+            .map(LoopIteration::iteration)
+            .filter(iteration -> iteration >= 1 && iteration <= stepCount)
+            .map(iteration -> iteration - 1)
+            .distinct()
+            .sorted()
+            .toList();
+    }
+
     private int parallelGroupEnd(
         List<String> steps, int start, int last, int maxParallelSteps
     ) {
@@ -228,10 +260,14 @@ public class AgentLoopEngine {
         int end,
         ExecutionPolicy policy,
         long loopStartedNanos,
-        StepExecutor executor
+        StepExecutor executor,
+        List<Integer> recoveredCompletedSteps
     ) {
         List<Callable<StepOutcome>> tasks = new ArrayList<>();
         for (int index = start; index < end; index++) {
+            if (recoveredCompletedSteps.contains(index)) {
+                continue;
+            }
             final int stepIndex = index;
             tasks.add(() -> executeStepWithRetry(
                 context, cleanAction(steps.get(stepIndex)), stepIndex, policy, loopStartedNanos, executor

@@ -103,6 +103,55 @@ class AgentLoopEngineTest {
     }
 
     @Test
+    void resumesParallelPlanWithoutRepeatingCompletedSiblingSteps() {
+        AgentLoopEngine engine = new AgentLoopEngine();
+        List<Integer> firstRunCalls = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AgentLoopEngine.LoopResult first = engine.execute(
+            context(),
+            List.of("[parallel] 第一步", "[parallel] 第二步", "[parallel] 第三步"),
+            new AgentLoopEngine.ExecutionPolicy(3, 0, 1_000, 3_000, 3),
+            (ignored, action, index) -> {
+                firstRunCalls.add(index);
+                if (index == 1) {
+                    throwFailure();
+                }
+                return "完成 " + action;
+            }
+        );
+
+        List<Integer> recoveryCalls = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AgentLoopEngine.LoopResult resumed = engine.resume(
+            context(),
+            List.of("[parallel] 第一步", "[parallel] 第二步", "[parallel] 第三步"),
+            first,
+            new AgentLoopEngine.ExecutionPolicy(3, 0, 1_000, 3_000, 3),
+            (ignored, action, index) -> {
+                recoveryCalls.add(index);
+                return "恢复完成 " + action;
+            }
+        );
+
+        assertThat(firstRunCalls).containsExactlyInAnyOrder(0, 1, 2);
+        assertThat(recoveryCalls).containsExactly(1);
+        assertThat(resumed.completed()).isTrue();
+    }
+
+    @Test
+    void invalidRecoveryIndexFallsBackToPlanStartInsteadOfReportingCompleted() {
+        AgentLoopEngine.LoopResult resumed = new AgentLoopEngine().resume(
+            context(),
+            List.of("第一步", "第二步"),
+            new AgentLoopEngine.LoopResult(List.of(), "recovered", 99),
+            new AgentLoopEngine.ExecutionPolicy(2, 0, 1_000, 3_000),
+            (ignored, action, index) -> "重新执行 " + action
+        );
+
+        assertThat(resumed.completed()).isTrue();
+        assertThat(resumed.iterations()).extracting(AgentLoopEngine.LoopIteration::iteration)
+            .containsExactly(1, 2);
+    }
+
+    @Test
     void notifiesCheckpointAfterEachCompletedStepAndFailedStep() {
         List<AgentLoopEngine.LoopIteration> checkpoints = new ArrayList<>();
         AgentLoopEngine.LoopResult result = new AgentLoopEngine().execute(
