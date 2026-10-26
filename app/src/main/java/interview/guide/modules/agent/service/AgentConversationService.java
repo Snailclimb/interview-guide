@@ -16,6 +16,9 @@ import interview.guide.modules.interview.service.InterviewPersistenceService;
 import interview.guide.modules.auth.AuthUserContext;
 import jakarta.transaction.Transactional;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.time.LocalDateTime;
@@ -145,6 +148,7 @@ public class AgentConversationService {
         session.setRunSourcesJson(null);
         session.setLoopPlan(null);
         session.setLoopNextStep(0);
+        session.setLoopCompletedSteps(null);
         clearRunUsage(session);
         session = sessionRepository.save(session);
 
@@ -417,12 +421,34 @@ public class AgentConversationService {
     /** 持久化 Loop 计划和下一个待执行步骤，供应用重启后的任务接管使用。 */
     @Transactional
     public void updateLoopState(Long messageId, String plan, int nextStepIndex) {
-        updateLoopState(messageId, plan, nextStepIndex, null);
+        updateLoopState(messageId, plan, nextStepIndex, List.of(), null);
     }
 
     @Transactional
     public void updateLoopState(
         Long messageId, String plan, int nextStepIndex, String expectedRunId
+    ) {
+        updateLoopState(messageId, plan, nextStepIndex, List.of(), expectedRunId);
+    }
+
+    /** 持久化 Loop 计划、下一个步骤以及已完成步骤集合。 */
+    @Transactional
+    public void updateLoopState(
+        Long messageId,
+        String plan,
+        int nextStepIndex,
+        List<Integer> completedStepIndices
+    ) {
+        updateLoopState(messageId, plan, nextStepIndex, completedStepIndices, null);
+    }
+
+    @Transactional
+    public void updateLoopState(
+        Long messageId,
+        String plan,
+        int nextStepIndex,
+        List<Integer> completedStepIndices,
+        String expectedRunId
     ) {
         AgentChatSessionEntity session = lockActiveSession(messageId, expectedRunId);
         if (session == null) {
@@ -431,6 +457,7 @@ public class AgentConversationService {
         }
         session.setLoopPlan(truncate(plan, 1200));
         session.setLoopNextStep(Math.max(0, nextStepIndex));
+        session.setLoopCompletedSteps(serializeLoopCompletedSteps(completedStepIndices));
         sessionRepository.save(session);
     }
 
@@ -533,7 +560,8 @@ public class AgentConversationService {
             assistant.getId(),
             session.getRunId(),
             session.getLoopPlan(),
-            session.getLoopNextStep()
+            session.getLoopNextStep(),
+            parseLoopCompletedSteps(session.getLoopCompletedSteps())
         );
     }
 
@@ -677,6 +705,45 @@ public class AgentConversationService {
         }
     }
 
+    private String serializeLoopCompletedSteps(List<Integer> indices) {
+        if (indices == null || indices.isEmpty()) {
+            return null;
+        }
+        LinkedHashSet<Integer> normalized = new LinkedHashSet<>();
+        indices.stream()
+            .filter(index -> index != null && index >= 0)
+            .sorted(Comparator.naturalOrder())
+            .limit(128)
+            .forEach(normalized::add);
+        return normalized.isEmpty()
+            ? null
+            : normalized.stream()
+                .map(String::valueOf)
+                .reduce((left, right) -> left + "," + right)
+                .orElse(null);
+    }
+
+    private List<Integer> parseLoopCompletedSteps(String serialized) {
+        if (serialized == null || serialized.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(serialized.split(","))
+            .map(String::trim)
+            .filter(value -> !value.isBlank())
+            .flatMap(value -> {
+                try {
+                    return java.util.stream.Stream.of(Integer.parseInt(value));
+                } catch (NumberFormatException ignored) {
+                    return java.util.stream.Stream.empty();
+                }
+            })
+            .filter(index -> index >= 0)
+            .distinct()
+            .sorted()
+            .limit(128)
+            .toList();
+    }
+
     private Optional<AgentChatSessionEntity> findSession(
         String interviewSessionId, String agentSessionId
     ) {
@@ -818,6 +885,7 @@ public class AgentConversationService {
         session.setRunNotice(null);
         session.setLoopPlan(null);
         session.setLoopNextStep(0);
+        session.setLoopCompletedSteps(null);
         sessionRepository.save(session);
         audit(session, "RUN_" + status.name(), "agent-run", session.getRunId(), status.name());
     }
@@ -1008,7 +1076,8 @@ public class AgentConversationService {
         Long assistantMessageId,
         String runId,
         String loopPlan,
-        int loopNextStep
+        int loopNextStep,
+        List<Integer> loopCompletedStepIndices
     ) {
         public RecoveredRun(
             String interviewSessionId,
@@ -1020,7 +1089,7 @@ public class AgentConversationService {
             String runId
         ) {
             this(interviewSessionId, null, goal, providerId, null, memoryKey,
-                userContent, assistantMessageId, runId, null, 0);
+                userContent, assistantMessageId, runId, null, 0, List.of());
         }
 
         public RecoveredRun(
@@ -1034,7 +1103,12 @@ public class AgentConversationService {
             String runId
         ) {
             this(interviewSessionId, agentSessionId, goal, providerId, null, memoryKey,
-                userContent, assistantMessageId, runId, null, 0);
+                userContent, assistantMessageId, runId, null, 0, List.of());
+        }
+
+        public RecoveredRun {
+            loopCompletedStepIndices = loopCompletedStepIndices == null
+                ? List.of() : List.copyOf(loopCompletedStepIndices);
         }
     }
 }

@@ -80,10 +80,29 @@ public class AgentLoopEngine {
         StepExecutor stepExecutor,
         Consumer<LoopIteration> progressListener
     ) {
+        return resume(
+            context, plannedSteps, previous, List.of(), policy, stepExecutor, progressListener
+        );
+    }
+
+    /**
+     * 从持久化检查点恢复；completedStepIndices 用于记录并行组中已完成但位于失败步骤之后的步骤。
+     */
+    public LoopResult resume(
+        AgentContextService.AgentContext context,
+        List<String> plannedSteps,
+        LoopResult previous,
+        List<Integer> completedStepIndices,
+        ExecutionPolicy policy,
+        StepExecutor stepExecutor,
+        Consumer<LoopIteration> progressListener
+    ) {
         int startIndex = previous == null ? 0 : previous.nextStepIndex();
         return executeFrom(
             context, plannedSteps, policy, stepExecutor, startIndex,
-            previous == null ? List.of() : previous.iterations(), progressListener
+            mergeCompletedStepIndices(
+                previous == null ? List.of() : previous.iterations(), completedStepIndices
+            ), progressListener
         );
     }
 
@@ -93,7 +112,7 @@ public class AgentLoopEngine {
         ExecutionPolicy policy,
         StepExecutor stepExecutor,
         int startIndex,
-        List<LoopIteration> recoveredIterations,
+        List<Integer> recoveredCompletedStepIndices,
         Consumer<LoopIteration> progressListener
     ) {
         List<String> safeSteps = plannedSteps == null || plannedSteps.isEmpty()
@@ -112,7 +131,7 @@ public class AgentLoopEngine {
         // 安全回退到计划起点，避免恢复任务误报完成。
         int first = checkpointIndexValid ? startIndex : 0;
         List<Integer> recoveredCompletedSteps = checkpointIndexValid
-            ? completedStepIndices(recoveredIterations, safeSteps.size())
+            ? sanitizeCompletedStepIndices(recoveredCompletedStepIndices, safeSteps.size())
             : List.of();
         int last = Math.min(safeSteps.size(), first + safePolicy.maxSteps());
         long startedNanos = System.nanoTime();
@@ -213,7 +232,39 @@ public class AgentLoopEngine {
         return new LoopResult(List.copyOf(iterations), termination, nextStepIndex);
     }
 
-    private List<Integer> completedStepIndices(
+    private List<Integer> mergeCompletedStepIndices(
+        List<LoopIteration> recoveredIterations,
+        List<Integer> persistedCompletedStepIndices
+    ) {
+        List<Integer> fromIterations = normalizeCompletedStepIndices(
+            recoveredIterations, Integer.MAX_VALUE
+        );
+        if (persistedCompletedStepIndices == null || persistedCompletedStepIndices.isEmpty()) {
+            return fromIterations;
+        }
+        return java.util.stream.Stream.concat(
+                fromIterations.stream(), persistedCompletedStepIndices.stream()
+            )
+            .filter(index -> index != null && index >= 0)
+            .distinct()
+            .sorted()
+            .toList();
+    }
+
+    private List<Integer> sanitizeCompletedStepIndices(
+        List<Integer> indices, int stepCount
+    ) {
+        if (indices == null || indices.isEmpty()) {
+            return List.of();
+        }
+        return indices.stream()
+            .filter(index -> index != null && index >= 0 && index < stepCount)
+            .distinct()
+            .sorted()
+            .toList();
+    }
+
+    private List<Integer> normalizeCompletedStepIndices(
         List<LoopIteration> recoveredIterations, int stepCount
     ) {
         if (recoveredIterations == null || recoveredIterations.isEmpty()) {
@@ -264,11 +315,13 @@ public class AgentLoopEngine {
         List<Integer> recoveredCompletedSteps
     ) {
         List<Callable<StepOutcome>> tasks = new ArrayList<>();
+        List<Integer> taskIndexes = new ArrayList<>();
         for (int index = start; index < end; index++) {
             if (recoveredCompletedSteps.contains(index)) {
                 continue;
             }
             final int stepIndex = index;
+            taskIndexes.add(stepIndex);
             tasks.add(() -> executeStepWithRetry(
                 context, cleanAction(steps.get(stepIndex)), stepIndex, policy, loopStartedNanos, executor
             ));
@@ -284,7 +337,7 @@ public class AgentLoopEngine {
         List<StepOutcome> outcomes = new ArrayList<>();
         for (int offset = 0; offset < futures.size(); offset++) {
             Future<StepOutcome> future = futures.get(offset);
-            int stepIndex = start + offset;
+            int stepIndex = taskIndexes.get(offset);
             try {
                 long waitMillis = Math.max(1, TimeUnit.NANOSECONDS.toMillis(
                     Math.max(1, deadlineNanos - System.nanoTime())

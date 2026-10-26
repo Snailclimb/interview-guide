@@ -137,6 +137,34 @@ class AgentLoopEngineTest {
     }
 
     @Test
+    void restoresPersistedParallelCompletionsAndKeepsOriginalFailureIndex() {
+        List<Integer> recoveryCalls = new java.util.concurrent.CopyOnWriteArrayList<>();
+        AgentLoopEngine.LoopResult resumed = new AgentLoopEngine().resume(
+            context(),
+            List.of("[parallel] 第一步", "[parallel] 第二步", "[parallel] 第三步"),
+            new AgentLoopEngine.LoopResult(List.of(), "recovered", 0),
+            List.<Integer>of(1),
+            new AgentLoopEngine.ExecutionPolicy(3, 0, 1_000, 3_000, 3),
+            (ignored, action, index) -> {
+                recoveryCalls.add(index);
+                if (index == 2) {
+                    throwFailure();
+                }
+                return "恢复完成 " + action;
+            },
+            null
+        );
+
+        assertThat(recoveryCalls).containsExactlyInAnyOrder(0, 2);
+        assertThat(resumed.completed()).isFalse();
+        assertThat(resumed.nextStepIndex()).isEqualTo(2);
+        assertThat(resumed.iterations())
+            .filteredOn(iteration -> "failed".equals(iteration.status()))
+            .extracting(AgentLoopEngine.LoopIteration::iteration)
+            .containsExactly(3);
+    }
+
+    @Test
     void invalidRecoveryIndexFallsBackToPlanStartInsteadOfReportingCompleted() {
         AgentLoopEngine.LoopResult resumed = new AgentLoopEngine().resume(
             context(),

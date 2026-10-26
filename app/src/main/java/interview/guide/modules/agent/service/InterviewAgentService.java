@@ -303,7 +303,11 @@ public class InterviewAgentService {
                 Flux<AgentStreamEvent> workflow = buildWorkflow(
                     recoveredRun.interviewSessionId(), activeKey, request, message, historyMessages, context,
                     prepared, cancellationSignal, taskHandle, runTracker,
-                    new LoopResumeState(recoveredRun.loopPlan(), recoveredRun.loopNextStep())
+                    new LoopResumeState(
+                        recoveredRun.loopPlan(),
+                        recoveredRun.loopNextStep(),
+                        recoveredRun.loopCompletedStepIndices()
+                    )
                 );
                 taskHandle.subscription = workflow.subscribe(
                     ignored -> { },
@@ -363,17 +367,30 @@ public class InterviewAgentService {
                     );
                     int resumeIndex = resumeState == null
                         ? 0 : Math.max(0, resumeState.nextStepIndex());
+                    java.util.Set<Integer> completedStepIndices = new java.util.TreeSet<>(
+                        resumeState == null ? List.of() : resumeState.completedStepIndices()
+                    );
                     persistLoopCheckpoint(
-                        preparedMessage.assistantMessageId(), preparedMessage.runId(), plan, resumeIndex
+                        preparedMessage.assistantMessageId(), preparedMessage.runId(), plan,
+                        resumeIndex, completedStepIndices
                     );
                     java.util.function.Consumer<AgentLoopEngine.LoopIteration> checkpointListener =
-                        iteration -> persistLoopCheckpoint(
-                            preparedMessage.assistantMessageId(),
-                            preparedMessage.runId(),
-                            plan,
-                            "completed".equals(iteration.status())
-                                ? iteration.iteration() : Math.max(0, iteration.iteration() - 1)
-                        );
+                        iteration -> {
+                            int index = Math.max(0, iteration.iteration() - 1);
+                            if ("completed".equals(iteration.status())) {
+                                completedStepIndices.add(index);
+                            } else {
+                                completedStepIndices.remove(index);
+                            }
+                            persistLoopCheckpoint(
+                                preparedMessage.assistantMessageId(),
+                                preparedMessage.runId(),
+                                plan,
+                                "completed".equals(iteration.status())
+                                    ? iteration.iteration() : index,
+                                completedStepIndices
+                            );
+                        };
                     AgentLoopEngine.LoopResult loopResult = resumeState != null
                         && resumeState.nextStepIndex() > 0
                         ? loopEngine.resume(
@@ -382,6 +399,7 @@ public class InterviewAgentService {
                             new AgentLoopEngine.LoopResult(
                                 List.of(), "recovered", resumeState.nextStepIndex()
                             ),
+                            resumeState.completedStepIndices(),
                             loopPolicy,
                             null,
                             checkpointListener
@@ -394,7 +412,7 @@ public class InterviewAgentService {
                     ));
                     persistLoopCheckpoint(
                         preparedMessage.assistantMessageId(), preparedMessage.runId(),
-                        plan, loopResult.nextStepIndex()
+                        plan, loopResult.nextStepIndex(), completedStepIndices
                     );
                     String loopTrace = loopResult.trace()
                         + "\nLoop 终态：" + loopResult.termination();
@@ -647,9 +665,16 @@ public class InterviewAgentService {
     }
 
     private void persistLoopCheckpoint(
-        Long assistantMessageId, String runId, String plan, int nextStepIndex
+        Long assistantMessageId,
+        String runId,
+        String plan,
+        int nextStepIndex,
+        java.util.Set<Integer> completedStepIndices
     ) {
-        agentProgressWriter.recordLoopState(assistantMessageId, runId, plan, nextStepIndex);
+        agentProgressWriter.recordLoopState(
+            assistantMessageId, runId, plan, nextStepIndex,
+            completedStepIndices == null ? List.of() : List.copyOf(completedStepIndices)
+        );
         // Loop 步骤之间可能发生进程退出，检查点必须在步骤边界立即落库。
         agentProgressWriter.flush(assistantMessageId);
     }
@@ -1225,7 +1250,14 @@ public class InterviewAgentService {
         return result;
     }
 
-    private record LoopResumeState(String plan, int nextStepIndex) {
+    private record LoopResumeState(
+        String plan, int nextStepIndex, List<Integer> completedStepIndices
+    ) {
+        private LoopResumeState {
+            completedStepIndices = completedStepIndices == null
+                ? List.of() : List.copyOf(completedStepIndices);
+        }
+
         private boolean hasPlan() {
             return plan != null && !plan.isBlank();
         }
