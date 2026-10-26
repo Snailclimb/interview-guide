@@ -82,6 +82,7 @@ public class AuthSecurityConfig {
                     "/swagger-ui/**",
                     "/swagger-ui.html"
                 ).permitAll()
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .anyRequest().access((authentication, context) ->
                     new org.springframework.security.authorization.AuthorizationDecision(
                         !properties.isRequired() && !isProtectedWebSocket(context.getRequest().getRequestURI())

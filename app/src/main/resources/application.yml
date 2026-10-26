@@ -115,6 +115,7 @@ app:
     secure-cookie: ${APP_AUTH_SECURE_COOKIE:false}
     same-site: ${APP_AUTH_COOKIE_SAME_SITE:Lax}
     require-email-verification: ${APP_AUTH_REQUIRE_EMAIL_VERIFICATION:false}
+    admin-emails: ${APP_AUTH_ADMIN_EMAILS:}
     mail:
       enabled: ${APP_AUTH_MAIL_ENABLED:false}
       from: ${APP_AUTH_MAIL_FROM:no-reply@example.com}

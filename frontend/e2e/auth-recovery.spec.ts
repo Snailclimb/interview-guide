@@ -37,4 +37,32 @@ test.describe('账号验证与密码找回', () => {
     await page.getByRole('button', { name: '返回登录' }).click();
     await expect(page).toHaveURL(/\/login$/);
   });
+
+  test('登录页的管理员入口只对管理员用户展示', async ({ page }) => {
+    await page.route('**/api/auth/me', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          code: 200,
+          message: 'success',
+          data: { required: true, authenticated: true, user: {
+            id: 'admin-1', email: 'admin@example.com', nickname: '管理员', status: 'ACTIVE',
+            role: 'ADMIN', emailVerified: true, lastLoginAt: null,
+          } },
+          success: true,
+        }),
+      });
+    });
+    await page.route('**/api/admin/users?limit=100', async route => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 200, message: 'success', data: [], success: true }) });
+    });
+    await page.route('**/api/admin/audit/events?limit=100', async route => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 200, message: 'success', data: [], success: true }) });
+    });
+
+    await page.goto('/admin');
+    await expect(page.getByRole('heading', { name: '管理员治理' })).toBeVisible();
+    await expect(page.getByText('账号列表')).toBeVisible();
+  });
 });

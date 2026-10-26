@@ -37,6 +37,10 @@ public class UserAccountEntity {
     @Builder.Default
     private String status = "ACTIVE";
 
+    @Column(nullable = false, length = 16)
+    @Builder.Default
+    private String role = "USER";
+
     @Column(name = "email_verified", nullable = false)
     @Builder.Default
     private boolean emailVerified = false;

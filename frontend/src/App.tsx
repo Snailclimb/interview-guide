@@ -31,6 +31,7 @@ const InterviewDetailPanel = lazy(() => import('./components/InterviewDetailPane
 const AgentPage = lazy(() => import('./pages/AgentPage'));
 const AuthPage = lazy(() => import('./pages/AuthPage'));
 const AuthActionPage = lazy(() => import('./pages/AuthActionPage'));
+const AdminPage = lazy(() => import('./pages/AdminPage'));
 
 // Loading component
 const Loading = () => (
@@ -285,6 +286,9 @@ function App() {
 
             {/* 设置 */}
             <Route path="settings" element={<SettingsPage />} />
+
+            {/* 管理员治理 */}
+            <Route path="admin" element={<AdminPage />} />
 
             {/* 问答助手（知识库聊天） */}
             <Route path="knowledgebase/chat" element={<KnowledgeBaseQueryPageWrapper />} />

@@ -69,6 +69,7 @@ public class AuthService {
             .email(email)
             .passwordHash(passwordEncoder.encode(request.password()))
             .nickname(normalizeNickname(request.nickname(), email))
+            .role(properties.isBootstrapAdminEmail(email) ? "ADMIN" : "USER")
             .emailVerified(!properties.isRequireEmailVerification())
             .build();
         UserAccountEntity saved = userRepository.save(user);
@@ -87,6 +88,9 @@ public class AuthService {
         }
         if (!"ACTIVE".equalsIgnoreCase(user.getStatus())) {
             throw new BusinessException(ErrorCode.AUTH_ACCOUNT_DISABLED);
+        }
+        if (properties.isBootstrapAdminEmail(email) && !"ADMIN".equalsIgnoreCase(user.getRole())) {
+            user.setRole("ADMIN");
         }
         if (properties.isRequireEmailVerification() && !user.isEmailVerified()) {
             throw new BusinessException(ErrorCode.AUTH_TOKEN_INVALID, "请先验证邮箱后再登录");

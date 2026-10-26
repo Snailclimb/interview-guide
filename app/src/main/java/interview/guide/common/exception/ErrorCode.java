@@ -91,7 +91,10 @@ public enum ErrorCode {
     AUTH_PASSWORD_TOO_WEAK(12004, "密码强度不足"),
     AUTH_SESSION_INVALID(12005, "登录状态已失效，请重新登录"),
     AUTH_TOKEN_INVALID(12006, "链接无效或已过期"),
-    AUTH_EMAIL_DELIVERY_UNAVAILABLE(12007, "认证邮件服务暂不可用，请联系管理员");
+    AUTH_EMAIL_DELIVERY_UNAVAILABLE(12007, "认证邮件服务暂不可用，请联系管理员"),
+    AUTH_ADMIN_REQUIRED(12008, "需要管理员权限"),
+    AUTH_ADMIN_LAST_ACCOUNT(12009, "不能停用或降级最后一个管理员"),
+    AUTH_ADMIN_USER_NOT_FOUND(12010, "目标用户不存在");
 
     private final Integer code;
     private final String message;

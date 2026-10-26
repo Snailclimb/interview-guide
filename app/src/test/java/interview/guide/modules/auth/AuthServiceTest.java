@@ -58,6 +58,7 @@ class AuthServiceTest {
 
         assertThat(result.email()).isEqualTo("user@example.com");
         assertThat(result.nickname()).isEqualTo("小明");
+        assertThat(result.role()).isEqualTo("USER");
         verify(passwordEncoder).encode("StrongPass123");
         verify(userRepository).save(any(UserAccountEntity.class));
         assertThat(result.emailVerified()).isTrue();
@@ -173,5 +174,22 @@ class AuthServiceTest {
         ).requestPasswordReset("missing@example.com");
 
         verifyNoInteractions(tokenService, mailService);
+    }
+
+    @Test
+    void configuredAdminEmailGetsAdminRoleOnRegistration() {
+        properties.setAdminEmails(java.util.List.of("admin@example.com"));
+        when(userRepository.existsByEmailIgnoreCase("admin@example.com")).thenReturn(false);
+        when(passwordEncoder.encode("StrongPass123")).thenReturn("$2a$12$hash");
+        when(userRepository.save(any(UserAccountEntity.class))).thenAnswer(invocation -> {
+            UserAccountEntity user = invocation.getArgument(0);
+            user.setId("admin-1");
+            return user;
+        });
+
+        var result = new AuthService(userRepository, passwordEncoder, properties)
+            .register(new RegisterRequest("ADMIN@example.com", "StrongPass123", null));
+
+        assertThat(result.role()).isEqualTo("ADMIN");
     }
 }

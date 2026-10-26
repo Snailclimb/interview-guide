@@ -6,6 +6,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
+import interview.guide.modules.auth.model.UserAccountEntity;
+import interview.guide.modules.auth.repository.UserAccountRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -19,6 +22,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @RequiredArgsConstructor
 public class AuthSessionFilter extends OncePerRequestFilter {
     private final AuthSessionService sessionService;
+    private final UserAccountRepository userRepository;
 
     @Override
     protected void doFilterInternal(
@@ -28,23 +32,33 @@ public class AuthSessionFilter extends OncePerRequestFilter {
     ) throws ServletException, IOException {
         String token = sessionService.readToken(request);
         var sessionUser = sessionService.resolve(token);
-        sessionUser.ifPresent(userId -> {
-            AuthUserContext.set(userId);
-            UsernamePasswordAuthenticationToken authentication =
-                new UsernamePasswordAuthenticationToken(
-                    userId,
-                    null,
-                    List.of(new SimpleGrantedAuthority("ROLE_USER"))
-                );
-            authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-            SecurityContextHolder.getContext().setAuthentication(authentication);
-        });
+        if (sessionUser.isPresent()) {
+            Optional<UserAccountEntity> account = userRepository.findById(sessionUser.get());
+            if (account.isPresent() && "ACTIVE".equalsIgnoreCase(account.get().getStatus())) {
+                authenticate(request, account.get());
+            } else {
+                sessionService.invalidate(request, response);
+            }
+        }
         try {
             filterChain.doFilter(request, response);
         } finally {
             AuthUserContext.clear();
             SecurityContextHolder.clearContext();
         }
+    }
+
+    private void authenticate(HttpServletRequest request, UserAccountEntity user) {
+        AuthUserContext.set(user.getId());
+        String role = "ADMIN".equalsIgnoreCase(user.getRole()) ? "ROLE_ADMIN" : "ROLE_USER";
+        UsernamePasswordAuthenticationToken authentication =
+            new UsernamePasswordAuthenticationToken(
+                user.getId(),
+                null,
+                List.of(new SimpleGrantedAuthority(role))
+            );
+        authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+        SecurityContextHolder.getContext().setAuthentication(authentication);
     }
 
     private String legacyIdentity(HttpServletRequest request) {
