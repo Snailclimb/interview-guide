@@ -71,6 +71,9 @@ pwsh -NoProfile -File .\scripts\formal-agent-acceptance.ps1 -BaseUrl http://loca
 pwsh -NoProfile -File .\scripts\agent-restart-acceptance.ps1 -BaseUrl http://localhost:18083 -StatePath $env:TEMP\agent-recovery-state.json
 # 停止并重新启动 API，等待超过 30 秒后：
 pwsh -NoProfile -File .\scripts\agent-restart-acceptance.ps1 -BaseUrl http://localhost:18083 -VerifyStatePath $env:TEMP\agent-recovery-state.json -Cleanup
+
+# 管理员账号治理和 Agent 低敏审计（只读验收，不修改账号）
+pwsh -NoProfile -File .\scripts\admin-governance-acceptance.ps1 -BaseUrl http://localhost:18083 -AdminEmail admin@example.com -AdminPassword $env:APP_ADMIN_PASSWORD
 ```
 
 验收覆盖：未登录 401、注册、重复注册、登录 Cookie、会话恢复、CSRF、旧 Header 防伪、退出和退出后的会话失效；以及不同账号之间的简历、语音面试、面试日程和 Agent 会话隔离。
