@@ -146,17 +146,21 @@ class AgentLoopEngineTest {
 
     @Test
     void parallelFailureKeepsResumeIndexAtFirstFailedStep() {
+        List<AgentLoopEngine.LoopIteration> checkpoints = new ArrayList<>();
         AgentLoopEngine.LoopResult result = new AgentLoopEngine().execute(
             context(),
             List.of("[parallel] 成功读取", "[parallel] 失败读取", "汇总建议"),
             new AgentLoopEngine.ExecutionPolicy(3, 0, 1_000, 3_000, 2),
-            (ignored, action, index) -> index == 1 ? throwFailure() : "完成 " + action
+            (ignored, action, index) -> index == 1 ? throwFailure() : "完成 " + action,
+            checkpoints::add
         );
 
         assertThat(result.completed()).isFalse();
         assertThat(result.termination()).isEqualTo("step_failed");
         assertThat(result.nextStepIndex()).isEqualTo(1);
         assertThat(result.iterations()).hasSize(2);
+        assertThat(checkpoints).extracting(AgentLoopEngine.LoopIteration::status)
+            .containsExactly("completed", "failed");
     }
 
     private AgentContextService.AgentContext context() {

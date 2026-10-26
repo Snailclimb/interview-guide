@@ -117,9 +117,8 @@ public class AgentLoopEngine {
                 );
                 iterations.addAll(group.iterations());
                 if (group.failed()) {
-                    group.iterations().stream()
-                        .filter(item -> !"completed".equals(item.status()))
-                        .forEach(item -> notifyProgress(progressListener, item));
+                    // 成功的并行步骤也要先落检查点；恢复只能从最早失败步骤继续。
+                    group.iterations().forEach(item -> notifyProgress(progressListener, item));
                     termination = group.timeout() ? "step_timeout" : "step_failed";
                     nextStepIndex = group.nextStepIndex();
                     break;
