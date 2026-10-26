@@ -35,3 +35,15 @@ export interface SecurityAuditEvent {
   result: string | null;
   createdAt: string;
 }
+
+export interface AdminAgentAuditEvent {
+  id: number;
+  ownerKey: string | null;
+  interviewSessionId: string | null;
+  agentSessionId: string | null;
+  action: string;
+  resourceType: string;
+  resourceId: string | null;
+  result: string | null;
+  createdAt: string;
+}

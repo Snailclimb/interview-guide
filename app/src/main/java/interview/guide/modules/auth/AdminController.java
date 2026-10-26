@@ -2,6 +2,7 @@ package interview.guide.modules.auth;
 
 import interview.guide.common.result.Result;
 import interview.guide.modules.auth.model.AdminUserResponse;
+import interview.guide.modules.auth.model.AdminAgentAuditEventResponse;
 import interview.guide.modules.auth.model.SecurityAuditEventResponse;
 import interview.guide.modules.auth.model.UpdateAdminUserRoleRequest;
 import interview.guide.modules.auth.model.UpdateAdminUserStatusRequest;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class AdminController {
     private final AdminGovernanceService governanceService;
+    private final AdminAgentAuditService agentAuditService;
 
     @GetMapping("/api/admin/users")
     public Result<List<AdminUserResponse>> listUsers(
@@ -49,5 +51,12 @@ public class AdminController {
         @RequestParam(value = "limit", defaultValue = "100") int limit
     ) {
         return Result.success(governanceService.listAuditEvents(limit));
+    }
+
+    @GetMapping("/api/admin/agent-audit/events")
+    public Result<List<AdminAgentAuditEventResponse>> listAgentAuditEvents(
+        @RequestParam(value = "limit", defaultValue = "100") int limit
+    ) {
+        return Result.success(agentAuditService.list(limit));
     }
 }

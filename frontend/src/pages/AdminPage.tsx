@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { ShieldCheck, UserCheck, UserRoundX, RefreshCw } from 'lucide-react';
 import { adminApi } from '../api/admin';
-import type { AdminUser, SecurityAuditEvent } from '../types/auth';
+import type { AdminAgentAuditEvent, AdminUser, SecurityAuditEvent } from '../types/auth';
 import { getErrorMessage } from '../api/request';
 
 export default function AdminPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [events, setEvents] = useState<SecurityAuditEvent[]>([]);
+  const [agentEvents, setAgentEvents] = useState<AdminAgentAuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState('');
 
@@ -14,9 +15,12 @@ export default function AdminPage() {
     setLoading(true);
     setNotice('');
     try {
-      const [nextUsers, nextEvents] = await Promise.all([adminApi.users(), adminApi.auditEvents()]);
+      const [nextUsers, nextEvents, nextAgentEvents] = await Promise.all([
+        adminApi.users(), adminApi.auditEvents(), adminApi.agentAuditEvents(),
+      ]);
       setUsers(nextUsers);
       setEvents(nextEvents);
+      setAgentEvents(nextAgentEvents);
     } catch (error) {
       setNotice(getErrorMessage(error));
     } finally {
@@ -87,6 +91,21 @@ export default function AdminPage() {
       <section className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800"><h2 className="font-semibold text-slate-900 dark:text-white">安全审计</h2></div>
         <div className="divide-y divide-slate-100 dark:divide-slate-800">{events.length === 0 ? <p className="px-5 py-6 text-sm text-slate-400">暂无管理员操作记录</p> : events.slice(0, 20).map(event => <div key={event.id} className="px-5 py-3 flex items-center justify-between gap-4 text-sm"><span className="text-slate-700 dark:text-slate-300">{event.action}</span><span className="text-xs text-slate-400">{event.result} · {new Date(event.createdAt).toLocaleString()}</span></div>)}</div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+          <h2 className="font-semibold text-slate-900 dark:text-white">Agent 运行审计</h2>
+          <p className="mt-1 text-xs text-slate-400">仅展示账号标识、运行动作和工具名称，不包含 Prompt、回答或工具参数。</p>
+        </div>
+        <div className="divide-y divide-slate-100 dark:divide-slate-800">
+          {agentEvents.length === 0 ? <p className="px-5 py-6 text-sm text-slate-400">暂无 Agent 操作记录</p> : agentEvents.slice(0, 30).map(event => (
+            <div key={event.id} className="px-5 py-3 flex items-center justify-between gap-4 text-sm">
+              <div className="min-w-0"><span className="text-slate-700 dark:text-slate-300">{event.action}</span><span className="ml-2 text-xs text-slate-400">{event.resourceId || event.resourceType}</span></div>
+              <div className="shrink-0 text-right text-xs text-slate-400"><div>{event.result || 'unknown'} · {event.ownerKey || 'unknown'}</div><div>{new Date(event.createdAt).toLocaleString()}</div></div>
+            </div>
+          ))}
+        </div>
       </section>
     </div>
   );

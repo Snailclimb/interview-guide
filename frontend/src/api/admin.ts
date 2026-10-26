@@ -1,5 +1,5 @@
 import request from './request.ts';
-import type { AdminUser, SecurityAuditEvent } from '../types/auth.ts';
+import type { AdminAgentAuditEvent, AdminUser, SecurityAuditEvent } from '../types/auth.ts';
 
 export const adminApi = {
   users(limit = 100): Promise<AdminUser[]> {
@@ -8,6 +8,12 @@ export const adminApi = {
 
   auditEvents(limit = 100): Promise<SecurityAuditEvent[]> {
     return request.get<SecurityAuditEvent[]>(`/api/admin/audit/events?limit=${Math.max(1, Math.min(200, limit))}`);
+  },
+
+  agentAuditEvents(limit = 100): Promise<AdminAgentAuditEvent[]> {
+    return request.get<AdminAgentAuditEvent[]>(
+      `/api/admin/agent-audit/events?limit=${Math.max(1, Math.min(200, limit))}`,
+    );
   },
 
   updateStatus(userId: string, status: 'ACTIVE' | 'DISABLED'): Promise<AdminUser> {

@@ -60,6 +60,9 @@ test.describe('账号验证与密码找回', () => {
     await page.route('**/api/admin/audit/events?limit=100', async route => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 200, message: 'success', data: [], success: true }) });
     });
+    await page.route('**/api/admin/agent-audit/events?limit=100', async route => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 200, message: 'success', data: [], success: true }) });
+    });
 
     await page.goto('/admin');
     await expect(page.getByRole('heading', { name: '管理员治理' })).toBeVisible();
