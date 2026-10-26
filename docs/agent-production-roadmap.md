@@ -38,6 +38,10 @@ Markdown 换行/代码围栏和 Loop 步骤预算做可重复检查；`agent-eva
 提供 dev/holdout 样本契约，执行入口为 `./gradlew :app:agentEvaluation`。它只证明
 可观测的回归条件，真实模型回答的语义正确性仍需后续真实样本评测和人工抽检。
 
+真实样本采集已自动化：`scripts/agent-quality-collector.ps1` 会在正式登录环境逐条执行评测语料，
+从持久化会话提取回答、来源、Loop 观察和用量，生成 `agentEvaluation` 可消费的 JSONL；SSE
+业务错误、未进入 `RUNNING` 或非 `COMPLETED` 状态会直接失败，不会把空回答写入质量样本。
+
 当前集成分支已增加运行用量摘要：用量只保存聚合值，不保存 Prompt、完整回答、会话 ID 或
 密钥；重试和备用 Provider 的模型调用会合并计数。没有配置单价时页面明确显示“未配置单价”。
 
