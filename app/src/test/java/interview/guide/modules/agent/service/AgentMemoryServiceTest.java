@@ -145,4 +145,23 @@ class AgentMemoryServiceTest {
         var created = service.remember("browser-key", "java-backend", List.of("Redis"), null);
         assertThat(created.items().get(0).expiresAt()).isAfter(LocalDateTime.now());
     }
+
+    @Test
+    void recordsLowSensitivityAuditForManualMemoryChanges() throws Exception {
+        AgentUserMemoryRepository repository = mock(AgentUserMemoryRepository.class);
+        AgentAuditService auditService = mock(AgentAuditService.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+        when(repository.findByMemoryKey("browser-key")).thenReturn(Optional.empty());
+        when(repository.save(any(AgentUserMemoryEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+        AgentMemoryService service = new AgentMemoryService(
+            repository, objectMapper, new AgentMemoryProperties(), auditService
+        );
+
+        service.remember("browser-key", "java-backend", List.of("Redis"), null);
+
+        org.mockito.Mockito.verify(auditService).recordQuietly(
+            "browser-key", null, null, null, "MEMORY_REMEMBERED", "memory", "browser-key", "success"
+        );
+    }
 }

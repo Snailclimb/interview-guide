@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.Optional;
 import java.time.LocalDateTime;
 import java.util.UUID;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -35,7 +35,6 @@ import tools.jackson.databind.ObjectMapper;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class AgentConversationService {
 
     private static final int MAX_PERSISTED_HISTORY_MESSAGES = 64;
@@ -47,6 +46,32 @@ public class AgentConversationService {
     private final AgentChatMessageRepository messageRepository;
     private final ObjectMapper objectMapper;
     private final InterviewPersistenceService interviewPersistenceService;
+    private final AgentAuditService auditService;
+
+    /** 兼容无 Spring 容器的旧测试和内部调用方。 */
+    public AgentConversationService(
+        AgentChatSessionRepository sessionRepository,
+        AgentChatMessageRepository messageRepository,
+        ObjectMapper objectMapper,
+        InterviewPersistenceService interviewPersistenceService
+    ) {
+        this(sessionRepository, messageRepository, objectMapper, interviewPersistenceService, null);
+    }
+
+    @Autowired
+    public AgentConversationService(
+        AgentChatSessionRepository sessionRepository,
+        AgentChatMessageRepository messageRepository,
+        ObjectMapper objectMapper,
+        InterviewPersistenceService interviewPersistenceService,
+        AgentAuditService auditService
+    ) {
+        this.sessionRepository = sessionRepository;
+        this.messageRepository = messageRepository;
+        this.objectMapper = objectMapper;
+        this.interviewPersistenceService = interviewPersistenceService;
+        this.auditService = auditService;
+    }
 
     @Transactional
     public PreparedMessage prepareMessage(
@@ -145,6 +170,7 @@ public class AgentConversationService {
         assistantMessage = messageRepository.save(assistantMessage);
         session.setActiveMessageId(assistantMessage.getId());
         sessionRepository.save(session);
+        audit(session, "RUN_STARTED", "agent-run", runId, "success");
         return new PreparedMessage(assistantMessage.getId(), session.getId(), runId, session.getAgentSessionId());
     }
 
@@ -788,6 +814,23 @@ public class AgentConversationService {
         session.setLoopPlan(null);
         session.setLoopNextStep(0);
         sessionRepository.save(session);
+        audit(session, "RUN_" + status.name(), "agent-run", session.getRunId(), status.name());
+    }
+
+    private void audit(
+        AgentChatSessionEntity session,
+        String action,
+        String resourceType,
+        String resourceId,
+        String result
+    ) {
+        if (auditService == null || session == null) {
+            return;
+        }
+        auditService.recordQuietly(
+            session.getOwnerKey(), session.getInterviewSessionId(), session.getAgentSessionId(),
+            session.getRunId(), action, resourceType, resourceId, result
+        );
     }
 
     private void clearRunUsage(AgentChatSessionEntity session) {

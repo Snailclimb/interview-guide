@@ -38,24 +38,35 @@ public class AgentMemoryService {
     private final AgentUserMemoryRepository repository;
     private final ObjectMapper objectMapper;
     private final AgentMemoryProperties properties;
+    private final AgentAuditService auditService;
 
     /** 保留无 Spring 容器调用方式，便于单元测试和兼容旧调用方。 */
     public AgentMemoryService(
         AgentUserMemoryRepository repository,
         ObjectMapper objectMapper
     ) {
-        this(repository, objectMapper, new AgentMemoryProperties());
+        this(repository, objectMapper, new AgentMemoryProperties(), null);
+    }
+
+    public AgentMemoryService(
+        AgentUserMemoryRepository repository,
+        ObjectMapper objectMapper,
+        AgentMemoryProperties properties
+    ) {
+        this(repository, objectMapper, properties, null);
     }
 
     @Autowired
     public AgentMemoryService(
         AgentUserMemoryRepository repository,
         ObjectMapper objectMapper,
-        AgentMemoryProperties properties
+        AgentMemoryProperties properties,
+        AgentAuditService auditService
     ) {
         this.repository = repository;
         this.objectMapper = objectMapper;
         this.properties = properties == null ? new AgentMemoryProperties() : properties;
+        this.auditService = auditService;
     }
 
     public String normalizeKey(String value) {
@@ -97,7 +108,9 @@ public class AgentMemoryService {
             items, goal == null ? List.of() : List.of(goal), CATEGORY_GOAL,
             DEFAULT_SOURCE, nextSkill, MAX_GOALS
         );
-        return saveSnapshot(key, nextSkill, items);
+        AgentMemorySnapshot snapshot = saveSnapshot(key, nextSkill, items);
+        audit(key, "MEMORY_REMEMBERED", "memory", key, "success");
+        return snapshot;
     }
 
     /** 编辑一条结构化记忆，保留其分类和来源，只允许修改内容和适用方向。 */
@@ -124,7 +137,9 @@ public class AgentMemoryService {
             normalizedScope,
             current.confidence(), LocalDateTime.now(), expiresAt(LocalDateTime.now())
         ));
-        return saveSnapshot(key, previous.lastSkillId(), items);
+        AgentMemorySnapshot snapshot = saveSnapshot(key, previous.lastSkillId(), items);
+        audit(key, "MEMORY_UPDATED", "memory-item", normalizedId, "success");
+        return snapshot;
     }
 
     /** 删除一条结构化记忆；删除后会同步更新兼容旧接口的摘要字段。 */
@@ -139,12 +154,16 @@ public class AgentMemoryService {
             throw new BusinessException(ErrorCode.NOT_FOUND, "长期记忆不存在");
         }
         items.remove(index);
-        return saveSnapshot(key, previous.lastSkillId(), items);
+        AgentMemorySnapshot snapshot = saveSnapshot(key, previous.lastSkillId(), items);
+        audit(key, "MEMORY_DELETED", "memory-item", normalizedId, "success");
+        return snapshot;
     }
 
     @Transactional
     public void clear(String memoryKey) {
-        repository.deleteByMemoryKey(normalizeKey(memoryKey));
+        String key = normalizeKey(memoryKey);
+        repository.deleteByMemoryKey(key);
+        audit(key, "MEMORY_CLEARED", "memory", key, "success");
     }
 
     private AgentMemorySnapshot deserialize(AgentUserMemoryEntity entity) {
@@ -426,5 +445,15 @@ public class AgentMemoryService {
             return null;
         }
         return updatedAt.plus(properties.getRetentionDays(), ChronoUnit.DAYS);
+    }
+
+    private void audit(
+        String ownerKey, String action, String resourceType, String resourceId, String result
+    ) {
+        if (auditService != null) {
+            auditService.recordQuietly(
+                ownerKey, null, null, null, action, resourceType, resourceId, result
+            );
+        }
     }
 }
