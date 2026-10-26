@@ -189,6 +189,9 @@ public class InterviewAgentService {
                 String resolvedAgentSessionId = preparedMessage.agentSessionId() == null
                     ? activeKey : preparedMessage.agentSessionId();
                 activeAgentSessionKeyRef.set(resolvedAgentSessionId);
+                agentMetrics.setAuditContext(
+                    runTracker, dataOwnerKey, sessionId, resolvedAgentSessionId, preparedMessage.runId()
+                );
                 activeTasks.put(resolvedAgentSessionId, taskHandle);
                 persistRunProgress(
                     preparedMessage.assistantMessageId(), "context", "running", null,
@@ -255,6 +258,13 @@ public class InterviewAgentService {
             cancellationSignals.put(activeKey, cancellationSignal);
             AgentMetrics.RunTracker runTracker = agentMetrics.startRun(
                 retryProperties.getMaxModelCallsPerRun(), retryProperties.getMaxToolCallsPerRun()
+            );
+            agentMetrics.setAuditContext(
+                runTracker,
+                recoveredRun.ownerKey(),
+                recoveredRun.interviewSessionId(),
+                recoveredRun.agentSessionId(),
+                recoveredRun.runId()
             );
             AgentTaskHandle taskHandle = new AgentTaskHandle(
                 recoveredRun.assistantMessageId(), recoveredRun.runId(), cancellationSignal

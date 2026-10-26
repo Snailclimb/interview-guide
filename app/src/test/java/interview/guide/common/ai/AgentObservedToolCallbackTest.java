@@ -2,6 +2,7 @@ package interview.guide.common.ai;
 
 import interview.guide.modules.agent.metrics.AgentMetrics;
 import interview.guide.modules.agent.metrics.AgentRunBudgetExceededException;
+import interview.guide.modules.agent.service.AgentAuditService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
 import java.util.Map;
@@ -13,6 +14,7 @@ import org.springframework.ai.tool.definition.ToolDefinition;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @DisplayName("Agent 工具调用观测")
@@ -68,6 +70,30 @@ class AgentObservedToolCallbackTest {
             .isInstanceOf(AgentRunBudgetExceededException.class)
             .hasMessageContaining("工具调用");
         org.mockito.Mockito.verify(delegate).call("{\"skill\":\"java\"}", context);
+    }
+
+    @Test
+    @DisplayName("工具调用只写入低敏审计摘要")
+    void recordsLowSensitivityAuditForAgentRun() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        AgentMetrics metrics = metrics(registry);
+        AgentMetrics.RunTracker run = metrics.startRun(4, 2);
+        metrics.setAuditContext(run, "user-1", "interview-1", "agent-1", "run-1");
+        AgentAuditService auditService = mock(AgentAuditService.class);
+        ToolCallback delegate = mockTool("load_skill", "技能内容");
+        AgentObservedToolCallback observed = new AgentObservedToolCallback(delegate, metrics, auditService);
+        org.springframework.ai.chat.model.ToolContext context =
+            new org.springframework.ai.chat.model.ToolContext(Map.of(
+                AgentMetrics.RUN_TRACKER_TOOL_CONTEXT_KEY, run
+            ));
+        when(delegate.call("{\"skill\":\"java\"}", context)).thenReturn("技能内容");
+
+        observed.call("{\"skill\":\"java\"}", context);
+
+        verify(auditService).recordQuietly(
+            "user-1", "interview-1", "agent-1", "run-1",
+            "TOOL_CALLED", "agent-tool", "load_skill", "success"
+        );
     }
 
     private AgentMetrics metrics(SimpleMeterRegistry registry) {

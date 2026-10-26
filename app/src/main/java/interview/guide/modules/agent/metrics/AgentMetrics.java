@@ -82,6 +82,21 @@ public class AgentMetrics {
         return new RunTracker(System.nanoTime(), maxModelCalls, maxToolCalls);
     }
 
+    /** 为当前运行绑定低敏审计上下文；不放入 Prompt 或指标标签。 */
+    public void setAuditContext(
+        RunTracker tracker,
+        String ownerKey,
+        String interviewSessionId,
+        String agentSessionId,
+        String runId
+    ) {
+        if (tracker != null) {
+            tracker.setAuditContext(new AuditContext(
+                ownerKey, interviewSessionId, agentSessionId, runId
+            ));
+        }
+    }
+
     public void finishRun(RunTracker tracker, String result) {
         if (tracker == null || !tracker.finished.compareAndSet(false, true)) {
             return;
@@ -279,6 +294,7 @@ public class AgentMetrics {
         private final AtomicReference<String> currency = new AtomicReference<>();
         private final AtomicReference<String> provider = new AtomicReference<>();
         private final AtomicReference<String> model = new AtomicReference<>();
+        private volatile AuditContext auditContext = AuditContext.empty();
 
         private RunTracker(long startedNanos, int maxModelCalls, int maxToolCalls) {
             this.startedNanos = startedNanos;
@@ -301,6 +317,14 @@ public class AgentMetrics {
                 reservedToolCalls.decrementAndGet();
                 throw new AgentRunBudgetExceededException("工具调用", maxToolCalls);
             }
+        }
+
+        private void setAuditContext(AuditContext context) {
+            auditContext = context == null ? AuditContext.empty() : context;
+        }
+
+        public AuditContext auditContext() {
+            return auditContext;
         }
 
         private void record(
@@ -340,6 +364,17 @@ public class AgentMetrics {
                 provider.get(),
                 model.get()
             );
+        }
+    }
+
+    public record AuditContext(
+        String ownerKey,
+        String interviewSessionId,
+        String agentSessionId,
+        String runId
+    ) {
+        public static AuditContext empty() {
+            return new AuditContext(null, null, null, null);
         }
     }
 }

@@ -7,6 +7,7 @@ import interview.guide.common.config.LlmProviderProperties.ProviderConfig;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.agent.metrics.AgentMetrics;
+import interview.guide.modules.agent.service.AgentAuditService;
 import interview.guide.modules.llmprovider.model.LlmGlobalSettingEntity;
 import interview.guide.modules.llmprovider.model.LlmProviderEntity;
 import interview.guide.modules.llmprovider.repository.LlmGlobalSettingRepository;
@@ -64,6 +65,7 @@ public class LlmProviderRegistry {
     private final ObservationRegistry observationRegistry;
     private final ToolCallback interviewSkillsToolCallback;
     private final AgentMetrics agentMetrics;
+    private final AgentAuditService agentAuditService;
 
     @Autowired
     public LlmProviderRegistry(
@@ -74,7 +76,8 @@ public class LlmProviderRegistry {
             @Autowired(required = false) ToolCallingManager toolCallingManager,
             @Autowired(required = false) ObservationRegistry observationRegistry,
             @Autowired(required = false) @Qualifier("interviewSkillsToolCallback") ToolCallback interviewSkillsToolCallback,
-            @Autowired(required = false) AgentMetrics agentMetrics) {
+             @Autowired(required = false) AgentMetrics agentMetrics,
+             @Autowired(required = false) AgentAuditService agentAuditService) {
         this.properties = properties;
         this.providerRepository = providerRepository;
         this.globalSettingRepository = globalSettingRepository;
@@ -83,6 +86,7 @@ public class LlmProviderRegistry {
         this.observationRegistry = observationRegistry;
         this.interviewSkillsToolCallback = interviewSkillsToolCallback;
         this.agentMetrics = agentMetrics;
+        this.agentAuditService = agentAuditService;
     }
 
     public LlmProviderRegistry(
@@ -90,7 +94,8 @@ public class LlmProviderRegistry {
             ToolCallingManager toolCallingManager,
             ObservationRegistry observationRegistry,
             ToolCallback interviewSkillsToolCallback) {
-        this(properties, null, null, null, toolCallingManager, observationRegistry, interviewSkillsToolCallback, null);
+        this(properties, null, null, null, toolCallingManager, observationRegistry,
+            interviewSkillsToolCallback, null, null);
     }
 
     /**
@@ -362,7 +367,9 @@ public class LlmProviderRegistry {
         OpenAiChatModel chatModel = getChatModel(providerId);
         ChatClient.Builder builder = ChatClient.builder(chatModel);
         if (interviewSkillsToolCallback != null) {
-            builder.defaultTools(new AgentObservedToolCallback(interviewSkillsToolCallback, agentMetrics));
+            builder.defaultTools(new AgentObservedToolCallback(
+                interviewSkillsToolCallback, agentMetrics, agentAuditService
+            ));
         }
         List<Advisor> advisors = new ArrayList<>();
         if (toolCallingManager != null && interviewSkillsToolCallback != null) {
