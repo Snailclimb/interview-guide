@@ -8,11 +8,12 @@ import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.agent.repository.AgentUserMemoryRepository;
 import jakarta.transaction.Transactional;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.UUID;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
@@ -25,7 +26,6 @@ import tools.jackson.databind.ObjectMapper;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class AgentMemoryService {
     private static final String ANONYMOUS_KEY = "anonymous";
     private static final int MAX_WEAKNESSES = 8;
@@ -37,6 +37,26 @@ public class AgentMemoryService {
 
     private final AgentUserMemoryRepository repository;
     private final ObjectMapper objectMapper;
+    private final AgentMemoryProperties properties;
+
+    /** 保留无 Spring 容器调用方式，便于单元测试和兼容旧调用方。 */
+    public AgentMemoryService(
+        AgentUserMemoryRepository repository,
+        ObjectMapper objectMapper
+    ) {
+        this(repository, objectMapper, new AgentMemoryProperties());
+    }
+
+    @Autowired
+    public AgentMemoryService(
+        AgentUserMemoryRepository repository,
+        ObjectMapper objectMapper,
+        AgentMemoryProperties properties
+    ) {
+        this.repository = repository;
+        this.objectMapper = objectMapper;
+        this.properties = properties == null ? new AgentMemoryProperties() : properties;
+    }
 
     public String normalizeKey(String value) {
         if (value == null || value.isBlank()) {
@@ -53,6 +73,7 @@ public class AgentMemoryService {
         String key = normalizeKey(memoryKey);
         return repository.findByMemoryKey(key)
             .map(this::deserialize)
+            .map(this::removeExpired)
             .orElseGet(() -> AgentMemorySnapshot.empty(key));
     }
 
@@ -101,7 +122,7 @@ public class AgentMemoryService {
         items.set(index, new AgentMemoryItem(
             current.id(), current.category(), normalizedContent, current.source(),
             normalizedScope,
-            current.confidence(), LocalDateTime.now()
+            current.confidence(), LocalDateTime.now(), expiresAt(LocalDateTime.now())
         ));
         return saveSnapshot(key, previous.lastSkillId(), items);
     }
@@ -188,7 +209,7 @@ public class AgentMemoryService {
                 }
                 categoryItems.add(0, new AgentMemoryItem(
                     UUID.randomUUID().toString(), category, normalized, source,
-                    clean(jobScope, 64), LocalDateTime.now()
+                    clean(jobScope, 64), 0.7d, LocalDateTime.now(), expiresAt(LocalDateTime.now())
                 ));
             });
         }
@@ -221,7 +242,10 @@ public class AgentMemoryService {
                 result.add(new AgentMemoryItem(
                     id, category, content, clean(item.source(), 64), clean(item.jobScope(), 64),
                     normalizeConfidence(item.confidence()),
-                    item.updatedAt() == null ? fallbackUpdatedAt : item.updatedAt()
+                    item.updatedAt() == null ? fallbackUpdatedAt : item.updatedAt(),
+                    item.expiresAt() == null
+                        ? expiresAt(item.updatedAt() == null ? fallbackUpdatedAt : item.updatedAt())
+                        : item.expiresAt()
                 ));
                 index++;
             }
@@ -244,7 +268,7 @@ public class AgentMemoryService {
         for (int index = 0; index < cleaned.size(); index++) {
             result.add(new AgentMemoryItem(
                 category + "-" + index, category, cleaned.get(index), "legacy-summary", null,
-                0.5d, updatedAt
+                0.5d, updatedAt, expiresAt(updatedAt)
             ));
         }
     }
@@ -275,7 +299,10 @@ public class AgentMemoryService {
     private AgentMemorySnapshot saveSnapshot(
         String key, String lastSkillId, List<AgentMemoryItem> items
     ) {
-        List<AgentMemoryItem> safeItems = items == null ? List.of() : List.copyOf(items);
+        LocalDateTime now = LocalDateTime.now();
+        List<AgentMemoryItem> safeItems = items == null ? List.of() : items.stream()
+            .filter(item -> item != null && !isExpired(item, now))
+            .toList();
         AgentMemorySnapshot next = new AgentMemorySnapshot(
             key,
             clean(lastSkillId, 64),
@@ -351,12 +378,13 @@ public class AgentMemoryService {
         String source,
         String jobScope,
         Double confidence,
-        LocalDateTime updatedAt
+        LocalDateTime updatedAt,
+        LocalDateTime expiresAt
     ) {
         private static MemoryItemPayload from(AgentMemoryItem item) {
             return new MemoryItemPayload(
                 item.id(), item.category(), item.content(), item.source(), item.jobScope(),
-                item.confidence(), item.updatedAt()
+                item.confidence(), item.updatedAt(), item.expiresAt()
             );
         }
     }
@@ -366,5 +394,37 @@ public class AgentMemoryService {
             return 0.5d;
         }
         return Math.max(0d, Math.min(1d, confidence));
+    }
+
+    private AgentMemorySnapshot removeExpired(AgentMemorySnapshot snapshot) {
+        if (snapshot == null || snapshot.items().isEmpty() || !properties.isExpirationEnabled()) {
+            return snapshot;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        List<AgentMemoryItem> activeItems = snapshot.items().stream()
+            .filter(item -> !isExpired(item, now))
+            .toList();
+        if (activeItems.size() == snapshot.items().size()) {
+            return snapshot;
+        }
+        return new AgentMemorySnapshot(
+            snapshot.memoryKey(), activeItems.isEmpty() ? null : snapshot.lastSkillId(),
+            valuesForCategory(activeItems, CATEGORY_WEAKNESS, MAX_WEAKNESSES),
+            valuesForCategory(activeItems, CATEGORY_GOAL, MAX_GOALS),
+            snapshot.updatedAt(), activeItems
+        );
+    }
+
+    private boolean isExpired(AgentMemoryItem item, LocalDateTime now) {
+        return properties.isExpirationEnabled()
+            && item.expiresAt() != null
+            && !item.expiresAt().isAfter(now);
+    }
+
+    private LocalDateTime expiresAt(LocalDateTime updatedAt) {
+        if (!properties.isExpirationEnabled() || updatedAt == null) {
+            return null;
+        }
+        return updatedAt.plus(properties.getRetentionDays(), ChronoUnit.DAYS);
     }
 }

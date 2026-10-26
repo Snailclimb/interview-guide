@@ -71,6 +71,7 @@ export interface AgentMemoryItem {
   jobScope?: string | null;
   confidence?: number | null;
   updatedAt?: string | null;
+  expiresAt?: string | null;
 }
 
 export type AgentStepStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';

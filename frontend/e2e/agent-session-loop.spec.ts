@@ -77,7 +77,7 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
       updatedAt: '2026-10-24T09:05:00',
       items: [{
         id: 'memory-1', category: 'weakness', content: 'Redis 缓存', source: 'interview-report',
-        jobScope: 'java-backend', confidence: 0.9, updatedAt: '2026-10-24T09:05:00',
+        jobScope: 'java-backend', confidence: 0.9, updatedAt: '2026-10-24T09:05:00', expiresAt: '2027-04-22T09:05:00',
       }],
     };
 
@@ -192,6 +192,7 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
   test('可以编辑和删除单条长期记忆', async ({ page }) => {
     await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
     await expect(page.getByLabel('编辑记忆：Redis 缓存')).toBeVisible();
+    await expect(page.getByText('过期', { exact: false })).toBeVisible();
 
     await page.getByLabel('编辑记忆：Redis 缓存').click();
     await page.getByLabel('编辑记忆内容').fill('Redis 缓存穿透与击穿');

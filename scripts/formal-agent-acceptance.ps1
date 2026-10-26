@@ -160,6 +160,7 @@ try {
             $memoryItems = @($memory.data.items)
             Assert-Pass ($memoryItems.Count -gt 0) '长期记忆存在可管理的结构化记忆项'
             $item = $memoryItems[0]
+            Assert-Pass ($null -ne $item.expiresAt -and [string]$item.expiresAt -ne '') '长期记忆包含过期时间'
             $editedContent = "$($item.content)（验收编辑）"
             $updated = Invoke-JsonApi "/api/agent/memory/items/$([Uri]::EscapeDataString([string]$item.id))" 'PATCH' @{
                 content = $editedContent

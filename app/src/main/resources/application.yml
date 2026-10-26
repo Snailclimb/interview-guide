@@ -202,6 +202,11 @@ app:
       max-model-calls-per-run: ${APP_AI_AGENT_MAX_MODEL_CALLS_PER_RUN:12}
       # 单次 Agent 运行最多执行的只读工具调用数
       max-tool-calls-per-run: ${APP_AI_AGENT_MAX_TOOL_CALLS_PER_RUN:8}
+      memory:
+        # 长期记忆自动过期；关闭后保留历史记忆行为
+        expiration-enabled: ${APP_AI_AGENT_MEMORY_EXPIRATION_ENABLED:true}
+        # 记忆从最近更新时间起的保留天数
+        retention-days: ${APP_AI_AGENT_MEMORY_RETENTION_DAYS:180}
       loop-enabled: ${APP_AI_AGENT_LOOP_ENABLED:true}
       loop-max-steps: ${APP_AI_AGENT_LOOP_MAX_STEPS:3}
       loop-step-timeout-millis: ${APP_AI_AGENT_LOOP_STEP_TIMEOUT_MILLIS:5000}

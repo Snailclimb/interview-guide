@@ -904,6 +904,7 @@ export default function AgentPage() {
                               来源：{item.source || 'Agent'}
                               {item.confidence != null ? ` · 置信度 ${Math.round(item.confidence * 100)}%` : ''}
                               {item.updatedAt ? ` · 更新于 ${formatDate(item.updatedAt)}` : ''}
+                              {item.expiresAt ? ` · ${formatDate(item.expiresAt)} 过期` : ''}
                             </p>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">

@@ -4,6 +4,7 @@ import interview.guide.modules.agent.model.AgentUserMemoryEntity;
 import interview.guide.modules.agent.model.AgentMemoryItem;
 import interview.guide.modules.agent.repository.AgentUserMemoryRepository;
 import java.util.List;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
@@ -103,5 +104,45 @@ class AgentMemoryServiceTest {
             .doesNotContain("Redis 缓存")
             .doesNotContain("Java 训练")
             .doesNotContain("java-backend");
+    }
+
+    @Test
+    void removesExpiredItemsBeforeTheyReachAgentContext() throws Exception {
+        AgentUserMemoryRepository repository = mock(AgentUserMemoryRepository.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+        LocalDateTime now = LocalDateTime.now();
+        AgentUserMemoryEntity entity = AgentUserMemoryEntity.builder()
+            .memoryKey("browser-key")
+            .updatedAt(now)
+            .memoryJson(objectMapper.writeValueAsString(java.util.Map.of(
+                "lastSkillId", "java-backend",
+                "items", List.of(new AgentMemoryItem(
+                    "old-1", "weakness", "过期薄弱点", "report", "java-backend", 0.8d,
+                    now.minusDays(200), now.minusDays(1)
+                ))
+            )))
+            .build();
+        when(repository.findByMemoryKey("browser-key")).thenReturn(Optional.of(entity));
+
+        AgentMemoryService service = new AgentMemoryService(repository, objectMapper);
+
+        assertThat(service.load("browser-key").items()).isEmpty();
+        assertThat(service.load("browser-key").toPrompt("java-backend"))
+            .isEqualTo("暂无长期记忆");
+    }
+
+    @Test
+    void newItemsReceiveFreshExpirationTime() throws Exception {
+        AgentUserMemoryRepository repository = mock(AgentUserMemoryRepository.class);
+        ObjectMapper objectMapper = new ObjectMapper();
+        when(repository.findByMemoryKey("browser-key")).thenReturn(Optional.empty());
+        when(repository.save(any(AgentUserMemoryEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+        AgentMemoryProperties properties = new AgentMemoryProperties();
+        properties.setRetentionDays(30);
+        AgentMemoryService service = new AgentMemoryService(repository, objectMapper, properties);
+
+        var created = service.remember("browser-key", "java-backend", List.of("Redis"), null);
+        assertThat(created.items().get(0).expiresAt()).isAfter(LocalDateTime.now());
     }
 }

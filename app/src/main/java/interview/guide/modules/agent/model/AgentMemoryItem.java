@@ -15,8 +15,22 @@ public record AgentMemoryItem(
     String source,
     String jobScope,
     Double confidence,
-    LocalDateTime updatedAt
+    LocalDateTime updatedAt,
+    LocalDateTime expiresAt
 ) {
+    /** 兼容新增过期时间前的结构化记忆调用方。 */
+    public AgentMemoryItem(
+        String id,
+        String category,
+        String content,
+        String source,
+        String jobScope,
+        Double confidence,
+        LocalDateTime updatedAt
+    ) {
+        this(id, category, content, source, jobScope, confidence, updatedAt, null);
+    }
+
     public AgentMemoryItem(
         String id,
         String category,
@@ -25,6 +39,6 @@ public record AgentMemoryItem(
         String jobScope,
         LocalDateTime updatedAt
     ) {
-        this(id, category, content, source, jobScope, 0.7d, updatedAt);
+        this(id, category, content, source, jobScope, 0.7d, updatedAt, null);
     }
 }
