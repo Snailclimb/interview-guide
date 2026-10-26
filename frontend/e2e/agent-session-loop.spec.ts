@@ -103,6 +103,15 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
       }
       await route.fulfill({ contentType: 'application/json', body: envelope(memory) });
     });
+    await page.route('**/api/agent/audit/events*', async route => {
+      await route.fulfill({ contentType: 'application/json', body: envelope([
+        {
+          interviewSessionId: 'interview-1', agentSessionId: 'thread-a',
+          action: 'RUN_COMPLETED', resourceType: 'agent-run', resourceId: 'run-1',
+          result: 'COMPLETED', createdAt: '2026-10-24T09:06:00',
+        },
+      ]) });
+    });
     await page.route('**/api/agent/memory/items/*', async route => {
       const itemId = route.request().url().split('/').pop()!;
       if (route.request().method() === 'PATCH') {
@@ -204,6 +213,7 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
 
   test('可以编辑和删除单条长期记忆', async ({ page }) => {
     await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
+    await expect(page.getByRole('region', { name: 'Agent 最近活动' })).toContainText('运行完成');
     await expect(page.getByLabel('编辑记忆：Redis 缓存')).toBeVisible();
     await expect(page.getByText('过期', { exact: false })).toBeVisible();
 
