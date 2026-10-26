@@ -64,6 +64,25 @@ function conversation(agentSessionId: string, title: string, text: string) {
 
 test.describe('AI 面试教练 Agent 会话与 Loop', () => {
   test.beforeEach(async ({ page }) => {
+    // Agent 页面在正式环境由 AuthGate 保护；所有业务接口虽由本用例 mock，
+    // 认证探针也必须返回已登录状态，否则用例会被重定向到登录页而无法覆盖 Agent UI。
+    await page.route('**/api/auth/me', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: envelope({
+          required: true,
+          authenticated: true,
+          user: {
+            id: 'e2e-user',
+            email: 'agent-e2e@example.com',
+            nickname: 'Agent E2E',
+            status: 'ACTIVE',
+            emailVerified: false,
+            lastLoginAt: null,
+          },
+        }),
+      });
+    });
     const threadA = conversation('thread-a', '第一轮复盘', '线程 A 的复盘内容');
     const threadB = conversation('thread-b', '第二轮训练', '线程 B 的训练内容');
     let conversationList = [
