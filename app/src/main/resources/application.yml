@@ -428,6 +428,9 @@ app:
       chunk-duration: ${APP_VOICE_INTERVIEW_AUDIO_CHUNK_DURATION:2000}  # 2 seconds
 
 management:
+  health:
+    mail:
+      enabled: ${APP_AUTH_MAIL_ENABLED:false}
   endpoints:
     web:
       exposure:

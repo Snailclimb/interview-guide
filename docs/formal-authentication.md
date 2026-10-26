@@ -44,6 +44,7 @@ MAIL_SMTP_STARTTLS=true
 `APP_AUTH_REQUIRED` 默认是 `false`，用于已有单用户/匿名测试数据的平滑迁移。部署正式环境时必须显式设置为 `true`，并在 HTTPS 下设置 `APP_AUTH_SECURE_COOKIE=true`。
 邮箱能力默认关闭，不会改变现有注册和登录流程；只有在 SMTP 配置完成后才应开启
 `APP_AUTH_REQUIRE_EMAIL_VERIFICATION`。验证和重置 token 只保存 SHA-256 摘要，原始 token 仅出现在邮件链接中，并按 TTL 一次性消费。
+邮箱关闭时会同时关闭 Spring Mail 健康探针，避免空 SMTP 配置影响整体健康状态；开启邮箱后，健康检查会反映 SMTP 连通性。
 
 ## 当前边界
 
