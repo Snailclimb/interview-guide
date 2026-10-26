@@ -143,11 +143,12 @@ public class InterviewAgentService {
     private Flux<AgentStreamEvent> streamInternal(
         String sessionId, AgentMessageRequest request, String dataOwnerKey
     ) {
+        AgentMessageRequest resolvedRequest = resolveProviderForRun(request);
         return Flux.concat(
             Flux.just(AgentStreamEvent.step("context", "running")),
             Flux.defer(() -> {
-            String activeKey = request.agentSessionId() == null || request.agentSessionId().isBlank()
-                ? sessionId : request.agentSessionId();
+            String activeKey = resolvedRequest.agentSessionId() == null || resolvedRequest.agentSessionId().isBlank()
+                ? sessionId : resolvedRequest.agentSessionId();
             if (!activeSessions.add(activeKey)) {
                 return Flux.just(AgentStreamEvent.error("当前面试已有一个 Agent 任务正在执行，请等待完成后再试"));
             }
@@ -161,24 +162,24 @@ public class InterviewAgentService {
             AtomicReference<String> activeAgentSessionKeyRef = new AtomicReference<>(activeKey);
             AtomicReference<String> preparedRunIdRef = new AtomicReference<>();
             try {
-                String message = promptSanitizer.sanitize(request.message());
-                List<AgentHistoryMessage> persistedHistory = request.agentSessionId() == null
-                    || request.agentSessionId().isBlank()
+                String message = promptSanitizer.sanitize(resolvedRequest.message());
+                List<AgentHistoryMessage> persistedHistory = resolvedRequest.agentSessionId() == null
+                    || resolvedRequest.agentSessionId().isBlank()
                     ? agentConversationService.loadHistory(sessionId)
-                    : agentConversationService.loadHistory(sessionId, request.agentSessionId());
+                    : agentConversationService.loadHistory(sessionId, resolvedRequest.agentSessionId());
                 List<AgentHistoryMessage> historyMessages = AgentHistoryPolicy.normalize(
-                    persistedHistory.isEmpty() ? request.history() : persistedHistory
+                    persistedHistory.isEmpty() ? resolvedRequest.history() : persistedHistory
                 );
                 AgentContextService.AgentContext context;
                 AuthUserContext.set(dataOwnerKey);
                 try {
-                    context = agentContextService.build(sessionId, request, historyMessages);
+                    context = agentContextService.build(sessionId, resolvedRequest, historyMessages);
                 } finally {
                     AuthUserContext.clear();
                 }
 
                 AgentConversationService.PreparedMessage preparedMessage = prepareMessage(
-                    sessionId, request, message
+                    sessionId, resolvedRequest, message
                 );
                 preparedAssistantMessageId = preparedMessage.assistantMessageId();
                 preparedRunIdRef.set(preparedMessage.runId());
@@ -199,7 +200,7 @@ public class InterviewAgentService {
                 );
 
                 Flux<AgentStreamEvent> workflow = buildWorkflow(
-                    sessionId, resolvedAgentSessionId, request, message, historyMessages, context, preparedMessage,
+                    sessionId, resolvedAgentSessionId, resolvedRequest, message, historyMessages, context, preparedMessage,
                     cancellationSignal, taskHandle, runTracker, null
                 );
                 // SSE 断开后不缓存全部 token；最终答案由 AgentConversationService 持久化。
@@ -282,6 +283,7 @@ public class InterviewAgentService {
                     message, historyMessages, recoveredRun.providerId(), recoveredRun.memoryKey(),
                     recoveredRun.agentSessionId()
                 );
+                request = resolveProviderForRun(request);
                 AgentContextService.AgentContext context;
                 AuthUserContext.set(recoveredRun.ownerKey());
                 try {
@@ -518,6 +520,21 @@ public class InterviewAgentService {
             return List.copyOf(messages.subList(0, messages.size() - 1));
         }
         return messages;
+    }
+
+    /**
+     * 在创建持久化运行记录前把空的“使用默认模型”解析为当前首选 Provider。
+     *
+     * <p>如果不保存这个解析结果，应用重启后的恢复任务只能再次读取空 Provider，
+     * 可能因为默认模型在运行期间被切换而走到另一条无效配置。保留首选 Provider
+     * 不会禁用已有的备用 Provider；首选失败时仍由模型流重试链路继续切换。</p>
+     */
+    private AgentMessageRequest resolveProviderForRun(AgentMessageRequest request) {
+        if (request == null || request.providerId() != null && !request.providerId().isBlank()) {
+            return request;
+        }
+        List<String> candidates = llmProviderRegistry.resolveChatProviderCandidates(request.providerId());
+        return candidates.isEmpty() ? request : request.withProviderId(candidates.getFirst());
     }
 
     private AgentConversationService.PreparedMessage prepareMessage(

@@ -117,6 +117,52 @@ class InterviewAgentServiceTest {
     }
 
     @Test
+    @DisplayName("未指定模型时在运行记录中固化当前首选 Provider，便于重启恢复")
+    void persistsResolvedDefaultProviderForRecovery() throws Exception {
+        when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {
+            String path = invocation.getArgument(0);
+            String template = path.contains("system")
+                ? "系统规则"
+                : path.contains("context")
+                    ? "固定上下文 {context} {skill}"
+                    : "目标 {goal}，资料 {rag}，问题 {question}";
+            return new ByteArrayResource(template.getBytes(StandardCharsets.UTF_8));
+        });
+        when(promptSanitizer.sanitize(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(promptSanitizer.wrapWithStableDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(promptSanitizer.wrapWithDelimiters(anyString(), anyString()))
+            .thenAnswer(invocation -> invocation.getArgument(1));
+        when(contextService.build(anyString(), any(), any())).thenReturn(new AgentContextService.AgentContext(
+            "报告", "skill", "skill", "无资料", "问题", List.of()
+        ));
+        when(conversationService.loadHistory(anyString())).thenReturn(List.of());
+        when(conversationService.prepareMessage(anyString(), anyString(), any(), anyString()))
+            .thenReturn(new AgentConversationService.PreparedMessage(10L, 1L, "run-1"));
+        when(providerRegistry.resolveChatProviderCandidates(""))
+            .thenReturn(List.of("pixel", "backup"));
+        when(providerRegistry.resolveChatProviderCandidates("pixel"))
+            .thenReturn(List.of("pixel", "backup"));
+        ChatClient defaultClient = mockStreamClient(Flux.just("默认模型回答"));
+        when(providerRegistry.getAgentChatClient("pixel")).thenReturn(defaultClient);
+
+        InterviewAgentService service = new InterviewAgentService(
+            contextService, conversationService, providerRegistry, promptSanitizer, resourceLoader, agentMetrics,
+            agentProgressWriter, retryProperties
+        );
+
+        List<AgentStreamEvent> events = service.stream(
+            "default-provider-session", new AgentMessageRequest("review", "请复盘", List.of(), "")
+        ).collectList().block(Duration.ofSeconds(5));
+
+        assertThat(events).isNotNull();
+        assertThat(events).anySatisfy(event -> assertThat(event.content()).isEqualTo("默认模型回答"));
+        verify(conversationService).prepareMessage(
+            "default-provider-session", "review", "pixel", "请复盘"
+        );
+    }
+
+    @Test
     @DisplayName("Agent 默认不发送输出 token 限制")
     void omitsOutputTokenLimitByDefault() throws Exception {
         when(resourceLoader.getResource(anyString())).thenAnswer(invocation -> {

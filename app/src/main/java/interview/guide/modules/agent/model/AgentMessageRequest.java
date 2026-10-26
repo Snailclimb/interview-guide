@@ -48,4 +48,11 @@ public record AgentMessageRequest(
     public AgentMessageRequest withMemoryKey(String nextMemoryKey) {
         return new AgentMessageRequest(goal, message, history, providerId, nextMemoryKey, agentSessionId);
     }
+
+    /**
+     * 固化本次运行解析出的首选 Provider，保证应用重启恢复时沿用同一候选链路。
+     */
+    public AgentMessageRequest withProviderId(String nextProviderId) {
+        return new AgentMessageRequest(goal, message, history, nextProviderId, memoryKey, agentSessionId);
+    }
 }
