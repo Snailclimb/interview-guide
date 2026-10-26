@@ -32,6 +32,19 @@ test('恢复会话后没有消息 ID 时仍能移除末尾失败请求', () => {
   assert.deepEqual(removeLastRunMessages(messages, request), [messages[0]]);
 });
 
+test('消息恢复后临时 ID 失效时仍按末尾请求移除失败回答', () => {
+  const messages = [
+    { id: 1, role: 'assistant' as const, content: '历史回答' },
+    { id: 20, role: 'user' as const, content: request.message },
+    { id: 21, role: 'assistant' as const, content: '模型服务暂时不可用，请稍后重试' },
+  ];
+
+  assert.deepEqual(removeLastRunMessages(messages, request, {
+    userMessageId: 999,
+    assistantMessageId: 1000,
+  }), [messages[0]]);
+});
+
 test('末尾不是该请求时不误删正常历史', () => {
   const messages = [
     { id: 1, role: 'user' as const, content: '其他问题' },

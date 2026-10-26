@@ -230,6 +230,39 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page.getByText('执行观察：已读取面试报告；识别到 1 个待关注项。')).toBeVisible();
   });
 
+  test('SSE 失败后保留原请求，重试成功且不重复显示失败消息', async ({ page }) => {
+    await page.unroute('**/api/agent/interview-sessions/interview-1/messages/stream');
+    let attempts = 0;
+    await page.route('**/api/agent/interview-sessions/interview-1/messages/stream', async route => {
+      attempts += 1;
+      if (attempts === 1) {
+        const body = `event: agent-error\ndata: ${JSON.stringify({
+          type: 'error',
+          message: '模型服务暂时不可用，请稍后重试',
+        })}\n\n`;
+        await route.fulfill({ contentType: 'text/event-stream', body });
+        return;
+      }
+      const body = [
+        ['agent-step', { type: 'step', step: 'context', status: 'completed' }],
+        ['agent-delta', { type: 'delta', content: '重试后已完成复盘。' }],
+        ['agent-done', { type: 'done' }],
+      ].map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join('');
+      await route.fulfill({ contentType: 'text/event-stream', body });
+    });
+
+    await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
+    await page.getByRole('button', { name: '开始执行' }).click();
+    await expect(page.getByText('模型服务暂时不可用，请稍后重试').first()).toBeVisible();
+    await expect(page.getByRole('button', { name: '重试执行' })).toBeEnabled();
+
+    await page.getByRole('button', { name: '重试执行' }).click();
+    await expect(page.getByText('重试后已完成复盘。')).toBeVisible();
+    await expect(page.getByText('模型服务暂时不可用，请稍后重试')).not.toBeVisible();
+    await expect(page.getByText('本次任务未完成', { exact: false })).not.toBeVisible();
+    expect(attempts).toBe(2);
+  });
+
   test('可以编辑和删除单条长期记忆', async ({ page }) => {
     await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
     await expect(page.getByRole('region', { name: 'Agent 最近活动' })).toContainText('运行完成');
