@@ -211,7 +211,9 @@ public class AgentConversationService {
             .ownerKey(normalizedOwnerKey)
             .memoryKey(normalizedOwnerKey)
             .build();
-        return toSummary(sessionRepository.save(session));
+        AgentChatSessionEntity saved = sessionRepository.save(session);
+        audit(saved, "CONVERSATION_CREATED", "agent-session", saved.getAgentSessionId(), "success");
+        return toSummary(saved);
     }
 
     @Transactional
@@ -244,7 +246,9 @@ public class AgentConversationService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "Agent 会话名称不能为空");
         }
         session.setTitle(truncate(normalizedTitle, 120));
-        return toSummary(sessionRepository.save(session));
+        AgentChatSessionEntity saved = sessionRepository.save(session);
+        audit(saved, "CONVERSATION_RENAMED", "agent-session", saved.getAgentSessionId(), "success");
+        return toSummary(saved);
     }
 
     @Transactional
@@ -261,6 +265,7 @@ public class AgentConversationService {
         }
         session.setArchived(true);
         sessionRepository.save(session);
+        audit(session, "CONVERSATION_ARCHIVED", "agent-session", session.getAgentSessionId(), "success");
     }
 
     /** API 层在读取报告或开始流式任务前调用，避免只凭 sessionId 越权读取 Agent 上下文。 */
