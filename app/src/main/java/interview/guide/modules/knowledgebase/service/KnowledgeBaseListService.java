@@ -197,9 +197,13 @@ public class KnowledgeBaseListService {
      */
     public KnowledgeBaseStatsDTO getStatistics() {
         List<KnowledgeBaseEntity> visible = visible(knowledgeBaseRepository.findAll());
+        long questionCount = accessService == null || !accessService.hasAuthenticatedUser()
+            ? ragChatMessageRepository.countByType(MessageType.USER)
+            : ragChatMessageRepository.countByTypeAndVisibleSessionOwner(
+                MessageType.USER, accessService.currentOwnerId());
         return new KnowledgeBaseStatsDTO(
             visible.size(),
-            ragChatMessageRepository.countByType(MessageType.USER),  // 真正的提问次数
+            questionCount,  // 真正的提问次数
             visible.stream().mapToLong(entity -> entity.getAccessCount() == null ? 0 : entity.getAccessCount()).sum(),
             visible.stream().filter(entity -> entity.getVectorStatus() == VectorStatus.COMPLETED).count(),
             visible.stream().filter(entity -> entity.getVectorStatus() == VectorStatus.PROCESSING).count()
