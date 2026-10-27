@@ -269,6 +269,38 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(scheduleAction.getByText('待确认', { exact: true })).toBeVisible();
   });
 
+  test('自然语言创建训练任务时生成待确认任务草稿', async ({ page }) => {
+    await page.route('**/api/agent/interview-sessions/interview-1/conversations/thread-a/actions/training-task-draft', async route => {
+      const payload = route.request().postDataJSON() as { content: string; idempotencyKey: string };
+      expect(payload.content).toContain('线程 A 的复盘内容');
+      expect(payload.idempotencyKey).toMatch(/^auto:intent:trainingTask:thread-a:[0-9a-f]+$/);
+      await route.fulfill({
+        contentType: 'application/json',
+        body: envelope({
+          actionId: 'training-task-action-1',
+          interviewSessionId: 'interview-1',
+          agentSessionId: 'thread-a',
+          toolId: 'training.task.create',
+          riskLevel: 'BUSINESS_WRITE',
+          status: 'PROPOSED',
+          title: '创建训练任务',
+          previewText: '确认后加入训练任务列表',
+          draftContent: '重点练习 Redis 缓存穿透与击穿',
+          resultSummary: null,
+        }),
+      });
+    });
+
+    await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
+    const input = page.getByPlaceholder('问问你的面试教练...');
+    await input.fill('帮我创建一个训练任务，重点练 Redis');
+    await input.press('Enter');
+
+    const taskAction = page.getByLabel('Agent 动作草稿');
+    await expect(taskAction.getByText('创建训练任务', { exact: true })).toBeVisible();
+    await expect(taskAction.getByText('待确认', { exact: true })).toBeVisible();
+  });
+
   test('SSE 失败后保留原请求，重试成功且不重复显示失败消息', async ({ page }) => {
     await page.unroute('**/api/agent/interview-sessions/interview-1/messages/stream');
     let attempts = 0;

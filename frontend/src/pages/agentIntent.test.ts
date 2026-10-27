@@ -20,4 +20,14 @@ test('普通复盘请求和取消安排不会误触发动作', () => {
   assert.equal(detectAgentActionIntent('请复盘一下这场面试'), null);
   assert.equal(detectAgentActionIntent('不要安排复习日程'), null);
   assert.equal(detectAgentActionIntent('帮我预约面试'), null);
+  assert.equal(detectAgentActionIntent('不要保存到长期记忆'), null);
+  assert.equal(detectAgentActionIntent('不要导出面试报告'), null);
+});
+
+test('识别训练任务、记忆、标题、报告和简历动作', () => {
+  assert.deepEqual(detectAgentActionIntent('帮我创建一个训练任务，重点练 Redis'), { type: 'trainingTask' });
+  assert.deepEqual(detectAgentActionIntent('把这个薄弱点保存到长期记忆'), { type: 'memory' });
+  assert.deepEqual(detectAgentActionIntent('给这场面试起个名字'), { type: 'title' });
+  assert.deepEqual(detectAgentActionIntent('请导出这场面试报告 PDF'), { type: 'reportExport' });
+  assert.deepEqual(detectAgentActionIntent('帮我优化简历'), { type: 'resumeEdit' });
 });

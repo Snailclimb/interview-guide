@@ -1,7 +1,10 @@
-export type AgentActionIntent = {
-  type: 'schedule';
-  suggestedTime: string;
-};
+export type AgentActionIntent =
+  | { type: 'schedule'; suggestedTime: string }
+  | { type: 'trainingTask' }
+  | { type: 'memory' }
+  | { type: 'title' }
+  | { type: 'reportExport' }
+  | { type: 'resumeEdit' };
 
 function pad(value: number) {
   return String(value).padStart(2, '0');
@@ -65,7 +68,27 @@ export function suggestScheduleTime(message: string, now = new Date()) {
 /** 只识别明确的“安排复习”意图，避免普通复盘内容误触发写入流程。 */
 export function detectAgentActionIntent(message: string, now = new Date()): AgentActionIntent | null {
   const normalized = message.replace(/\s+/g, ' ').trim();
-  if (!normalized || /(不要|不用|无需|取消).{0,4}(安排|预约|日程)/.test(normalized)) return null;
+  if (!normalized || /(不要|不用|无需|取消).{0,6}(安排|预约|日程|导出|下载|保存|创建|修改|重命名|任务|简历|记忆)/.test(normalized)) return null;
+  if (/(导出|下载).{0,8}(报告|面试报告|pdf)/i.test(normalized)
+    || /(报告|面试报告).{0,8}(导出|下载)/i.test(normalized)) {
+    return { type: 'reportExport' };
+  }
+  if (/(优化|修改|编辑|改写).{0,8}简历/.test(normalized)
+    || /简历.{0,8}(优化|修改|编辑|改写)/.test(normalized)) {
+    return { type: 'resumeEdit' };
+  }
+  if (/(保存|记住|记录|加入|写入).{0,10}(长期记忆|记忆|薄弱点|偏好)/.test(normalized)
+    || /(长期记忆|记忆).{0,8}(保存|记录|记住)/.test(normalized)) {
+    return { type: 'memory' };
+  }
+  if (/(修改|重命名|改).{0,8}(面试记录|面试名称|标题)/.test(normalized)
+    || /给这场面试起个名字/.test(normalized)) {
+    return { type: 'title' };
+  }
+  if (/(创建|新建|加入|拆成|安排).{0,12}(训练任务|练习任务|任务清单|待办)/.test(normalized)
+    || /把.{0,12}(作为|列为).{0,8}任务/.test(normalized)) {
+    return { type: 'trainingTask' };
+  }
   const asksForSchedule = /(安排|预约|加入日程|排个|排一下|提醒我|设置).{0,12}(复习|练习|巩固|日程|时间|准备面试)/.test(normalized)
     || /(复习|练习|巩固|准备面试).{0,12}(下周|明天|后天|周末|今晚|日程|时间)/.test(normalized);
   if (!asksForSchedule) return null;

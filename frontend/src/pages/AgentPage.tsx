@@ -197,7 +197,7 @@ function suggestInterviewTitle(content: string, fallback: string) {
   return candidate.slice(0, 120);
 }
 
-function stableActionKey(kind: 'plan' | 'practice', agentSessionId: string, content: string) {
+function stableActionKey(kind: string, agentSessionId: string, content: string) {
   let hash = 2166136261;
   for (let index = 0; index < content.length; index += 1) {
     hash ^= content.charCodeAt(index);
@@ -741,6 +741,7 @@ export default function AgentPage() {
             .then((conversation) => {
               restoreRunProgress(conversation);
               autoProposeGoalAction(conversation, runGoal);
+              autoProposeActionIntent(conversation, actionIntent);
               if (actionIntent?.type === 'schedule') {
                 const assistantMessage = [...conversation.messages]
                   .reverse()
@@ -879,6 +880,52 @@ export default function AgentPage() {
         // 动作建议是附加能力，不能让已完成的 Agent 回答变成失败。
         setActionNotice(getErrorMessage(error) || '动作草稿生成失败，可稍后手动生成');
       });
+  };
+
+  const autoProposeActionIntent = (conversation: AgentConversationResponse, actionIntent: AgentActionIntent | null) => {
+    if (!actionIntent || actionIntent.type === 'schedule' || !conversation.agentSessionId || !sessionId) return;
+    const assistantMessage = [...conversation.messages]
+      .reverse()
+      .find((message) => message.role === 'assistant' && message.content.trim());
+    if (!assistantMessage || assistantMessage.content.includes('本次任务未完成')) return;
+
+    const actionKey = stableActionKey(`intent:${actionIntent.type}`, conversation.agentSessionId, assistantMessage.content);
+    let request: Promise<AgentAction>;
+    let successMessage: string;
+    if (actionIntent.type === 'trainingTask') {
+      request = agentApi.proposeTrainingTaskDraft(
+        sessionId, conversation.agentSessionId, assistantMessage.content, actionKey,
+      );
+      successMessage = '训练任务草稿已生成，请确认后创建';
+    } else if (actionIntent.type === 'memory') {
+      const content = compactMemoryDraft(assistantMessage.content);
+      if (!content) return;
+      request = agentApi.proposeMemoryDraft(
+        sessionId, conversation.agentSessionId, content, 'weakness', interview?.skillId || undefined, actionKey,
+      );
+      successMessage = '长期记忆草稿已生成，请确认后保存';
+    } else if (actionIntent.type === 'title') {
+      const title = suggestInterviewTitle(assistantMessage.content, `${selectedGoal.title} · ${interview?.title || '本场面试'}`);
+      request = agentApi.proposeInterviewTitleDraft(sessionId, conversation.agentSessionId, title, actionKey);
+      successMessage = '面试名称草稿已生成，请确认后应用';
+    } else if (actionIntent.type === 'reportExport') {
+      request = agentApi.proposeInterviewReportExportDraft(sessionId, conversation.agentSessionId, actionKey);
+      successMessage = '报告导出动作已生成，请确认后下载';
+    } else {
+      if (!interview?.resumeId) {
+        setActionNotice('当前面试没有关联简历，暂时不能生成简历优化版');
+        return;
+      }
+      request = agentApi.proposeResumeEditDraft(sessionId, conversation.agentSessionId, assistantMessage.content, actionKey);
+      successMessage = '简历优化编辑版已生成，请确认后保存';
+    }
+    setActionNotice('正在根据你的请求生成待确认动作...');
+    void request
+      .then((action) => {
+        setActions((current) => [action, ...current.filter((item) => item.actionId !== action.actionId)]);
+        setActionNotice(successMessage);
+      })
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作草稿生成失败，可稍后手动生成'));
   };
 
   const saveMemoryAction = (message: AgentMessage) => {
