@@ -17,6 +17,7 @@ param(
     [string]$DatasetPath = 'app/src/test/resources/agent-eval/dataset-v1.jsonl',
     [string]$OutputPath = 'build/agent-eval/real-run.jsonl',
     [int]$MaxSamples = 0,
+    [string]$ProviderId = 'pixel',
     [switch]$CreateInterview,
     [switch]$RunQualityGate
 )
@@ -235,6 +236,7 @@ try {
         Remove-Item -LiteralPath $OutputPath -Force
     }
     $codeVersion = Get-CodeVersion
+    $selectedProviderId = $ProviderId.Trim()
     $sampleIndex = 0
     foreach ($sample in $samples) {
         $sampleIndex++
@@ -250,7 +252,7 @@ try {
             goal = [string]$sample.goal
             message = [string]$sample.message
             history = @()
-            providerId = ''
+            providerId = $selectedProviderId
             memoryKey = "aq-$([guid]::NewGuid().ToString('N').Substring(0, 16))"
             agentSessionId = $agentSessionId
         }

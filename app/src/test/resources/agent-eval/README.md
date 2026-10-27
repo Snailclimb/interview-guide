@@ -28,10 +28,12 @@ Loop 预算，不调用模型：
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\agent-quality-collector.ps1 `
   -BaseUrl http://localhost:18083 `
   -CreateInterview `
+  -ProviderId pixel `
   -OutputPath build/agent-eval/real-run.jsonl
 ```
 
-脚本默认执行完整语料；可传入 `-MaxSamples 1` 做低成本烟测。它只归档自己创建的 Agent
+脚本默认使用 `pixel` 提供方并执行完整语料；可传入 `-ProviderId` 切换到候选环境中已启用的
+提供方，也可传入 `-MaxSamples 1` 做低成本烟测。它只归档自己创建的 Agent
 线程，并删除自己创建的临时面试；真实模型调用会产生费用，应优先在候选环境执行。采集器
 发现 SSE 业务错误、请求未进入 `RUNNING` 或最终状态不是 `COMPLETED` 时会立即失败，不会把
 空回答写成成功样本。
