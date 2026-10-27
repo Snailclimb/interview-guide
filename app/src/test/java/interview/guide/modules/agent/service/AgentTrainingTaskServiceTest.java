@@ -71,6 +71,10 @@ class AgentTrainingTaskServiceTest {
             .isInstanceOf(BusinessException.class)
             .hasMessageContaining("无权访问");
 
+        assertThatThrownBy(() -> service.updateStatus("task-1", "owner-1", AgentTrainingTaskStatus.COMPLETED))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("必须先开始");
+
         assertThat(service.updateStatus("task-1", "owner-1", AgentTrainingTaskStatus.IN_PROGRESS).status())
             .isEqualTo(AgentTrainingTaskStatus.IN_PROGRESS);
         assertThat(service.updateStatus("task-1", "owner-1", AgentTrainingTaskStatus.COMPLETED).status())

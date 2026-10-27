@@ -87,6 +87,10 @@ public class AgentTrainingTaskService {
             && task.getStatus() != AgentTrainingTaskStatus.TODO) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "进行中的训练任务不能退回待开始");
         }
+        if (status == AgentTrainingTaskStatus.COMPLETED
+            && task.getStatus() == AgentTrainingTaskStatus.TODO) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "训练任务必须先开始，不能直接标记完成");
+        }
         if (status == AgentTrainingTaskStatus.COMPLETED) {
             task.setCompletedAt(LocalDateTime.now());
         }
