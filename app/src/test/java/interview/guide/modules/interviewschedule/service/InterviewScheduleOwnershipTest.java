@@ -4,6 +4,7 @@ import interview.guide.common.exception.BusinessException;
 import interview.guide.modules.auth.AuthUserContext;
 import interview.guide.modules.interviewschedule.model.CreateInterviewRequest;
 import interview.guide.modules.interviewschedule.model.InterviewScheduleEntity;
+import interview.guide.modules.interviewschedule.model.InterviewScheduleDTO;
 import interview.guide.modules.interviewschedule.model.InterviewStatus;
 import interview.guide.modules.interviewschedule.repository.InterviewScheduleRepository;
 import org.junit.jupiter.api.AfterEach;
