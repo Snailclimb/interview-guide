@@ -71,6 +71,34 @@ export const agentApi = {
     );
   },
 
+  proposeMemoryDraft(
+    sessionId: string,
+    agentSessionId: string,
+    content: string,
+    category: 'weakness' | 'goal',
+    jobScope?: string,
+    idempotencyKey?: string,
+  ): Promise<AgentAction> {
+    return request.post<AgentAction>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversations/${encodeURIComponent(agentSessionId)}/actions/memory-draft`,
+      { content, category, jobScope, idempotencyKey },
+      { headers: agentHeaders() },
+    );
+  },
+
+  proposeInterviewTitleDraft(
+    sessionId: string,
+    agentSessionId: string,
+    title: string,
+    idempotencyKey?: string,
+  ): Promise<AgentAction> {
+    return request.post<AgentAction>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversations/${encodeURIComponent(agentSessionId)}/actions/interview-title-draft`,
+      { content: title, idempotencyKey },
+      { headers: agentHeaders() },
+    );
+  },
+
   confirmAction(actionId: string): Promise<AgentAction> {
     return request.post<AgentAction>(
       `/api/agent/actions/${encodeURIComponent(actionId)}/confirm`,

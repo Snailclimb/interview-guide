@@ -43,22 +43,26 @@ Agent 自身的会话、记忆、审计、用量和 Loop 检查点属于内部�
 
 1. `interview.plan.draft`：已经接入第一版，生成训练计划草稿，只保存到 Agent 动作草稿区；
 2. `practice.questions.draft`：已经接入第二版，基于薄弱点生成练习题草稿，确认后保存到独立草稿区；
-3. 简历编辑优化：已在“简历管理 → 编辑与优化”独立实现，基于 `resume_edit_drafts` 保存 AI 草稿，Agent 不重复接管；
-4. `knowledgebase.query`：继续保持只读查询，不允许 Agent 自动上传、删除或重向量化；
-5. `resume.draft.apply`：暂缓到草稿预览、确认、审计和回滚链路验收后再开放。
+3. `agent.memory.save`：生成一条不超过 160 字的结构化长期记忆，确认后写入现有记忆服务，支持后续编辑和删除；
+4. `interview.title.rename`：生成面试记录名称建议，确认后只修改该面试的显示名称；
+5. 简历编辑优化：已在“简历管理 → 编辑与优化”独立实现，基于 `resume_edit_drafts` 保存 AI 草稿，Agent 不重复接管；
+6. `knowledgebase.query`：继续保持只读查询，不允许 Agent 自动上传、删除或重向量化；
+7. `resume.draft.apply`：暂缓到草稿预览、确认、审计和回滚链路验收后再开放。
 
 第一版动作 API 已固定为以下边界：
 
 - `GET /api/agent/interview-sessions/{sessionId}/actions`：查询当前用户自己的动作草稿；
 - `POST .../actions/training-plan-draft`：生成 `PROPOSED` 状态的训练计划草稿；
 - `POST .../actions/practice-questions-draft`：生成 `PROPOSED` 状态的练习题草稿；
+- `POST .../actions/memory-draft`：生成 `PROPOSED` 状态的长期记忆草稿，服务端保存分类和适用方向元数据；
+- `POST .../actions/interview-title-draft`：生成 `PROPOSED` 状态的面试名称草稿；
 - `PATCH /api/agent/actions/{actionId}`：仅允许用户在 `PROPOSED` 状态下人工编辑草稿；
 - `POST /api/agent/actions/{actionId}/confirm`：明确确认后保存草稿；
 - `POST /api/agent/actions/{actionId}/cancel`：取消待确认动作。
 
 草稿保存后，Agent 页面提供人工编辑、复制和 Markdown 下载；这是对已授权草稿结果的使用，不会新增原始业务数据写入权限。
 
-当前“保存草稿”本身就是低风险执行结果，不会修改原始面试报告、简历或题库。后续动作必须复用同一动作资源和状态机，不能让模型通过自由文本拼接数据库写操作。
+训练计划和练习题确认后仍然只保存到独立动作区；长期记忆复用现有结构化记忆服务；面试名称只更新当前面试的 `title` 字段。三类动作都不修改原始回答、评分、报告、题目或上传简历。后续动作必须复用同一动作资源和状态机，不能让模型通过自由文本拼接数据库写操作。
 
 ## 保护条件
 
@@ -75,6 +79,7 @@ Agent 自身的会话、记忆、审计、用量和 Loop 检查点属于内部�
 1. 增加动作模型、状态机、幂等约束和审计事件；
 2. 在 Agent 页面增加“待确认动作”卡片，展示预览、风险和确认/取消；
 3. 增加训练草稿的复制、Markdown 导出、恢复和验收测试；
-4. 仅在候选环境验收通过后，再考虑将练习题草稿应用到题库，以及接入 MCP 连接器。
+4. 增加长期记忆和面试名称的确认执行，并保留编辑、取消和审计；
+5. 仅在候选环境验收通过后，再考虑将练习题草稿应用到题库，以及接入 MCP 连接器。
 
 本方案不改变现有 Agent 的建议模式：没有确认时，Agent 仍然只返回建议和预览。

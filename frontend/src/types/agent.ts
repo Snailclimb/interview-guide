@@ -75,6 +75,14 @@ export interface AgentAction {
   completedAt?: string | null;
 }
 
+export function isAgentMemoryAction(action: AgentAction): boolean {
+  return action.toolId === 'agent.memory.save';
+}
+
+export function isAgentTitleAction(action: AgentAction): boolean {
+  return action.toolId === 'interview.title.rename';
+}
+
 export interface AgentConversationSummary {
   agentSessionId: string;
   interviewSessionId: string;

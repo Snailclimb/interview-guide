@@ -113,6 +113,31 @@ public class AgentMemoryService {
         return snapshot;
     }
 
+    /** 由已确认的 Agent 动作写入一条指定分类的记忆，保留当前最近 Skill。 */
+    @Transactional
+    public AgentMemorySnapshot rememberItem(
+        String memoryKey, String category, String content, String jobScope
+    ) {
+        String key = normalizeKey(memoryKey);
+        String normalizedCategory = normalizeCategory(category);
+        if (normalizedCategory == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "记忆分类不合法");
+        }
+        String normalizedContent = clean(content, MAX_ITEM_CHARS);
+        if (normalizedContent == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "记忆内容不能为空");
+        }
+        AgentMemorySnapshot previous = load(key);
+        int max = CATEGORY_GOAL.equals(normalizedCategory) ? MAX_GOALS : MAX_WEAKNESSES;
+        List<AgentMemoryItem> items = mergeItems(
+            previous.items(), List.of(normalizedContent), normalizedCategory,
+            "agent-action", clean(jobScope, 64), max
+        );
+        AgentMemorySnapshot snapshot = saveSnapshot(key, previous.lastSkillId(), items);
+        audit(key, "MEMORY_REMEMBERED", "memory", key, "success");
+        return snapshot;
+    }
+
     /** 编辑一条结构化记忆，保留其分类和来源，只允许修改内容和适用方向。 */
     @Transactional
     public AgentMemorySnapshot updateItem(

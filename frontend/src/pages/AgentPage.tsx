@@ -125,7 +125,9 @@ function formatAuditAction(action: string) {
     ACTION_CONFIRMED: '确认动作',
     ACTION_RUNNING: '执行动作',
     ACTION_SUCCEEDED: '动作完成',
+    ACTION_DRAFT_UPDATED: '修改动作草稿',
     ACTION_CANCELLED: '取消动作',
+    ACTION_FAILED: '动作失败',
   };
   return labels[action] || action;
 }
@@ -140,6 +142,24 @@ function formatAgentActionStatus(status: string) {
     CANCELLED: '已取消',
   };
   return labels[status] || status;
+}
+
+function compactMemoryDraft(content: string) {
+  return content
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/^\s*#+\s*/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+}
+
+function suggestInterviewTitle(content: string, fallback: string) {
+  const heading = content
+    .split('\n')
+    .map((line) => line.replace(/^\s*#+\s*/, '').replace(/^[-*]\s*/, '').trim())
+    .find((line) => line.length >= 4);
+  const candidate = (heading || fallback).replace(/[*_`]/g, '').replace(/\s+/g, ' ').trim();
+  return candidate.slice(0, 120);
 }
 
 function getScoreTone(score: number | null | undefined) {
@@ -754,6 +774,54 @@ export default function AgentPage() {
       .catch((error: unknown) => setActionNotice(getErrorMessage(error) || `${isPractice ? '练习题' : '训练计划'}草稿生成失败，请稍后重试`));
   };
 
+  const saveMemoryAction = (message: AgentMessage) => {
+    if (!sessionId || !agentSessionId || message.role !== 'assistant' || !message.content.trim()) {
+      setActionNotice('当前 Agent 会话还未建立，暂时不能保存长期记忆');
+      return;
+    }
+    const content = compactMemoryDraft(message.content);
+    if (!content) {
+      setActionNotice('这条回答没有可保存的记忆内容');
+      return;
+    }
+    const category = goal === 'plan' ? 'goal' : 'weakness';
+    setActionNotice('正在生成待确认的长期记忆草稿...');
+    void agentApi.proposeMemoryDraft(
+      sessionId,
+      agentSessionId,
+      content,
+      category,
+      interview?.skillId || undefined,
+      `memory:${agentSessionId}:${message.id}`,
+    )
+      .then((action) => {
+        setActions((current) => [action, ...current.filter((item) => item.actionId !== action.actionId)]);
+        setActionNotice('长期记忆草稿已生成，请确认后保存');
+      })
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '长期记忆草稿生成失败，请稍后重试'));
+  };
+
+  const saveTitleAction = (message: AgentMessage) => {
+    if (!sessionId || !agentSessionId || message.role !== 'assistant' || !message.content.trim()) {
+      setActionNotice('当前 Agent 会话还未建立，暂时不能建议面试名称');
+      return;
+    }
+    const fallback = `${selectedGoal.title} · ${interview?.title || '本场面试'}`;
+    const title = suggestInterviewTitle(message.content, fallback);
+    setActionNotice('正在生成待确认的面试名称...');
+    void agentApi.proposeInterviewTitleDraft(
+      sessionId,
+      agentSessionId,
+      title,
+      `title:${agentSessionId}:${message.id}`,
+    )
+      .then((action) => {
+        setActions((current) => [action, ...current.filter((item) => item.actionId !== action.actionId)]);
+        setActionNotice('面试名称草稿已生成，请确认后应用');
+      })
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '面试名称草稿生成失败，请稍后重试'));
+  };
+
   const confirmAgentAction = (actionId: string) => {
     const action = actions.find((item) => item.actionId === actionId);
     setActionNotice(`正在保存${action?.title || 'Agent 动作'}...`);
@@ -761,6 +829,12 @@ export default function AgentPage() {
       .then((updated) => {
         setActions((current) => current.map((item) => item.actionId === updated.actionId ? updated : item));
         setActionNotice(`${updated.title}已保存，原始面试资料未被修改`);
+        if (updated.toolId === 'agent.memory.save') {
+          void loadLongTermMemory();
+        }
+        if (updated.toolId === 'interview.title.rename') {
+          setInterview((current) => current ? { ...current, title: updated.draftContent } : current);
+        }
         void loadAuditEvents();
       })
       .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作确认失败，请稍后重试'));
@@ -1451,14 +1525,32 @@ export default function AgentPage() {
                         {message.id !== 1
                           && message.content.trim()
                           && !message.content.includes('本次任务未完成') ? (
-                          <button
-                            onClick={() => saveDraftAction(message, goal === 'practice' ? 'practice' : 'plan')}
-                            disabled={runStatus === 'running' || !agentSessionId}
-                            className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
-                          >
-                            <ClipboardCheck className="w-3.5 h-3.5" />
-                            {goal === 'practice' ? '保存为练习题草稿' : '保存为训练计划草稿'}
-                          </button>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              onClick={() => saveDraftAction(message, goal === 'practice' ? 'practice' : 'plan')}
+                              disabled={runStatus === 'running' || !agentSessionId}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                            >
+                              <ClipboardCheck className="w-3.5 h-3.5" />
+                              {goal === 'practice' ? '保存为练习题草稿' : '保存为训练计划草稿'}
+                            </button>
+                            <button
+                              onClick={() => saveMemoryAction(message)}
+                              disabled={runStatus === 'running' || !agentSessionId}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              保存为长期记忆
+                            </button>
+                            <button
+                              onClick={() => saveTitleAction(message)}
+                              disabled={runStatus === 'running' || !agentSessionId}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                              建议面试名称
+                            </button>
+                          </div>
                         ) : null}
                       </>
                     ) : (
@@ -1515,7 +1607,7 @@ export default function AgentPage() {
               </div>
               {actionNotice ? <p className="mt-2 text-xs text-primary-700 dark:text-primary-300">{actionNotice}</p> : null}
               {!actionsLoading && actions.length === 0 ? (
-                <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">暂无动作草稿。对一条 Agent 回答点击“保存为训练计划草稿”即可生成。</p>
+                <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">暂无动作草稿。可从 Agent 回答生成训练计划、长期记忆或面试名称建议。</p>
               ) : null}
               {actions.length > 0 ? (
                 <div className="mt-3 space-y-3">
@@ -1539,7 +1631,7 @@ export default function AgentPage() {
                             <textarea
                               value={editingActionContent}
                               onChange={(event) => setEditingActionContent(event.target.value)}
-                              maxLength={12000}
+                              maxLength={action.toolId === 'agent.memory.save' ? 160 : action.toolId === 'interview.title.rename' ? 120 : 12000}
                               rows={8}
                               className="dark-input w-full resize-y rounded-lg px-3 py-2 text-xs leading-6 outline-none"
                               aria-label={`编辑${action.title}`}
@@ -1583,7 +1675,7 @@ export default function AgentPage() {
                             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 transition-colors hover:border-primary-300 hover:text-primary-600 dark:border-slate-600 dark:text-slate-300 dark:hover:text-primary-300"
                           >
                             <Pencil className="h-3.5 w-3.5" />
-                            编辑草稿
+                            {action.toolId === 'interview.title.rename' ? '编辑名称' : action.toolId === 'agent.memory.save' ? '编辑记忆' : '编辑草稿'}
                           </button>
                         ) : null}
                         {actionFeedback[action.actionId] ? (
@@ -1604,7 +1696,7 @@ export default function AgentPage() {
                             onClick={() => confirmAgentAction(action.actionId)}
                             className="btn-primary rounded-lg px-2.5 py-1.5 text-xs"
                           >
-                            确认保存草稿
+                            {action.toolId === 'interview.title.rename' ? '确认应用名称' : action.toolId === 'agent.memory.save' ? '确认保存记忆' : '确认保存草稿'}
                           </button>
                         </div>
                       ) : null}

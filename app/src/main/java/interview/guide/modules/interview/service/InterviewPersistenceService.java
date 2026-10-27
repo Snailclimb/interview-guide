@@ -318,6 +318,31 @@ public class InterviewPersistenceService {
         sessionRepository.save(session);
     }
 
+    /** Agent 确认动作使用的显式归属改名入口，避免依赖异步线程中的 ThreadLocal。 */
+    @Transactional(rollbackFor = Exception.class, noRollbackFor = BusinessException.class)
+    public void renameSessionForOwner(String sessionId, String ownerId, String title) {
+        String normalizedTitle = title == null ? "" : title.trim();
+        if (normalizedTitle.isBlank() || normalizedTitle.length() > 120) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "面试记录名称不合法");
+        }
+        Optional<InterviewSessionEntity> owned = findBySessionIdForOwner(sessionId, ownerId);
+        InterviewSessionEntity session;
+        if (owned.isPresent()) {
+            session = owned.get();
+        } else if (AuthUserContext.currentUserId().isEmpty()) {
+            // 兼容未开启正式登录的旧数据，但不允许通过浏览器级身份改动已归属数据。
+            session = findBySessionId(sessionId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND));
+            if (session.getOwnerId() != null && !session.getOwnerId().isBlank()) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "无权修改该面试记录");
+            }
+        } else {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权修改该面试记录");
+        }
+        session.setTitle(normalizedTitle);
+        sessionRepository.save(session);
+    }
+
     public Optional<InterviewSessionEntity> findByRequestId(String requestId) {
         return findByRequestIdScoped(requestId);
     }

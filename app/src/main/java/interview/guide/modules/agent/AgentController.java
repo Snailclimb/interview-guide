@@ -12,6 +12,8 @@ import interview.guide.modules.agent.model.CreateAgentConversationRequest;
 import interview.guide.modules.agent.model.RenameAgentConversationRequest;
 import interview.guide.modules.agent.model.AgentActionResponse;
 import interview.guide.modules.agent.model.CreateAgentDraftActionRequest;
+import interview.guide.modules.agent.model.CreateAgentMemoryDraftRequest;
+import interview.guide.modules.agent.model.CreateAgentTitleDraftRequest;
 import interview.guide.modules.agent.model.UpdateAgentActionDraftRequest;
 import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.AgentActionService;
@@ -211,6 +213,39 @@ public class AgentController {
         String identity = authIdentityService.requireIdentity(ownerKey);
         conversationService.assertAccess(sessionId, agentSessionId, identity);
         return Result.success(actionService.proposePracticeQuestionsDraft(
+            sessionId, agentSessionId, identity, request.content(), request.idempotencyKey()
+        ));
+    }
+
+    /** 只生成待确认的长期记忆草稿，确认后才写入结构化记忆。 */
+    @PostMapping("/api/agent/interview-sessions/{sessionId}/conversations/{agentSessionId}/actions/memory-draft")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
+    public Result<AgentActionResponse> proposeMemoryDraft(
+        @PathVariable String sessionId,
+        @PathVariable String agentSessionId,
+        @Valid @RequestBody CreateAgentMemoryDraftRequest request,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        String identity = authIdentityService.requireIdentity(ownerKey);
+        conversationService.assertAccess(sessionId, agentSessionId, identity);
+        return Result.success(actionService.proposeMemoryDraft(
+            sessionId, agentSessionId, identity, request.content(), request.category(),
+            request.jobScope(), request.idempotencyKey()
+        ));
+    }
+
+    /** 只生成待确认的面试名称草稿，确认后才修改面试记录名称。 */
+    @PostMapping("/api/agent/interview-sessions/{sessionId}/conversations/{agentSessionId}/actions/interview-title-draft")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
+    public Result<AgentActionResponse> proposeInterviewTitleDraft(
+        @PathVariable String sessionId,
+        @PathVariable String agentSessionId,
+        @Valid @RequestBody CreateAgentTitleDraftRequest request,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        String identity = authIdentityService.requireIdentity(ownerKey);
+        conversationService.assertAccess(sessionId, agentSessionId, identity);
+        return Result.success(actionService.proposeInterviewTitleDraft(
             sessionId, agentSessionId, identity, request.content(), request.idempotencyKey()
         ));
     }

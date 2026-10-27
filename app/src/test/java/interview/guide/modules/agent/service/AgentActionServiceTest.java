@@ -4,6 +4,8 @@ import interview.guide.common.exception.BusinessException;
 import interview.guide.modules.agent.model.AgentActionRequestEntity;
 import interview.guide.modules.agent.model.AgentActionStatus;
 import interview.guide.modules.agent.repository.AgentActionRequestRepository;
+import interview.guide.modules.interview.service.InterviewPersistenceService;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -27,6 +29,12 @@ class AgentActionServiceTest {
 
     @Mock
     private AgentAuditService auditService;
+
+    @Mock
+    private AgentMemoryService memoryService;
+
+    @Mock
+    private InterviewPersistenceService interviewPersistenceService;
 
     @Test
     @DisplayName("生成训练计划草稿时默认只提出动作，不改原始资料")
@@ -177,6 +185,74 @@ class AgentActionServiceTest {
             .hasMessageContaining("只有待确认");
     }
 
+    @Test
+    @DisplayName("确认长期记忆动作时复用现有记忆服务")
+    void confirmsMemoryActionThroughMemoryService() {
+        AgentActionService service = new AgentActionService(
+            repository, auditService, memoryService, interviewPersistenceService
+        );
+        when(repository.findByOwnerKeyAndIdempotencyKey("user-1", "memory-1"))
+            .thenReturn(Optional.empty());
+        when(repository.findByActionIdForUpdate(any())).thenAnswer(invocation ->
+            Optional.of(memoryAction("memory-action-1", "user-1"))
+        );
+        when(repository.save(any(AgentActionRequestEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var proposed = service.proposeMemoryDraft(
+            "interview-1", "agent-1", "user-1", "Redis 缓存击穿需要互斥锁保护",
+            "weakness", "java-backend", "memory-1"
+        );
+        var confirmed = service.confirm(proposed.actionId(), "user-1");
+
+        assertThat(proposed.status()).isEqualTo(AgentActionStatus.PROPOSED);
+        assertThat(confirmed.status()).isEqualTo(AgentActionStatus.SUCCEEDED);
+        verify(memoryService).rememberItem(
+            "user-1", "weakness", "Redis 缓存击穿需要互斥锁保护", "java-backend"
+        );
+        verify(interviewPersistenceService, never()).renameSessionForOwner(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("确认改名动作只调用显式归属改名入口")
+    void confirmsInterviewTitleActionThroughOwnerScopedService() {
+        AgentActionService service = new AgentActionService(
+            repository, auditService, memoryService, interviewPersistenceService
+        );
+        when(repository.findByOwnerKeyAndIdempotencyKey("user-1", "title-1"))
+            .thenReturn(Optional.empty());
+        when(repository.findByActionIdForUpdate(any())).thenAnswer(invocation ->
+            Optional.of(titleAction("title-action-1", "user-1"))
+        );
+        when(repository.save(any(AgentActionRequestEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var proposed = service.proposeInterviewTitleDraft(
+            "interview-1", "agent-1", "user-1", "Java 后端 Redis 专项复盘", "title-1"
+        );
+        var confirmed = service.confirm(proposed.actionId(), "user-1");
+
+        assertThat(confirmed.status()).isEqualTo(AgentActionStatus.SUCCEEDED);
+        verify(interviewPersistenceService).renameSessionForOwner(
+            "interview-1", "user-1", "Java 后端 Redis 专项复盘"
+        );
+        verify(memoryService, never()).rememberItem(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("记忆和名称草稿都遵守短内容边界")
+    void rejectsOversizedMemoryAndTitleDrafts() {
+        AgentActionService service = new AgentActionService(repository, auditService);
+
+        assertThatThrownBy(() -> service.proposeMemoryDraft(
+            "interview-1", "agent-1", "user-1", "x".repeat(161),
+            "weakness", null, "memory-long"
+        )).isInstanceOf(BusinessException.class).hasMessageContaining("参数过长");
+        assertThatThrownBy(() -> service.proposeInterviewTitleDraft(
+            "interview-1", "agent-1", "user-1", "x".repeat(121), "title-long"
+        )).isInstanceOf(BusinessException.class).hasMessageContaining("参数过长");
+    }
+
     private AgentActionRequestEntity draft(String actionId, String owner) {
         return AgentActionRequestEntity.builder()
             .actionId(actionId)
@@ -190,6 +266,41 @@ class AgentActionServiceTest {
             .previewText("预览")
             .draftContent("草稿")
             .idempotencyKey("request-1")
+            .build();
+    }
+
+    private AgentActionRequestEntity memoryAction(String actionId, String owner) {
+        return AgentActionRequestEntity.builder()
+            .actionId(actionId)
+            .ownerKey(owner)
+            .interviewSessionId("interview-1")
+            .agentSessionId("agent-1")
+            .toolId("agent.memory.save")
+            .riskLevel("MEMORY_WRITE")
+            .status(AgentActionStatus.PROPOSED)
+            .title("长期记忆草稿")
+            .previewText("预览")
+            .draftContent("Redis 缓存击穿需要互斥锁保护")
+            .memoryCategory("weakness")
+            .memoryJobScope("java-backend")
+            .idempotencyKey("memory-1")
+            .build();
+    }
+
+    private AgentActionRequestEntity titleAction(String actionId, String owner) {
+        return AgentActionRequestEntity.builder()
+            .actionId(actionId)
+            .ownerKey(owner)
+            .interviewSessionId("interview-1")
+            .agentSessionId("agent-1")
+            .toolId("interview.title.rename")
+            .riskLevel("BUSINESS_WRITE")
+            .status(AgentActionStatus.PROPOSED)
+            .title("面试记录名称修改")
+            .previewText("预览")
+            .draftContent("Java 后端 Redis 专项复盘")
+            .targetTitle("Java 后端 Redis 专项复盘")
+            .idempotencyKey("title-1")
             .build();
     }
 }

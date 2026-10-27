@@ -65,6 +65,18 @@ public class AgentActionRequestEntity {
     @Column(name = "draft_content", nullable = false, columnDefinition = "TEXT")
     private String draftContent;
 
+    /** 记忆动作使用的结构化分类；其他动作为空。 */
+    @Column(name = "memory_category", length = 32)
+    private String memoryCategory;
+
+    /** 记忆动作的适用方向；其他动作为空。 */
+    @Column(name = "memory_job_scope", length = 64)
+    private String memoryJobScope;
+
+    /** 改名动作的目标名称；其他动作为空。 */
+    @Column(name = "target_title", length = 120)
+    private String targetTitle;
+
     @Column(name = "result_summary", length = 500)
     private String resultSummary;
 

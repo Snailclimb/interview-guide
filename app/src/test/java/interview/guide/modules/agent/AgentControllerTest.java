@@ -3,6 +3,11 @@ package interview.guide.modules.agent;
 import interview.guide.common.result.Result;
 import interview.guide.modules.agent.model.AgentMemoryResponse;
 import interview.guide.modules.agent.model.AgentMemorySnapshot;
+import interview.guide.modules.agent.model.AgentActionResponse;
+import interview.guide.modules.agent.model.AgentActionStatus;
+import interview.guide.modules.agent.model.CreateAgentDraftActionRequest;
+import interview.guide.modules.agent.model.CreateAgentMemoryDraftRequest;
+import interview.guide.modules.agent.model.CreateAgentTitleDraftRequest;
 import interview.guide.modules.agent.model.UpdateAgentMemoryItemRequest;
 import interview.guide.modules.agent.service.AgentActionService;
 import interview.guide.modules.agent.service.AgentConversationService;
@@ -21,6 +26,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("AgentController 长期记忆接口")
@@ -73,5 +79,39 @@ class AgentControllerTest {
         org.mockito.Mockito.verify(memoryService)
             .updateItem("user-1", "w-1", "Redis 穿透", "java-backend");
         org.mockito.Mockito.verify(memoryService).deleteItem("user-1", "w-1");
+    }
+
+    @Test
+    @DisplayName("动作接口先校验当前 Agent 会话，再创建记忆和改名草稿")
+    void proposesNewSafeActionsAfterAccessCheck() {
+        when(authIdentityService.requireIdentity("user-1")).thenReturn("user-1");
+        AgentActionResponse action = new AgentActionResponse(
+            "action-1", "interview-1", "agent-1", "agent.memory.save", "MEMORY_WRITE",
+            AgentActionStatus.PROPOSED, "长期记忆草稿", "预览", "Redis 薄弱点", null,
+            null, null, null, null
+        );
+        when(actionService.proposeMemoryDraft(
+            "interview-1", "agent-1", "user-1", "Redis 薄弱点", "weakness", "java-backend", "memory-1"
+        )).thenReturn(action);
+
+        Result<AgentActionResponse> memoryResult = controller.proposeMemoryDraft(
+            "interview-1", "agent-1",
+            new CreateAgentMemoryDraftRequest("Redis 薄弱点", "weakness", "java-backend", "memory-1"),
+            "user-1"
+        );
+        Result<AgentActionResponse> titleResult = controller.proposeInterviewTitleDraft(
+            "interview-1", "agent-1",
+            new CreateAgentTitleDraftRequest("Java 后端专项复盘", "title-1"),
+            "user-1"
+        );
+
+        assertThat(memoryResult.isSuccess()).isTrue();
+        assertThat(memoryResult.getData().toolId()).isEqualTo("agent.memory.save");
+        assertThat(titleResult).isNotNull();
+        verify(conversationService, org.mockito.Mockito.times(2))
+            .assertAccess("interview-1", "agent-1", "user-1");
+        verify(actionService).proposeInterviewTitleDraft(
+            "interview-1", "agent-1", "user-1", "Java 后端专项复盘", "title-1"
+        );
     }
 }
