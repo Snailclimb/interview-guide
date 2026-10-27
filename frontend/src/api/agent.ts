@@ -4,6 +4,7 @@ import type {
   AgentConversationResponse,
   AgentConversationSummary,
   AgentAuditEvent,
+  AgentAction,
   AgentMemoryResponse,
   AgentMessageRequest,
   AgentStreamEvent,
@@ -32,6 +33,43 @@ export const agentApi = {
     const query = agentSessionId ? `?agentSessionId=${encodeURIComponent(agentSessionId)}` : '';
     return request.get<AgentConversationResponse>(
       `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversation${query}`,
+      { headers: agentHeaders() },
+    );
+  },
+
+  listActions(sessionId: string, agentSessionId?: string | null): Promise<AgentAction[]> {
+    const query = agentSessionId ? `?agentSessionId=${encodeURIComponent(agentSessionId)}` : '';
+    return request.get<AgentAction[]>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/actions${query}`,
+      { headers: agentHeaders() },
+    );
+  },
+
+  proposeTrainingPlanDraft(
+    sessionId: string,
+    agentSessionId: string,
+    content: string,
+    idempotencyKey?: string,
+  ): Promise<AgentAction> {
+    return request.post<AgentAction>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversations/${encodeURIComponent(agentSessionId)}/actions/training-plan-draft`,
+      { content, idempotencyKey },
+      { headers: agentHeaders() },
+    );
+  },
+
+  confirmAction(actionId: string): Promise<AgentAction> {
+    return request.post<AgentAction>(
+      `/api/agent/actions/${encodeURIComponent(actionId)}/confirm`,
+      undefined,
+      { headers: agentHeaders() },
+    );
+  },
+
+  cancelAction(actionId: string): Promise<AgentAction> {
+    return request.post<AgentAction>(
+      `/api/agent/actions/${encodeURIComponent(actionId)}/cancel`,
+      undefined,
       { headers: agentHeaders() },
     );
   },

@@ -56,6 +56,25 @@ export interface AgentAuditEvent {
   createdAt: string;
 }
 
+export type AgentActionStatus = 'PROPOSED' | 'CONFIRMED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
+
+export interface AgentAction {
+  actionId: string;
+  interviewSessionId: string;
+  agentSessionId: string;
+  toolId: string;
+  riskLevel: string;
+  status: AgentActionStatus | string;
+  title: string;
+  previewText: string;
+  draftContent: string;
+  resultSummary?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  confirmedAt?: string | null;
+  completedAt?: string | null;
+}
+
 export interface AgentConversationSummary {
   agentSessionId: string;
   interviewSessionId: string;

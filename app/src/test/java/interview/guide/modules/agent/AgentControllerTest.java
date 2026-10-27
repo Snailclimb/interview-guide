@@ -4,6 +4,7 @@ import interview.guide.common.result.Result;
 import interview.guide.modules.agent.model.AgentMemoryResponse;
 import interview.guide.modules.agent.model.AgentMemorySnapshot;
 import interview.guide.modules.agent.model.UpdateAgentMemoryItemRequest;
+import interview.guide.modules.agent.service.AgentActionService;
 import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.AgentMemoryService;
 import interview.guide.modules.agent.service.InterviewAgentService;
@@ -28,6 +29,7 @@ class AgentControllerTest {
     @Mock private InterviewAgentService agentService;
     @Mock private AgentConversationService conversationService;
     @Mock private AgentMemoryService memoryService;
+    @Mock private AgentActionService actionService;
     @Mock private AuthIdentityService authIdentityService;
     @Mock private ObjectMapper objectMapper;
     @InjectMocks private AgentController controller;

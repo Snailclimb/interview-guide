@@ -41,10 +41,20 @@ Agent 自身的会话、记忆、审计、用量和 Loop 检查点属于内部�
 
 先接低风险、可回滚动作，不影响现有面试流程：
 
-1. `resume.draft.optimize`：基于原始简历和分析建议生成编辑草稿，不覆盖上传文件；
-2. `interview.plan.draft`：生成训练计划草稿，只保存到 Agent 草稿区；
-3. `knowledgebase.query`：继续保持只读查询，不允许 Agent 自动上传、删除或重向量化；
-4. `resume.draft.apply`：暂缓到草稿预览、确认、审计和回滚链路验收后再开放。
+1. `interview.plan.draft`：已经接入第一版，生成训练计划草稿，只保存到 Agent 动作草稿区；
+2. `practice.questions.draft`：下一步基于薄弱点生成练习题草稿，确认后保存到独立草稿区；
+3. `resume.draft.optimize`：基于原始简历和分析建议生成编辑草稿，不覆盖上传文件；
+4. `knowledgebase.query`：继续保持只读查询，不允许 Agent 自动上传、删除或重向量化；
+5. `resume.draft.apply`：暂缓到草稿预览、确认、审计和回滚链路验收后再开放。
+
+第一版动作 API 已固定为以下边界：
+
+- `GET /api/agent/interview-sessions/{sessionId}/actions`：查询当前用户自己的动作草稿；
+- `POST .../actions/training-plan-draft`：生成 `PROPOSED` 状态的训练计划草稿；
+- `POST /api/agent/actions/{actionId}/confirm`：明确确认后保存草稿；
+- `POST /api/agent/actions/{actionId}/cancel`：取消待确认动作。
+
+当前“保存草稿”本身就是低风险执行结果，不会修改原始面试报告或简历。后续动作必须复用同一动作资源和状态机，不能让模型通过自由文本拼接数据库写操作。
 
 ## 保护条件
 

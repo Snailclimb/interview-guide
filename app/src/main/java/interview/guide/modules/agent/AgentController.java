@@ -10,7 +10,10 @@ import interview.guide.modules.agent.model.UpdateAgentMemoryItemRequest;
 import interview.guide.modules.agent.model.AgentStreamEvent;
 import interview.guide.modules.agent.model.CreateAgentConversationRequest;
 import interview.guide.modules.agent.model.RenameAgentConversationRequest;
+import interview.guide.modules.agent.model.AgentActionResponse;
+import interview.guide.modules.agent.model.CreateAgentTrainingPlanDraftRequest;
 import interview.guide.modules.agent.service.AgentConversationService;
+import interview.guide.modules.agent.service.AgentActionService;
 import interview.guide.modules.agent.service.AgentMemoryService;
 import interview.guide.modules.agent.service.AgentAuditService;
 import interview.guide.modules.agent.service.InterviewAgentService;
@@ -56,6 +59,7 @@ public class AgentController {
     private final AgentConversationService conversationService;
     private final AgentMemoryService memoryService;
     private final AgentAuditService auditService;
+    private final AgentActionService actionService;
     private final AuthIdentityService authIdentityService;
     private final ObjectMapper objectMapper;
 
@@ -162,6 +166,57 @@ public class AgentController {
     ) {
         return Result.success(auditService.listForOwner(
             authIdentityService.requireIdentity(ownerKey), limit
+        ));
+    }
+
+    /** 查询当前面试下的 Agent 动作草稿，不读取其他用户的动作。 */
+    @GetMapping("/api/agent/interview-sessions/{sessionId}/actions")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
+    public Result<List<AgentActionResponse>> listActions(
+        @PathVariable String sessionId,
+        @RequestParam(value = "agentSessionId", required = false) String agentSessionId,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        String identity = authIdentityService.requireIdentity(ownerKey);
+        conversationService.assertAccess(sessionId, agentSessionId, identity);
+        return Result.success(actionService.listForOwner(sessionId, identity));
+    }
+
+    /** 只生成待确认的训练计划草稿，不修改原始面试或简历数据。 */
+    @PostMapping("/api/agent/interview-sessions/{sessionId}/conversations/{agentSessionId}/actions/training-plan-draft")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
+    public Result<AgentActionResponse> proposeTrainingPlanDraft(
+        @PathVariable String sessionId,
+        @PathVariable String agentSessionId,
+        @Valid @RequestBody CreateAgentTrainingPlanDraftRequest request,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        String identity = authIdentityService.requireIdentity(ownerKey);
+        conversationService.assertAccess(sessionId, agentSessionId, identity);
+        return Result.success(actionService.proposeTrainingPlanDraft(
+            sessionId, agentSessionId, identity, request.content(), request.idempotencyKey()
+        ));
+    }
+
+    @PostMapping("/api/agent/actions/{actionId}/confirm")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
+    public Result<AgentActionResponse> confirmAction(
+        @PathVariable String actionId,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        return Result.success(actionService.confirm(
+            actionId, authIdentityService.requireIdentity(ownerKey)
+        ));
+    }
+
+    @PostMapping("/api/agent/actions/{actionId}/cancel")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
+    public Result<AgentActionResponse> cancelAction(
+        @PathVariable String actionId,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        return Result.success(actionService.cancel(
+            actionId, authIdentityService.requireIdentity(ownerKey)
         ));
     }
 

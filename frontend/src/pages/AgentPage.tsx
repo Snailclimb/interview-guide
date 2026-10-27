@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Activity,
   Bot,
+  ClipboardCheck,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -47,6 +48,7 @@ import {
 import type {
   AgentGoal,
   AgentAuditEvent,
+  AgentAction,
   AgentConversationResponse,
   AgentHistoryMessage,
   AgentMemoryItem,
@@ -116,8 +118,25 @@ function formatAuditAction(action: string) {
     MEMORY_UPDATED: '更新记忆',
     MEMORY_DELETED: '删除记忆',
     MEMORY_CLEARED: '清除记忆',
+    ACTION_PROPOSED: '提出动作',
+    ACTION_CONFIRMED: '确认动作',
+    ACTION_RUNNING: '执行动作',
+    ACTION_SUCCEEDED: '动作完成',
+    ACTION_CANCELLED: '取消动作',
   };
   return labels[action] || action;
+}
+
+function formatAgentActionStatus(status: string) {
+  const labels: Record<string, string> = {
+    PROPOSED: '待确认',
+    CONFIRMED: '已确认',
+    RUNNING: '执行中',
+    SUCCEEDED: '已保存',
+    FAILED: '失败',
+    CANCELLED: '已取消',
+  };
+  return labels[status] || status;
 }
 
 function getScoreTone(score: number | null | undefined) {
@@ -207,6 +226,9 @@ export default function AgentPage() {
   const [auditEvents, setAuditEvents] = useState<AgentAuditEvent[]>([]);
   const [auditLoading, setAuditLoading] = useState(true);
   const [auditNotice, setAuditNotice] = useState('');
+  const [actions, setActions] = useState<AgentAction[]>([]);
+  const [actionsLoading, setActionsLoading] = useState(false);
+  const [actionNotice, setActionNotice] = useState('');
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [editingMemoryContent, setEditingMemoryContent] = useState('');
   const [editingMemoryScope, setEditingMemoryScope] = useState('');
@@ -369,6 +391,8 @@ export default function AgentPage() {
     setSources([]);
     setLoopPlan('');
     setRunUsage(null);
+    setActions([]);
+    setActionNotice('');
     setSteps(createInitialSteps());
     setMessages([createWelcomeMessage()]);
     setInput('');
@@ -677,6 +701,18 @@ export default function AgentPage() {
       .finally(() => setAuditLoading(false));
   }, []);
 
+  const loadAgentActions = useCallback(() => {
+    if (!sessionId) {
+      setActions([]);
+      return Promise.resolve();
+    }
+    setActionsLoading(true);
+    return agentApi.listActions(sessionId, agentSessionId)
+      .then((value) => setActions(value))
+      .catch(() => setActionNotice('待确认动作读取失败，请稍后重试'))
+      .finally(() => setActionsLoading(false));
+  }, [agentSessionId, sessionId]);
+
   useEffect(() => {
     void loadLongTermMemory();
   }, [loadLongTermMemory]);
@@ -684,6 +720,50 @@ export default function AgentPage() {
   useEffect(() => {
     void loadAuditEvents();
   }, [loadAuditEvents]);
+
+  useEffect(() => {
+    void loadAgentActions();
+  }, [loadAgentActions]);
+
+  const saveTrainingPlanDraft = (message: AgentMessage) => {
+    if (!sessionId || !agentSessionId || message.role !== 'assistant' || !message.content.trim()) {
+      setActionNotice('当前 Agent 会话还未建立，暂时不能保存动作草稿');
+      return;
+    }
+    setActionNotice('正在生成待确认的训练计划草稿...');
+    void agentApi.proposeTrainingPlanDraft(
+      sessionId,
+      agentSessionId,
+      message.content,
+      `${agentSessionId}:${message.id}`,
+    )
+      .then((action) => {
+        setActions((current) => [action, ...current.filter((item) => item.actionId !== action.actionId)]);
+        setActionNotice('训练计划草稿已生成，请在下方确认后保存');
+      })
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '训练计划草稿生成失败，请稍后重试'));
+  };
+
+  const confirmAgentAction = (actionId: string) => {
+    setActionNotice('正在保存训练计划草稿...');
+    void agentApi.confirmAction(actionId)
+      .then((updated) => {
+        setActions((current) => current.map((item) => item.actionId === updated.actionId ? updated : item));
+        setActionNotice('训练计划草稿已保存，原始面试资料未被修改');
+        void loadAuditEvents();
+      })
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作确认失败，请稍后重试'));
+  };
+
+  const cancelAgentAction = (actionId: string) => {
+    void agentApi.cancelAction(actionId)
+      .then((updated) => {
+        setActions((current) => current.map((item) => item.actionId === updated.actionId ? updated : item));
+        setActionNotice('动作已取消，原始面试资料未被修改');
+        void loadAuditEvents();
+      })
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作取消失败，请稍后重试'));
+  };
 
   const clearLongTermMemory = () => {
     if (runStatus === 'running' || !window.confirm('确定清除当前浏览器保存的 Agent 长期记忆吗？')) return;
@@ -1301,7 +1381,21 @@ export default function AgentPage() {
                     : 'bg-primary-600 text-white rounded-tr-md'
                     }`}>
                     {message.role === 'assistant' ? (
-                      <AgentMarkdown content={message.content} />
+                      <>
+                        <AgentMarkdown content={message.content} />
+                        {message.id !== 1
+                          && message.content.trim()
+                          && !message.content.includes('本次任务未完成') ? (
+                          <button
+                            onClick={() => saveTrainingPlanDraft(message)}
+                            disabled={runStatus === 'running' || !agentSessionId}
+                            className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                          >
+                            <ClipboardCheck className="w-3.5 h-3.5" />
+                            保存为训练计划草稿
+                          </button>
+                        ) : null}
+                      </>
                     ) : (
                       <p className="whitespace-pre-wrap">{message.content}</p>
                     )}
@@ -1346,6 +1440,61 @@ export default function AgentPage() {
             <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-2">
               Enter 发送，Shift + Enter 换行 · 单条最多 {MAX_AGENT_MESSAGE_CHARS} 字符 · 已输入 {input.length}/{MAX_AGENT_MESSAGE_CHARS}
             </p>
+            <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50/60 p-3 dark:border-primary-900/60 dark:bg-primary-900/15" aria-label="Agent 动作草稿">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold text-primary-800 dark:text-primary-200">可执行动作草稿</p>
+                  <p className="mt-1 text-[11px] text-primary-700/80 dark:text-primary-300/80">先预览，确认后才保存；不会覆盖原始面试报告或简历。</p>
+                </div>
+                {actionsLoading ? <Loader2 className="h-4 w-4 animate-spin text-primary-500" /> : null}
+              </div>
+              {actionNotice ? <p className="mt-2 text-xs text-primary-700 dark:text-primary-300">{actionNotice}</p> : null}
+              {!actionsLoading && actions.length === 0 ? (
+                <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">暂无动作草稿。对一条 Agent 回答点击“保存为训练计划草稿”即可生成。</p>
+              ) : null}
+              {actions.length > 0 ? (
+                <div className="mt-3 space-y-3">
+                  {actions.slice(0, 5).map((action) => (
+                    <div key={action.actionId} className="rounded-xl border border-white/80 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-800/80">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <ClipboardCheck className="h-4 w-4 text-primary-500" />
+                          <span className="text-xs font-semibold dark-text">{action.title}</span>
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+                            {formatAgentActionStatus(action.status)}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-slate-400">{formatDate(action.createdAt)}</span>
+                      </div>
+                      <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">{action.previewText}</p>
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-xs font-medium text-primary-600 dark:text-primary-300">查看草稿内容</summary>
+                        <div className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs leading-6 text-slate-600 dark:bg-slate-900/70 dark:text-slate-300">
+                          {action.draftContent}
+                        </div>
+                      </details>
+                      {action.resultSummary ? <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">{action.resultSummary}</p> : null}
+                      {action.status === 'PROPOSED' ? (
+                        <div className="mt-3 flex justify-end gap-2">
+                          <button
+                            onClick={() => cancelAgentAction(action.actionId)}
+                            className="btn-secondary rounded-lg px-2.5 py-1.5 text-xs"
+                          >
+                            取消
+                          </button>
+                          <button
+                            onClick={() => confirmAgentAction(action.actionId)}
+                            className="btn-primary rounded-lg px-2.5 py-1.5 text-xs"
+                          >
+                            确认保存草稿
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </div>
         </section>
         </div>
