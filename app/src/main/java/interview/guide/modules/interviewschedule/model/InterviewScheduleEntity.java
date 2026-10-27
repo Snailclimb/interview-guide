@@ -15,6 +15,10 @@ public class InterviewScheduleEntity {
     @Column(name = "owner_id", length = 36)
     private String ownerId;
 
+    /** 由 Agent 动作创建时保存动作标识，避免确认重试产生重复日程。 */
+    @Column(name = "agent_action_id", length = 64)
+    private String agentActionId;
+
     @Column(name = "company_name", nullable = false)
     private String companyName;
 

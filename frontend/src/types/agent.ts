@@ -106,6 +106,10 @@ export function isAgentResumeEditAction(action: AgentAction): boolean {
   return action.toolId === 'resume.editor.save';
 }
 
+export function isAgentScheduleAction(action: AgentAction): boolean {
+  return action.toolId === 'interview.schedule.create';
+}
+
 export interface AgentConversationSummary {
   agentSessionId: string;
   interviewSessionId: string;

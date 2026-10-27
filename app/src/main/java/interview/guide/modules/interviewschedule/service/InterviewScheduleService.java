@@ -30,10 +30,38 @@ public class InterviewScheduleService {
 
     @Transactional
     public InterviewScheduleDTO create(CreateInterviewRequest request) {
+        return createForOwner(request, AuthUserContext.currentUserId().orElse(null));
+    }
+
+    /**
+     * 由受控业务动作创建日程时使用显式 owner，避免依赖当前线程中的认证上下文。
+     * Agent 只能通过已确认的动作进入该入口，普通日程接口行为保持不变。
+     */
+    @Transactional
+    public InterviewScheduleDTO createForOwner(CreateInterviewRequest request, String ownerId) {
+        return createForOwner(request, ownerId, null);
+    }
+
+    /** Agent 动作专用创建入口：同一动作重试时复用已经创建的日程。 */
+    @Transactional
+    public InterviewScheduleDTO createForOwner(
+        CreateInterviewRequest request, String ownerId, String agentActionId
+    ) {
+        if (agentActionId != null && !agentActionId.isBlank() && ownerId != null && !ownerId.isBlank()) {
+            var existing = repository.findByAgentActionIdAndOwnerId(agentActionId.trim(), ownerId.trim());
+            if (existing.isPresent()) {
+                return toDTO(existing.get());
+            }
+        }
         InterviewScheduleEntity entity = new InterviewScheduleEntity();
         BeanUtils.copyProperties(request, entity);
         entity.setStatus(InterviewStatus.PENDING);
-        AuthUserContext.currentUserId().ifPresent(entity::setOwnerId);
+        if (ownerId != null && !ownerId.isBlank()) {
+            entity.setOwnerId(ownerId.trim());
+        }
+        if (agentActionId != null && !agentActionId.isBlank()) {
+            entity.setAgentActionId(agentActionId.trim());
+        }
 
         return toDTO(repository.save(entity));
     }

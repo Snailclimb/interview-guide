@@ -77,6 +77,31 @@ public class AgentActionRequestEntity {
     @Column(name = "target_title", length = 120)
     private String targetTitle;
 
+    /** 复习日程动作的结构化参数；其他动作为空。 */
+    @Column(name = "schedule_company_name", length = 255)
+    private String scheduleCompanyName;
+
+    @Column(name = "schedule_position", length = 255)
+    private String schedulePosition;
+
+    @Column(name = "schedule_interview_time")
+    private LocalDateTime scheduleInterviewTime;
+
+    @Column(name = "schedule_interview_type", length = 64)
+    private String scheduleInterviewType;
+
+    @Column(name = "schedule_meeting_link", columnDefinition = "TEXT")
+    private String scheduleMeetingLink;
+
+    @Column(name = "schedule_round_number")
+    private Integer scheduleRoundNumber;
+
+    @Column(name = "schedule_interviewer", length = 255)
+    private String scheduleInterviewer;
+
+    @Column(name = "schedule_notes", columnDefinition = "TEXT")
+    private String scheduleNotes;
+
     @Column(name = "result_summary", length = 500)
     private String resultSummary;
 

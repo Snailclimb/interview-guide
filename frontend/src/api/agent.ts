@@ -111,6 +111,28 @@ export const agentApi = {
     );
   },
 
+  proposeInterviewScheduleDraft(
+    sessionId: string,
+    agentSessionId: string,
+    payload: {
+      companyName: string;
+      position: string;
+      interviewTime: string;
+      interviewType?: string;
+      meetingLink?: string;
+      roundNumber?: number;
+      interviewer?: string;
+      notes?: string;
+      idempotencyKey?: string;
+    },
+  ): Promise<AgentAction> {
+    return request.post<AgentAction>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversations/${encodeURIComponent(agentSessionId)}/actions/interview-schedule-draft`,
+      payload,
+      { headers: agentHeaders() },
+    );
+  },
+
   proposeMemoryDraft(
     sessionId: string,
     agentSessionId: string,

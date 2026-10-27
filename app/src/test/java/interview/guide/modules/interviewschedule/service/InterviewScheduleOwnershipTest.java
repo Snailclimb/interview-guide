@@ -56,6 +56,33 @@ class InterviewScheduleOwnershipTest {
     }
 
     @Test
+    void agentScheduleRetryReusesExistingActionSchedule() {
+        InterviewScheduleEntity existing = new InterviewScheduleEntity();
+        existing.setId(12L);
+        existing.setOwnerId("user-a");
+        when(repository.findByAgentActionIdAndOwnerId("action-1", "user-a"))
+            .thenReturn(Optional.of(existing));
+
+        InterviewScheduleDTO result = service.createForOwner(request(), "user-a", "action-1");
+
+        assertThat(result.getId()).isEqualTo(12L);
+        verify(repository, org.mockito.Mockito.never()).save(any(InterviewScheduleEntity.class));
+    }
+
+    @Test
+    void agentScheduleCreateBindsOwnerAndActionId() {
+        when(repository.save(any(InterviewScheduleEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.createForOwner(request(), "user-a", "action-2");
+
+        ArgumentCaptor<InterviewScheduleEntity> captor = ArgumentCaptor.forClass(InterviewScheduleEntity.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().getOwnerId()).isEqualTo("user-a");
+        assertThat(captor.getValue().getAgentActionId()).isEqualTo("action-2");
+    }
+
+    @Test
     void listIgnoresClientUserIdAndUsesAuthenticatedOwner() {
         when(repository.findAllByOwnerIdOrderByInterviewTimeAsc("user-a"))
             .thenReturn(List.of());

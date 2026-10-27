@@ -51,6 +51,7 @@ Agent 自身的会话、记忆、审计、用量和 Loop 检查点属于内部�
 7. 简历编辑优化：已在“简历管理 → 编辑与优化”独立实现，基于 `resume_edit_drafts` 保存 AI 草稿，Agent 不重复接管；
 8. `knowledgebase.query`：继续保持只读查询，不允许 Agent 自动上传、删除或重向量化；
 9. `resume.draft.apply`：暂缓到草稿预览、确认、审计和回滚链路验收后再开放。
+10. `interview.schedule.create`：已接入首版；Agent 可根据复盘回答生成结构化复习日程草稿，用户确认后写入现有面试日程，支持时间/岗位/备注编辑、owner 隔离、幂等、重试和审计，不修改原始面试报告。
 
 第一版动作 API 已固定为以下边界：
 
@@ -61,6 +62,7 @@ Agent 自身的会话、记忆、审计、用量和 Loop 检查点属于内部�
 - `POST .../actions/interview-report-export-draft`：生成 `PROPOSED` 状态的报告导出动作；
 - `POST .../actions/memory-draft`：生成 `PROPOSED` 状态的长期记忆草稿，服务端保存分类和适用方向元数据；
 - `POST .../actions/interview-title-draft`：生成 `PROPOSED` 状态的面试名称草稿；
+- `POST .../actions/interview-schedule-draft`：生成结构化复习日程草稿，确认后写入现有面试日程；
 - `PATCH /api/agent/actions/{actionId}`：仅允许用户在 `PROPOSED` 状态下人工编辑草稿；
 - `POST /api/agent/actions/{actionId}/confirm`：明确确认后保存草稿；
 - `POST /api/agent/actions/{actionId}/retry`：仅允许重试 `FAILED` 动作，最多实际执行 3 次；
@@ -79,6 +81,7 @@ Agent 自身的会话、记忆、审计、用量和 Loop 检查点属于内部�
 - 所有资源必须通过当前登录用户做 owner 校验；
 - 写动作使用独立的动作记录和状态机：`PROPOSED -> CONFIRMED -> RUNNING -> SUCCEEDED/FAILED/CANCELLED`；
 - 每个动作必须有幂等键、超时、重试上限和失败补偿；
+- 日程动作把 `action_id` 作为业务幂等标识；即使日程已创建但动作状态尚未落库，恢复后的重试也只复用原日程，不创建重复安排；
 - 应用重启或进程异常后，超过 5 分钟仍处于 `RUNNING` 的动作会被回收为 `FAILED`，不会自动重放可能产生副作用的业务写入；
 - 只保存参数摘要和结果摘要，不把完整简历、Prompt 或密钥写入审计；
 - 默认关闭自动执行，前端必须展示预览和确认按钮；

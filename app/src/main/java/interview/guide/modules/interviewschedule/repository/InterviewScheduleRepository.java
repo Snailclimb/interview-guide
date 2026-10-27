@@ -24,6 +24,10 @@ public interface InterviewScheduleRepository extends JpaRepository<InterviewSche
 
     java.util.Optional<InterviewScheduleEntity> findByIdAndOwnerId(Long id, String ownerId);
 
+    java.util.Optional<InterviewScheduleEntity> findByAgentActionIdAndOwnerId(
+        String agentActionId, String ownerId
+    );
+
     long countByOwnerIdIsNotNull();
 
     @Modifying

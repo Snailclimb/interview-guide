@@ -7,6 +7,8 @@ import interview.guide.modules.agent.model.AgentActionResponse;
 import interview.guide.modules.agent.model.AgentActionStatus;
 import interview.guide.modules.agent.repository.AgentActionRequestRepository;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
+import interview.guide.modules.interviewschedule.model.CreateInterviewRequest;
+import interview.guide.modules.interviewschedule.service.InterviewScheduleService;
 import interview.guide.modules.resume.service.ResumeEditorService;
 import jakarta.transaction.Transactional;
 import java.nio.charset.StandardCharsets;
@@ -16,6 +18,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.HexFormat;
 import java.util.UUID;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -33,6 +37,7 @@ public class AgentActionService {
     private static final String TRAINING_TASK_TOOL = "training.task.create";
     private static final String INTERVIEW_REPORT_EXPORT_TOOL = "interview.report.export";
     private static final String RESUME_EDITOR_SAVE_TOOL = "resume.editor.save";
+    private static final String INTERVIEW_SCHEDULE_CREATE_TOOL = "interview.schedule.create";
     private static final String MEMORY_TOOL = "agent.memory.save";
     private static final String INTERVIEW_TITLE_TOOL = "interview.title.rename";
     private static final String DRAFT_RISK = "DRAFT_WRITE";
@@ -50,6 +55,8 @@ public class AgentActionService {
     private static final String REPORT_EXPORT_PREVIEW = "确认后校验当前面试归属并下载 PDF 报告，不修改面试内容。";
     private static final String RESUME_EDITOR_TITLE = "简历优化编辑版";
     private static final String RESUME_EDITOR_PREVIEW = "确认后保存为当前简历的 AI 编辑版草稿，原始上传文件不被覆盖；可继续手动修改、应用或导出。";
+    private static final String INTERVIEW_SCHEDULE_TITLE = "安排复习日程";
+    private static final String INTERVIEW_SCHEDULE_PREVIEW = "确认后在现有面试日程中创建一条复习安排，仅属于当前用户，不修改面试报告。";
     private static final int MAX_OWNER_KEY = 64;
     private static final int MAX_IDEMPOTENCY_KEY = 128;
     private static final int MAX_CONTENT = 12_000;
@@ -65,6 +72,7 @@ public class AgentActionService {
     private final InterviewPersistenceService interviewPersistenceService;
     private final AgentTrainingTaskService trainingTaskService;
     private final ResumeEditorService resumeEditorService;
+    private final InterviewScheduleService interviewScheduleService;
 
     /** 保留轻量构造方式，便于只测试草稿状态机的调用方。 */
     public AgentActionService(
@@ -93,7 +101,19 @@ public class AgentActionService {
         AgentTrainingTaskService trainingTaskService
     ) {
         this(repository, auditService, memoryService, interviewPersistenceService,
-            trainingTaskService, null);
+            trainingTaskService, null, null);
+    }
+
+    public AgentActionService(
+        AgentActionRequestRepository repository,
+        AgentAuditService auditService,
+        AgentMemoryService memoryService,
+        InterviewPersistenceService interviewPersistenceService,
+        AgentTrainingTaskService trainingTaskService,
+        ResumeEditorService resumeEditorService
+    ) {
+        this(repository, auditService, memoryService, interviewPersistenceService,
+            trainingTaskService, resumeEditorService, null);
     }
 
     @Autowired
@@ -103,7 +123,8 @@ public class AgentActionService {
         AgentMemoryService memoryService,
         InterviewPersistenceService interviewPersistenceService,
         AgentTrainingTaskService trainingTaskService,
-        ResumeEditorService resumeEditorService
+        ResumeEditorService resumeEditorService,
+        InterviewScheduleService interviewScheduleService
     ) {
         this.repository = repository;
         this.auditService = auditService;
@@ -111,6 +132,7 @@ public class AgentActionService {
         this.interviewPersistenceService = interviewPersistenceService;
         this.trainingTaskService = trainingTaskService;
         this.resumeEditorService = resumeEditorService;
+        this.interviewScheduleService = interviewScheduleService;
     }
 
     /** 生成待确认的简历编辑版草稿；确认后写入现有简历编辑器，不覆盖原始上传文件。 */
@@ -134,6 +156,77 @@ public class AgentActionService {
             interviewId, agentSessionId, owner, content, requestedIdempotencyKey,
             RESUME_EDITOR_SAVE_TOOL, RESUME_EDITOR_TITLE, RESUME_EDITOR_PREVIEW
         );
+    }
+
+    /** 生成待确认的复习日程草稿；确认后才写入现有面试日程。 */
+    @Transactional
+    public AgentActionResponse proposeInterviewScheduleDraft(
+        String interviewSessionId,
+        String agentSessionId,
+        String ownerKey,
+        String companyName,
+        String position,
+        java.time.LocalDateTime interviewTime,
+        String interviewType,
+        String meetingLink,
+        Integer roundNumber,
+        String interviewer,
+        String notes,
+        String requestedIdempotencyKey
+    ) {
+        String owner = requireOwner(ownerKey);
+        String interviewId = requireText(interviewSessionId, "面试会话不能为空", 64);
+        String agentId = requireText(agentSessionId, "Agent 会话不能为空", 64);
+        String normalizedCompany = requireText(companyName, "公司或面试主题不能为空", 255);
+        String normalizedPosition = requireText(position, "复习岗位不能为空", 255);
+        if (interviewTime == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "复习时间不能为空");
+        }
+        String normalizedType = normalizeOptional(interviewType, 64);
+        String normalizedLink = normalizeOptional(meetingLink, 1000);
+        String normalizedInterviewer = normalizeOptional(interviewer, 255);
+        String normalizedNotes = normalizeOptional(notes, 2000);
+        int normalizedRound = roundNumber == null ? 1 : roundNumber;
+        if (normalizedRound < 1 || normalizedRound > 20) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "轮次必须在1到20之间");
+        }
+        String idempotencyKey = normalizeIdempotencyKey(requestedIdempotencyKey);
+        if (idempotencyKey == null) {
+            idempotencyKey = digest(owner + "\n" + interviewId + "\n" + agentId
+                + "\n" + INTERVIEW_SCHEDULE_CREATE_TOOL + "\n" + normalizedCompany
+                + "\n" + normalizedPosition + "\n" + interviewTime + "\n" + normalizedType
+                + "\n" + normalizedLink + "\n" + normalizedRound + "\n"
+                + normalizedInterviewer + "\n" + normalizedNotes);
+        }
+        AgentActionRequestEntity existing = repository
+            .findByOwnerKeyAndIdempotencyKey(owner, idempotencyKey)
+            .orElse(null);
+        if (existing != null) {
+            return AgentActionResponse.from(existing);
+        }
+        AgentActionRequestEntity entity = AgentActionRequestEntity.builder()
+            .actionId(UUID.randomUUID().toString())
+            .ownerKey(owner)
+            .interviewSessionId(interviewId)
+            .agentSessionId(agentId)
+            .toolId(INTERVIEW_SCHEDULE_CREATE_TOOL)
+            .riskLevel("BUSINESS_WRITE")
+            .status(AgentActionStatus.PROPOSED)
+            .title(INTERVIEW_SCHEDULE_TITLE)
+            .previewText(INTERVIEW_SCHEDULE_PREVIEW)
+            .draftContent(scheduleSummary(normalizedCompany, normalizedPosition, interviewTime,
+                normalizedType, normalizedLink, normalizedRound, normalizedInterviewer, normalizedNotes))
+            .scheduleCompanyName(normalizedCompany)
+            .schedulePosition(normalizedPosition)
+            .scheduleInterviewTime(interviewTime)
+            .scheduleInterviewType(normalizedType)
+            .scheduleMeetingLink(normalizedLink)
+            .scheduleRoundNumber(normalizedRound)
+            .scheduleInterviewer(normalizedInterviewer)
+            .scheduleNotes(normalizedNotes)
+            .idempotencyKey(idempotencyKey)
+            .build();
+        return saveProposed(entity);
     }
 
     /** 生成待确认的训练任务草稿；确认后才进入用户任务列表。 */
@@ -537,6 +630,24 @@ public class AgentActionService {
             resumeEditorService.saveAgentDraftForOwner(
                 resumeId, entity.getOwnerKey(), entity.getDraftContent()
             );
+            return;
+        }
+        if (INTERVIEW_SCHEDULE_CREATE_TOOL.equals(entity.getToolId())) {
+            if (interviewScheduleService == null) {
+                throw new IllegalStateException("面试日程服务未配置");
+            }
+            CreateInterviewRequest request = new CreateInterviewRequest();
+            request.setCompanyName(entity.getScheduleCompanyName());
+            request.setPosition(entity.getSchedulePosition());
+            request.setInterviewTime(entity.getScheduleInterviewTime());
+            request.setInterviewType(entity.getScheduleInterviewType());
+            request.setMeetingLink(entity.getScheduleMeetingLink());
+            request.setRoundNumber(entity.getScheduleRoundNumber());
+            request.setInterviewer(entity.getScheduleInterviewer());
+            request.setNotes(entity.getScheduleNotes());
+            interviewScheduleService.createForOwner(
+                request, entity.getOwnerKey(), entity.getActionId()
+            );
         }
         // 训练计划和练习题的确认结果仍然只保存在动作表，不修改其他业务实体。
     }
@@ -547,11 +658,14 @@ public class AgentActionService {
         if (entity.getStatus() != AgentActionStatus.PROPOSED) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "只有待确认的 Agent 草稿可以编辑");
         }
-        entity.setDraftContent(MEMORY_TOOL.equals(entity.getToolId())
+        String updatedContent = INTERVIEW_SCHEDULE_CREATE_TOOL.equals(entity.getToolId())
+            ? updateScheduleDraft(entity, content)
+            : MEMORY_TOOL.equals(entity.getToolId())
             ? requireText(content, "记忆草稿不能为空", MAX_MEMORY_CONTENT)
             : INTERVIEW_TITLE_TOOL.equals(entity.getToolId())
                 ? requireText(content, "面试记录名称不能为空", MAX_TITLE)
-                : normalizeContent(content));
+                : normalizeContent(content);
+        entity.setDraftContent(updatedContent);
         if (INTERVIEW_TITLE_TOOL.equals(entity.getToolId())) {
             entity.setTargetTitle(entity.getDraftContent());
         }
@@ -614,6 +728,9 @@ public class AgentActionService {
         if (RESUME_EDITOR_SAVE_TOOL.equals(toolId)) {
             return "简历优化内容已保存为编辑版草稿，原始上传文件未被修改。";
         }
+        if (INTERVIEW_SCHEDULE_CREATE_TOOL.equals(toolId)) {
+            return "复习日程已创建，可在面试日程中继续调整；原始面试资料未被修改。";
+        }
         return "训练计划草稿已保存，原始面试资料未被修改。";
     }
 
@@ -675,6 +792,89 @@ public class AgentActionService {
             return null;
         }
         return requireText(value, "幂等键不合法", MAX_IDEMPOTENCY_KEY);
+    }
+
+    private String scheduleSummary(
+        String companyName,
+        String position,
+        java.time.LocalDateTime interviewTime,
+        String interviewType,
+        String meetingLink,
+        int roundNumber,
+        String interviewer,
+        String notes
+    ) {
+        StringBuilder summary = new StringBuilder()
+            .append("主题：").append(companyName)
+            .append("\n岗位：").append(position)
+            .append("\n时间：").append(interviewTime)
+            .append("\n轮次：").append(roundNumber);
+        appendSummary(summary, "类型", interviewType);
+        appendSummary(summary, "链接", meetingLink);
+        appendSummary(summary, "联系人", interviewer);
+        appendSummary(summary, "备注", notes);
+        return summary.toString();
+    }
+
+    private String updateScheduleDraft(AgentActionRequestEntity entity, String content) {
+        String normalized = normalizeContent(content);
+        Map<String, String> values = new LinkedHashMap<>();
+        normalized.lines().forEach(line -> {
+            int separator = line.indexOf('：');
+            if (separator < 0) {
+                separator = line.indexOf(':');
+            }
+            if (separator > 0) {
+                values.put(line.substring(0, separator).trim(), line.substring(separator + 1).trim());
+            }
+        });
+        String company = requireScheduleValue(values, "主题", "公司或面试主题不能为空", 255);
+        String position = requireScheduleValue(values, "岗位", "复习岗位不能为空", 255);
+        String timeValue = requireScheduleValue(values, "时间", "复习时间不能为空", 64);
+        LocalDateTime time;
+        try {
+            time = LocalDateTime.parse(timeValue);
+        } catch (RuntimeException error) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "复习时间格式应为 yyyy-MM-ddTHH:mm");
+        }
+        int round = 1;
+        String roundValue = values.get("轮次");
+        if (roundValue != null && !roundValue.isBlank()) {
+            try {
+                round = Integer.parseInt(roundValue);
+            } catch (NumberFormatException error) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "轮次必须是数字");
+            }
+        }
+        if (round < 1 || round > 20) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "轮次必须在1到20之间");
+        }
+        String type = normalizeOptional(values.get("类型"), 64);
+        String link = normalizeOptional(values.get("链接"), 1000);
+        String interviewer = normalizeOptional(values.get("联系人"), 255);
+        String notes = normalizeOptional(values.get("备注"), 2000);
+        entity.setScheduleCompanyName(company);
+        entity.setSchedulePosition(position);
+        entity.setScheduleInterviewTime(time);
+        entity.setScheduleInterviewType(type);
+        entity.setScheduleMeetingLink(link);
+        entity.setScheduleRoundNumber(round);
+        entity.setScheduleInterviewer(interviewer);
+        entity.setScheduleNotes(notes);
+        return scheduleSummary(company, position, time, type, link, round, interviewer, notes);
+    }
+
+    private String requireScheduleValue(
+        Map<String, String> values, String key, String message, int maxLength
+    ) {
+        return requireText(values.get(key), message, maxLength);
+    }
+
+    private void appendSummary(StringBuilder summary, String label, String value) {
+        if (value != null && !value.isBlank()) {
+            summary.append("\n").append(label).append("：")
+                .append(value.replaceAll("\\s+", " ").trim());
+        }
     }
 
     private String digest(String value) {

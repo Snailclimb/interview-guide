@@ -5,6 +5,7 @@ import interview.guide.modules.agent.model.AgentActionRequestEntity;
 import interview.guide.modules.agent.model.AgentActionStatus;
 import interview.guide.modules.agent.repository.AgentActionRequestRepository;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
+import interview.guide.modules.interviewschedule.service.InterviewScheduleService;
 import interview.guide.modules.resume.service.ResumeEditorService;
 import java.util.List;
 import java.util.Optional;
@@ -44,6 +45,9 @@ class AgentActionServiceTest {
 
     @Mock
     private ResumeEditorService resumeEditorService;
+
+    @Mock
+    private InterviewScheduleService interviewScheduleService;
 
     @Test
     @DisplayName("生成训练计划草稿时默认只提出动作，不改原始资料")
@@ -231,6 +235,61 @@ class AgentActionServiceTest {
         )).isInstanceOf(BusinessException.class)
             .hasMessageContaining("没有可编辑的关联简历");
         verify(resumeEditorService, never()).saveAgentDraftForOwner(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("确认复习日程动作时使用结构化字段，并将动作标识传给日程服务")
+    void confirmsInterviewScheduleActionWithStructuredFields() {
+        AgentActionService service = new AgentActionService(
+            repository, auditService, memoryService, interviewPersistenceService,
+            trainingTaskService, resumeEditorService, interviewScheduleService
+        );
+        when(repository.findByOwnerKeyAndIdempotencyKey("user-1", "schedule-1"))
+            .thenReturn(Optional.empty());
+        when(repository.findByActionIdForUpdate(any())).thenAnswer(invocation ->
+            Optional.of(scheduleAction("schedule-action-1", "user-1"))
+        );
+        when(repository.save(any(AgentActionRequestEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+        when(interviewScheduleService.createForOwner(any(), any(), any())).thenReturn(null);
+
+        var proposed = service.proposeInterviewScheduleDraft(
+            "interview-1", "agent-1", "user-1", "某科技", "Java 后端",
+            LocalDateTime.of(2026, 11, 7, 19, 0), "OTHER", null, 1, null,
+            "复习 Redis 和消息队列", "schedule-1"
+        );
+        var confirmed = service.confirm(proposed.actionId(), "user-1");
+
+        assertThat(proposed.toolId()).isEqualTo("interview.schedule.create");
+        assertThat(proposed.draftContent()).contains("某科技", "2026-11-07T19:00");
+        assertThat(confirmed.status()).isEqualTo(AgentActionStatus.SUCCEEDED);
+        verify(interviewScheduleService).createForOwner(any(), org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq("schedule-action-1"));
+    }
+
+    @Test
+    @DisplayName("确认前编辑复习日程时同步更新结构化时间和备注")
+    void editsInterviewScheduleDraftBeforeConfirmation() {
+        AgentActionService service = new AgentActionService(
+            repository, auditService, memoryService, interviewPersistenceService,
+            trainingTaskService, resumeEditorService, interviewScheduleService
+        );
+        AgentActionRequestEntity action = scheduleAction("schedule-action-2", "user-1");
+        when(repository.findByActionIdForUpdate("schedule-action-2")).thenReturn(Optional.of(action));
+        when(repository.save(any(AgentActionRequestEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var updated = service.updateDraft(
+            "schedule-action-2", "user-1",
+            "主题：新公司\n岗位：后端工程师\n时间：2026-11-08T20:30\n轮次：2\n备注：复习缓存和消息队列"
+        );
+
+        assertThat(updated.draftContent()).contains("新公司", "2026-11-08T20:30", "轮次：2");
+        assertThat(action.getScheduleCompanyName()).isEqualTo("新公司");
+        assertThat(action.getSchedulePosition()).isEqualTo("后端工程师");
+        assertThat(action.getScheduleInterviewTime()).isEqualTo(LocalDateTime.of(2026, 11, 8, 20, 30));
+        assertThat(action.getScheduleRoundNumber()).isEqualTo(2);
+        assertThat(action.getScheduleNotes()).isEqualTo("复习缓存和消息队列");
     }
 
     @Test
@@ -619,5 +678,18 @@ class AgentActionServiceTest {
             .targetTitle("Java 后端 Redis 专项复盘")
             .idempotencyKey("title-1")
             .build();
+    }
+
+    private AgentActionRequestEntity scheduleAction(String actionId, String owner) {
+        AgentActionRequestEntity action = draft(actionId, owner);
+        action.setToolId("interview.schedule.create");
+        action.setTitle("安排复习日程");
+        action.setScheduleCompanyName("某科技");
+        action.setSchedulePosition("Java 后端");
+        action.setScheduleInterviewTime(LocalDateTime.of(2026, 11, 7, 19, 0));
+        action.setScheduleInterviewType("OTHER");
+        action.setScheduleRoundNumber(1);
+        action.setScheduleNotes("复习 Redis 和消息队列");
+        return action;
     }
 }

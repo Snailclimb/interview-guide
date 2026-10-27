@@ -48,7 +48,7 @@ import {
   resolveAgentSessionId,
   resolveAgentThreadId,
 } from './agentSession';
-import { isAgentReportExportAction, isAgentResumeEditAction } from '../types/agent';
+import { isAgentReportExportAction, isAgentResumeEditAction, isAgentScheduleAction } from '../types/agent';
 import type {
   AgentGoal,
   AgentAuditEvent,
@@ -81,6 +81,14 @@ interface AgentMessage {
   id: number;
   role: 'assistant' | 'user';
   content: string;
+}
+
+interface ScheduleDraftForm {
+  messageId: number;
+  companyName: string;
+  position: string;
+  interviewTime: string;
+  notes: string;
 }
 
 const MAX_HISTORY_MESSAGES = 32;
@@ -170,6 +178,13 @@ function compactMemoryDraft(content: string) {
 
 function compactResumeEditDraft(content: string) {
   return content.replace(/\u0000/g, '').trim().slice(0, 12_000);
+}
+
+function defaultScheduleTime() {
+  const next = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  next.setMinutes(0, 0, 0);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}T${pad(next.getHours())}:${pad(next.getMinutes())}`;
 }
 
 function suggestInterviewTitle(content: string, fallback: string) {
@@ -282,6 +297,7 @@ export default function AgentPage() {
   const [actionNotice, setActionNotice] = useState('');
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<Record<string, string>>({});
+  const [scheduleDraftForm, setScheduleDraftForm] = useState<ScheduleDraftForm | null>(null);
   const [editingActionId, setEditingActionId] = useState<string | null>(null);
   const [editingActionContent, setEditingActionContent] = useState('');
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
@@ -955,6 +971,51 @@ export default function AgentPage() {
         setActionNotice('简历优化编辑版已生成，请确认后保存');
       })
       .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '简历优化编辑版生成失败，请稍后重试'));
+  };
+
+  const openScheduleDraft = (message: AgentMessage) => {
+    if (!sessionId || !agentSessionId || message.role !== 'assistant' || !message.content.trim()) {
+      setActionNotice('当前 Agent 会话还未建立，暂时不能安排复习日程');
+      return;
+    }
+    const fallbackTitle = interview?.title || '本场面试复习';
+    setScheduleDraftForm({
+      messageId: message.id,
+      companyName: fallbackTitle,
+      position: interview?.skillId || '面试复盘',
+      interviewTime: defaultScheduleTime(),
+      notes: `基于 Agent 复盘安排：${message.content.trim().replace(/\s+/g, ' ').slice(0, 1800)}`,
+    });
+    setActionNotice('请填写复习日程后生成待确认动作');
+  };
+
+  const saveScheduleAction = () => {
+    if (!sessionId || !agentSessionId || !scheduleDraftForm) {
+      setActionNotice('请先填写复习日程');
+      return;
+    }
+    const { messageId, companyName, position, interviewTime, notes } = scheduleDraftForm;
+    if (!companyName.trim() || !position.trim() || !interviewTime) {
+      setActionNotice('公司或主题、岗位和复习时间不能为空');
+      return;
+    }
+    const payload = {
+      companyName: companyName.trim(),
+      position: position.trim(),
+      interviewTime,
+      interviewType: 'OTHER',
+      roundNumber: 1,
+      notes: notes.trim().slice(0, 2000),
+      idempotencyKey: `schedule:${agentSessionId}:${messageId}:${interviewTime}:${position.trim()}`,
+    };
+    setActionNotice('正在生成待确认的复习日程...');
+    void agentApi.proposeInterviewScheduleDraft(sessionId, agentSessionId, payload)
+      .then((action) => {
+        setActions((current) => [action, ...current.filter((item) => item.actionId !== action.actionId)]);
+        setScheduleDraftForm(null);
+        setActionNotice('复习日程草稿已生成，请先检查时间和内容再确认');
+      })
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '复习日程草稿生成失败，请稍后重试'));
   };
 
   const confirmAgentAction = (actionId: string) => {
@@ -1791,6 +1852,14 @@ export default function AgentPage() {
                               <Download className="w-3.5 h-3.5" />
                               导出面试报告
                             </button>
+                                    <button
+                                      onClick={() => openScheduleDraft(message)}
+                                      disabled={runStatus === 'running' || !agentSessionId}
+                                      className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                                    >
+                                      <Clock3 className="w-3.5 h-3.5" />
+                                      安排复习日程
+                                    </button>
                             {interview?.resumeId ? (
                               <button
                                 onClick={() => saveResumeEditAction(message)}
@@ -1857,6 +1926,76 @@ export default function AgentPage() {
                 {actionsLoading ? <Loader2 className="h-4 w-4 animate-spin text-primary-500" /> : null}
               </div>
               {actionNotice ? <p className="mt-2 text-xs text-primary-700 dark:text-primary-300">{actionNotice}</p> : null}
+              {scheduleDraftForm ? (
+                <div className="mt-3 rounded-xl border border-primary-200 bg-primary-50/70 p-3 dark:border-primary-800 dark:bg-primary-900/20" aria-label="复习日程草稿表单">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold text-primary-800 dark:text-primary-200">安排复习日程</p>
+                      <p className="mt-1 text-[11px] text-primary-700/80 dark:text-primary-300/80">先填写并生成预览，确认后才会写入面试日程。</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setScheduleDraftForm(null)}
+                      className="rounded-lg p-1 text-slate-400 hover:bg-white/70 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                      aria-label="关闭复习日程表单"
+                    >
+                      <XCircle className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <label className="text-[11px] text-slate-500 dark:text-slate-300">
+                      公司或面试主题
+                      <input
+                        value={scheduleDraftForm.companyName}
+                        onChange={(event) => setScheduleDraftForm((current) => current ? { ...current, companyName: event.target.value } : current)}
+                        maxLength={255}
+                        className="dark-input mt-1 w-full rounded-lg px-3 py-2 text-xs outline-none"
+                      />
+                    </label>
+                    <label className="text-[11px] text-slate-500 dark:text-slate-300">
+                      复习岗位
+                      <input
+                        value={scheduleDraftForm.position}
+                        onChange={(event) => setScheduleDraftForm((current) => current ? { ...current, position: event.target.value } : current)}
+                        maxLength={255}
+                        className="dark-input mt-1 w-full rounded-lg px-3 py-2 text-xs outline-none"
+                      />
+                    </label>
+                    <label className="text-[11px] text-slate-500 dark:text-slate-300">
+                      复习时间
+                      <input
+                        type="datetime-local"
+                        value={scheduleDraftForm.interviewTime}
+                        onChange={(event) => setScheduleDraftForm((current) => current ? { ...current, interviewTime: event.target.value } : current)}
+                        className="dark-input mt-1 w-full rounded-lg px-3 py-2 text-xs outline-none"
+                      />
+                    </label>
+                    <label className="text-[11px] text-slate-500 dark:text-slate-300">
+                      备注
+                      <textarea
+                        value={scheduleDraftForm.notes}
+                        onChange={(event) => setScheduleDraftForm((current) => current ? { ...current, notes: event.target.value } : current)}
+                        maxLength={2000}
+                        rows={2}
+                        className="dark-input mt-1 w-full resize-y rounded-lg px-3 py-2 text-xs leading-5 outline-none"
+                      />
+                    </label>
+                  </div>
+                  <div className="mt-3 flex justify-end gap-2">
+                    <button type="button" onClick={() => setScheduleDraftForm(null)} className="btn-secondary rounded-lg px-2.5 py-1.5 text-xs">
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveScheduleAction}
+                      className="btn-primary inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs"
+                    >
+                      <Clock3 className="h-3.5 w-3.5" />
+                      生成待确认日程
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               {!actionsLoading && actions.length === 0 ? (
                 <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">暂无动作草稿。可从 Agent 回答生成训练计划、长期记忆或面试名称建议。</p>
               ) : null}
@@ -1882,7 +2021,7 @@ export default function AgentPage() {
                             <textarea
                               value={editingActionContent}
                               onChange={(event) => setEditingActionContent(event.target.value)}
-                              maxLength={action.toolId === 'agent.memory.save' ? 160 : action.toolId === 'interview.title.rename' ? 120 : 12000}
+                              maxLength={action.toolId === 'agent.memory.save' ? 160 : action.toolId === 'interview.title.rename' ? 120 : isAgentScheduleAction(action) ? 4000 : 12000}
                               rows={8}
                               className="dark-input w-full resize-y rounded-lg px-3 py-2 text-xs leading-6 outline-none"
                               aria-label={`编辑${action.title}`}
@@ -1935,6 +2074,16 @@ export default function AgentPage() {
                           打开简历编辑
                         </button>
                       ) : null}
+                      {action.status === 'SUCCEEDED' && isAgentScheduleAction(action) ? (
+                        <button
+                          type="button"
+                          onClick={() => navigate('/interview-schedule')}
+                          className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 px-2.5 py-1.5 text-xs text-emerald-700 transition-colors hover:border-emerald-400 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-900/20"
+                        >
+                          <Clock3 className="h-3.5 w-3.5" />
+                          打开面试日程
+                        </button>
+                      ) : null}
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         <button
                           onClick={() => void copyAgentAction(action)}
@@ -1956,7 +2105,7 @@ export default function AgentPage() {
                             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 transition-colors hover:border-primary-300 hover:text-primary-600 dark:border-slate-600 dark:text-slate-300 dark:hover:text-primary-300"
                           >
                             <Pencil className="h-3.5 w-3.5" />
-                            {action.toolId === 'interview.title.rename' ? '编辑名称' : action.toolId === 'agent.memory.save' ? '编辑记忆' : '编辑草稿'}
+                            {action.toolId === 'interview.title.rename' ? '编辑名称' : action.toolId === 'agent.memory.save' ? '编辑记忆' : isAgentScheduleAction(action) ? '编辑日程' : '编辑草稿'}
                           </button>
                         ) : null}
                         {actionFeedback[action.actionId] ? (
@@ -1986,6 +2135,7 @@ export default function AgentPage() {
                                   : action.toolId === 'training.task.create' ? '确认创建任务'
                                     : isAgentReportExportAction(action) ? '确认导出报告'
                                       : isAgentResumeEditAction(action) ? '确认保存简历版'
+                                      : isAgentScheduleAction(action) ? '确认创建日程'
                                       : '确认保存草稿'}
                           </button>
                         </div>
