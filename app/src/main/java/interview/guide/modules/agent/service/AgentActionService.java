@@ -47,7 +47,7 @@ public class AgentActionService {
     private static final int MAX_CONTENT = 12_000;
     private static final int MAX_MEMORY_CONTENT = 160;
     private static final int MAX_TITLE = 120;
-    private static final int MAX_PRACTICE_CONTEXT = 6_000;
+    private static final int MAX_INTERVIEW_FOCUS = 6_000;
     private static final int MAX_EXECUTION_ATTEMPTS = 3;
 
     private final AgentActionRequestRepository repository;
@@ -298,22 +298,24 @@ public class AgentActionService {
         return executeConfirmed(entity, true);
     }
 
-    /** 读取当前用户已经确认的练习题草稿，供下一轮面试出题使用。 */
+    /** 读取当前用户已经确认的训练动作，供下一轮面试出题使用。 */
     @Transactional
-    public String loadConfirmedPracticeContext(String actionId, String ownerKey) {
+    public String loadConfirmedInterviewFocus(String actionId, String ownerKey) {
         String owner = requireOwner(ownerKey);
         AgentActionRequestEntity entity = repository.findByActionId(requireText(
-            actionId, "Agent 练习动作不能为空", 64
+            actionId, "Agent 训练动作不能为空", 64
         )).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "Agent 练习动作不存在"));
         if (!owner.equals(entity.getOwnerKey())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该 Agent 练习动作");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该 Agent 训练动作");
         }
-        if (!PRACTICE_QUESTIONS_TOOL.equals(entity.getToolId())
+        boolean supportedTool = PRACTICE_QUESTIONS_TOOL.equals(entity.getToolId())
+            || TRAINING_PLAN_TOOL.equals(entity.getToolId());
+        if (!supportedTool
             || entity.getStatus() != AgentActionStatus.SUCCEEDED) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "只有已确认的练习题草稿可以用于专项面试");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "只有已确认的练习题或训练计划可以用于专项面试");
         }
         String content = normalizeContent(entity.getDraftContent());
-        return content.substring(0, Math.min(MAX_PRACTICE_CONTEXT, content.length()));
+        return content.substring(0, Math.min(MAX_INTERVIEW_FOCUS, content.length()));
     }
 
     private AgentActionResponse executeConfirmed(AgentActionRequestEntity entity, boolean retry) {

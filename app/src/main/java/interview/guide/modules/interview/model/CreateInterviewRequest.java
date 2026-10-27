@@ -34,5 +34,5 @@ public record CreateInterviewRequest(
 
     String requestId,                      // 创建请求幂等键，刷新/重试时复用同一会话
 
-    String agentActionId                   // 已确认的 Agent 练习题动作，可选
+    String agentActionId                   // 已确认的 Agent 训练动作，可选
 ) {}

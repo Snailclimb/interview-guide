@@ -921,7 +921,7 @@ export default function AgentPage() {
       .finally(() => setActionBusyId(null));
   };
 
-  const startPracticeFromAction = (action: AgentAction) => {
+  const startFollowUpInterview = (action: AgentAction) => {
     if (!interview?.skillId || action.status !== 'SUCCEEDED') return;
     navigate(ROUTES.interviewCreate(createRequestId()), {
       state: {
@@ -1740,14 +1740,15 @@ export default function AgentPage() {
                         )}
                       </details>
                       {action.resultSummary ? <p className={`mt-2 text-xs ${agentActionResultClass(action.status)}`}>{action.resultSummary}</p> : null}
-                      {action.status === 'SUCCEEDED' && action.toolId === 'practice.questions.draft' ? (
+                      {action.status === 'SUCCEEDED'
+                        && (action.toolId === 'practice.questions.draft' || action.toolId === 'interview.plan.draft') ? (
                         <button
                           type="button"
-                          onClick={() => startPracticeFromAction(action)}
+                          onClick={() => startFollowUpInterview(action)}
                           className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary-50 px-2.5 py-1.5 text-xs font-medium text-primary-700 hover:bg-primary-100 dark:bg-primary-900/30 dark:text-primary-300 dark:hover:bg-primary-900/50"
                         >
                           <Play className="h-3.5 w-3.5" />
-                          开始专项练习
+                          {action.toolId === 'interview.plan.draft' ? '按计划开始面试' : '开始专项练习'}
                         </button>
                       ) : null}
                       <div className="mt-3 flex flex-wrap items-center gap-2">

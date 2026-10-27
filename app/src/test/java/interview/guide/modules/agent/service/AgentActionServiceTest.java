@@ -315,7 +315,7 @@ class AgentActionServiceTest {
 
     @Test
     @DisplayName("只有当前用户已确认的练习题草稿可以注入下一轮面试")
-    void loadsOnlyConfirmedPracticeContext() {
+    void loadsOnlyConfirmedInterviewFocus() {
         AgentActionService service = new AgentActionService(repository, auditService);
         AgentActionRequestEntity action = draft("practice-action-1", "user-1");
         action.setToolId("practice.questions.draft");
@@ -323,12 +323,12 @@ class AgentActionServiceTest {
         action.setDraftContent("问题一：Redis 缓存击穿\n问题二：消息幂等");
         when(repository.findByActionId("practice-action-1")).thenReturn(Optional.of(action));
 
-        assertThat(service.loadConfirmedPracticeContext("practice-action-1", "user-1"))
+        assertThat(service.loadConfirmedInterviewFocus("practice-action-1", "user-1"))
             .contains("Redis 缓存击穿")
             .contains("消息幂等");
 
         action.setStatus(AgentActionStatus.PROPOSED);
-        assertThatThrownBy(() -> service.loadConfirmedPracticeContext("practice-action-1", "user-1"))
+        assertThatThrownBy(() -> service.loadConfirmedInterviewFocus("practice-action-1", "user-1"))
             .isInstanceOf(BusinessException.class)
             .hasMessageContaining("已确认");
     }
@@ -342,9 +342,24 @@ class AgentActionServiceTest {
         action.setStatus(AgentActionStatus.SUCCEEDED);
         when(repository.findByActionId("practice-action-1")).thenReturn(Optional.of(action));
 
-        assertThatThrownBy(() -> service.loadConfirmedPracticeContext("practice-action-1", "owner-b"))
+        assertThatThrownBy(() -> service.loadConfirmedInterviewFocus("practice-action-1", "owner-b"))
             .isInstanceOf(BusinessException.class)
             .hasMessageContaining("无权访问");
+    }
+
+    @Test
+    @DisplayName("已确认的训练计划也可以作为下一轮面试重点")
+    void loadsConfirmedTrainingPlanFocus() {
+        AgentActionService service = new AgentActionService(repository, auditService);
+        AgentActionRequestEntity action = draft("plan-action-1", "user-1");
+        action.setToolId("interview.plan.draft");
+        action.setStatus(AgentActionStatus.SUCCEEDED);
+        action.setDraftContent("第一周：补 Redis 缓存击穿；第二周：练消息幂等");
+        when(repository.findByActionId("plan-action-1")).thenReturn(Optional.of(action));
+
+        assertThat(service.loadConfirmedInterviewFocus("plan-action-1", "user-1"))
+            .contains("Redis 缓存击穿")
+            .contains("消息幂等");
     }
 
     @Test

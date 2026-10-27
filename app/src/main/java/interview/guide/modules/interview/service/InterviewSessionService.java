@@ -126,7 +126,7 @@ public class InterviewSessionService {
         List<HistoricalQuestion> historicalQuestions =
             persistenceService.getHistoricalQuestions(skillId, request.resumeId());
 
-        String focusContext = resolvePracticeFocus(request.agentActionId());
+        String focusContext = resolveAgentFocus(request.agentActionId());
 
         // 基于 Skill 生成面试问题
         List<InterviewQuestionDTO> questions;
@@ -238,13 +238,13 @@ public class InterviewSessionService {
         return normalized;
     }
 
-    private String resolvePracticeFocus(String agentActionId) {
+    private String resolveAgentFocus(String agentActionId) {
         if (agentActionId == null || agentActionId.isBlank()) {
             return "";
         }
         String ownerId = AuthUserContext.currentUserId()
             .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录后使用 Agent 专项练习"));
-        return agentActionService.loadConfirmedPracticeContext(agentActionId, ownerId);
+        return agentActionService.loadConfirmedInterviewFocus(agentActionId, ownerId);
     }
 
     /**

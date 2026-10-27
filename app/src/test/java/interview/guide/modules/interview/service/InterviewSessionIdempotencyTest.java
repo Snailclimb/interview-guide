@@ -127,7 +127,7 @@ class InterviewSessionIdempotencyTest {
   void passesConfirmedAgentFocusToQuestionGeneration() {
     AuthUserContext.set("user-1");
     try {
-      when(agentActionService.loadConfirmedPracticeContext("practice-action-1", "user-1"))
+      when(agentActionService.loadConfirmedInterviewFocus("practice-action-1", "user-1"))
           .thenReturn("Redis 缓存击穿\n消息幂等");
       when(questionService.generateQuestionsBySkill(
           any(), anyString(), anyString(), any(), anyInt(), any(), any(), any(), anyString()
@@ -141,7 +141,7 @@ class InterviewSessionIdempotencyTest {
       InterviewSessionDTO result = service.createSession(request);
 
       assertThat(result.questions()).hasSize(1);
-      verify(agentActionService).loadConfirmedPracticeContext("practice-action-1", "user-1");
+      verify(agentActionService).loadConfirmedInterviewFocus("practice-action-1", "user-1");
       verify(questionService).generateQuestionsBySkill(
           any(), eq("java-backend"), eq("mid"), eq(""), eq(6), any(), any(), eq(null),
           eq("Redis 缓存击穿\n消息幂等")
