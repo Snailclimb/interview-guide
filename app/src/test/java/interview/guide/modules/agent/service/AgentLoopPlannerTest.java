@@ -18,7 +18,19 @@ class AgentLoopPlannerTest {
         );
 
         assertThat(planner.steps("1. 读取报告\n- 检索资料\n3) 输出建议"))
-            .containsExactly("读取报告", "检索资料");
+            .containsExactly("读取面试报告", "核对 Skill/RAG 来源");
+    }
+
+    @Test
+    void canonicalizesUnknownPlannerActionsToAuditableLabels() {
+        AgentRetryProperties properties = new AgentRetryProperties();
+        properties.setLoopMaxSteps(3);
+        AgentLoopPlanner planner = new AgentLoopPlanner(
+            mock(LlmProviderRegistry.class), mock(PromptSanitizer.class), properties
+        );
+
+        assertThat(planner.steps("1. 先确认资料边界\n2. 深入分析并输出建议\n3. [parallel] 检索知识库"))
+            .containsExactly("确认当前目标", "整理", "[parallel] 核对 Skill/RAG 来源");
     }
 
     @Test

@@ -154,7 +154,34 @@ public class AgentLoopPlanner {
             .map(String::trim)
             .filter(value -> !value.isBlank())
             .limit(maxSteps)
+            .map(this::canonicalizeStep)
             .toList();
         return result.isEmpty() ? List.of("读取面试报告并确认当前目标") : result;
+    }
+
+    /**
+     * 规划模型可以用自然语言描述动作，但对外的 Loop 轨迹必须使用有限的审计动作集合。
+     * 这样既不会把模型的自由文本误当成工具调用，也能让恢复、评测和前端展示使用稳定标签。
+     */
+    private String canonicalizeStep(String value) {
+        boolean parallel = value.startsWith("[parallel]");
+        String action = parallel ? value.substring("[parallel]".length()).trim() : value;
+        String normalized = action.toLowerCase(java.util.Locale.ROOT);
+        String canonical = action;
+        if (action.contains("读取") && action.contains("报告")) {
+            canonical = "读取面试报告";
+        } else if (action.contains("确认") && (action.contains("目标") || action.contains("边界"))) {
+            canonical = "确认当前目标";
+        } else if (normalized.contains("skill") || normalized.contains("rag")
+            || action.contains("资料") || action.contains("知识库") || action.contains("检索")
+            || action.contains("来源")) {
+            canonical = "核对 Skill/RAG 来源";
+        } else if (action.contains("整理") || action.contains("输出") || action.contains("建议")
+            || action.contains("行动")) {
+            canonical = "整理";
+        } else {
+            canonical = "整理";
+        }
+        return parallel ? "[parallel] " + canonical : canonical;
     }
 }
