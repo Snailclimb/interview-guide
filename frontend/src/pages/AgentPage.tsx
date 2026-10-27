@@ -48,6 +48,7 @@ import {
   resolveAgentSessionId,
   resolveAgentThreadId,
 } from './agentSession';
+import { isAgentReportExportAction } from '../types/agent';
 import type {
   AgentGoal,
   AgentAuditEvent,
@@ -910,6 +911,24 @@ export default function AgentPage() {
       .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '训练任务草稿生成失败，请稍后重试'));
   };
 
+  const saveReportExportAction = (message: AgentMessage) => {
+    if (!sessionId || !agentSessionId || message.role !== 'assistant') {
+      setActionNotice('当前 Agent 会话还未建立，暂时不能导出面试报告');
+      return;
+    }
+    setActionNotice('正在生成待确认的报告导出动作...');
+    void agentApi.proposeInterviewReportExportDraft(
+      sessionId,
+      agentSessionId,
+      `export-report:${agentSessionId}:${message.id}`,
+    )
+      .then((action) => {
+        setActions((current) => [action, ...current.filter((item) => item.actionId !== action.actionId)]);
+        setActionNotice('报告导出动作已生成，请确认后下载');
+      })
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '报告导出动作生成失败，请稍后重试'));
+  };
+
   const confirmAgentAction = (actionId: string) => {
     if (actionBusyId) return;
     const action = actions.find((item) => item.actionId === actionId);
@@ -927,6 +946,19 @@ export default function AgentPage() {
         }
         if (updated.toolId === 'training.task.create') {
           void loadTrainingTasks();
+        }
+        if (isAgentReportExportAction(updated) && updated.status === 'SUCCEEDED' && sessionId) {
+          setActionNotice('报告导出已确认，正在下载 PDF...');
+          void historyApi.exportInterviewPdf(sessionId)
+            .then((blob) => {
+              const safeTitle = (interview?.title || '模拟面试报告')
+                .replace(/[\\/:*?"<>|\s]+/g, '-')
+                .replace(/^-+|-+$/g, '') || '模拟面试报告';
+              downloadBlob(blob, `${safeTitle}.pdf`);
+              setActionFeedback((current) => ({ ...current, [updated.actionId]: '已下载 PDF' }));
+              setActionNotice('面试报告 PDF 已下载');
+            })
+            .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '报告下载失败，可稍后重试'));
         }
         void loadAuditEvents();
       })
@@ -1017,6 +1049,23 @@ export default function AgentPage() {
     const markdown = `# ${action.title}\n\n${action.draftContent.trim()}\n\n---\n\n来源：Agent 动作草稿\n状态：${formatAgentActionStatus(action.status)}\n说明：${action.previewText}`;
     downloadBlob(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }), `${safeTitle}.md`);
     setActionFeedback((current) => ({ ...current, [action.actionId]: '已下载 Markdown' }));
+  };
+
+  const downloadInterviewReport = (action: AgentAction) => {
+    if (!sessionId) return;
+    setActionFeedback((current) => ({ ...current, [action.actionId]: '正在下载...' }));
+    void historyApi.exportInterviewPdf(sessionId)
+      .then((blob) => {
+        const safeTitle = (interview?.title || '模拟面试报告')
+          .replace(/[\\/:*?"<>|\s]+/g, '-')
+          .replace(/^-+|-+$/g, '') || '模拟面试报告';
+        downloadBlob(blob, `${safeTitle}.pdf`);
+        setActionFeedback((current) => ({ ...current, [action.actionId]: '已下载 PDF' }));
+      })
+      .catch((error: unknown) => setActionFeedback((current) => ({
+        ...current,
+        [action.actionId]: getErrorMessage(error) || '下载失败，请稍后重试',
+      })));
   };
 
   const startEditAgentAction = (action: AgentAction) => {
@@ -1698,6 +1747,14 @@ export default function AgentPage() {
                               <Target className="w-3.5 h-3.5" />
                               创建训练任务
                             </button>
+                            <button
+                              onClick={() => saveReportExportAction(message)}
+                              disabled={runStatus === 'running' || !agentSessionId}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              导出面试报告
+                            </button>
                           </div>
                         ) : null}
                       </>
@@ -1813,6 +1870,16 @@ export default function AgentPage() {
                           {action.toolId === 'interview.plan.draft' ? '按计划开始面试' : '开始专项练习'}
                         </button>
                       ) : null}
+                      {action.status === 'SUCCEEDED' && isAgentReportExportAction(action) ? (
+                        <button
+                          type="button"
+                          onClick={() => downloadInterviewReport(action)}
+                          className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary-50 px-2.5 py-1.5 text-xs font-medium text-primary-700 hover:bg-primary-100 dark:bg-primary-900/30 dark:text-primary-300 dark:hover:bg-primary-900/50"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          下载面试报告 PDF
+                        </button>
+                      ) : null}
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         <button
                           onClick={() => void copyAgentAction(action)}
@@ -1862,6 +1929,7 @@ export default function AgentPage() {
                               : action.toolId === 'interview.title.rename' ? '确认应用名称'
                                 : action.toolId === 'agent.memory.save' ? '确认保存记忆'
                                   : action.toolId === 'training.task.create' ? '确认创建任务'
+                                    : isAgentReportExportAction(action) ? '确认导出报告'
                                     : '确认保存草稿'}
                           </button>
                         </div>

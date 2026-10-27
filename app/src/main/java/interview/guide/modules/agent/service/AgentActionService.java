@@ -30,6 +30,7 @@ public class AgentActionService {
     private static final String TRAINING_PLAN_TOOL = "interview.plan.draft";
     private static final String PRACTICE_QUESTIONS_TOOL = "practice.questions.draft";
     private static final String TRAINING_TASK_TOOL = "training.task.create";
+    private static final String INTERVIEW_REPORT_EXPORT_TOOL = "interview.report.export";
     private static final String MEMORY_TOOL = "agent.memory.save";
     private static final String INTERVIEW_TITLE_TOOL = "interview.title.rename";
     private static final String DRAFT_RISK = "DRAFT_WRITE";
@@ -43,6 +44,8 @@ public class AgentActionService {
     private static final String MEMORY_PREVIEW = "确认后写入一条结构化长期记忆，支持后续面试参考，可在记忆区编辑或删除。";
     private static final String TITLE_TITLE = "面试记录名称修改";
     private static final String TITLE_PREVIEW = "确认后只修改这场面试的显示名称，不修改问题、回答、评分或简历。";
+    private static final String REPORT_EXPORT_TITLE = "导出面试报告";
+    private static final String REPORT_EXPORT_PREVIEW = "确认后校验当前面试归属并下载 PDF 报告，不修改面试内容。";
     private static final int MAX_OWNER_KEY = 64;
     private static final int MAX_IDEMPOTENCY_KEY = 128;
     private static final int MAX_CONTENT = 12_000;
@@ -218,6 +221,21 @@ public class AgentActionService {
             .idempotencyKey(idempotencyKey)
             .build();
         return saveProposed(entity);
+    }
+
+    /** 生成待确认的面试报告导出动作；确认时会校验当前用户仍拥有该面试。 */
+    @Transactional
+    public AgentActionResponse proposeInterviewReportExportDraft(
+        String interviewSessionId,
+        String agentSessionId,
+        String ownerKey,
+        String requestedIdempotencyKey
+    ) {
+        return proposeDraft(
+            interviewSessionId, agentSessionId, ownerKey,
+            "导出当前面试报告 PDF", requestedIdempotencyKey,
+            INTERVIEW_REPORT_EXPORT_TOOL, REPORT_EXPORT_TITLE, REPORT_EXPORT_PREVIEW
+        );
     }
 
     private AgentActionResponse proposeDraft(
@@ -431,6 +449,15 @@ public class AgentActionService {
                 throw new IllegalStateException("训练任务服务未配置");
             }
             trainingTaskService.createFromAction(entity);
+            return;
+        }
+        if (INTERVIEW_REPORT_EXPORT_TOOL.equals(entity.getToolId())) {
+            if (interviewPersistenceService == null
+                || interviewPersistenceService.findBySessionIdForOwner(
+                    entity.getInterviewSessionId(), entity.getOwnerKey()
+                ).isEmpty()) {
+                throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND, "面试报告不存在或无权访问");
+            }
         }
         // 训练计划和练习题的确认结果仍然只保存在动作表，不修改其他业务实体。
     }
@@ -501,6 +528,9 @@ public class AgentActionService {
         }
         if (TRAINING_TASK_TOOL.equals(toolId)) {
             return "训练任务已创建，可在 Agent 任务列表中开始或完成。原始面试资料未被修改。";
+        }
+        if (INTERVIEW_REPORT_EXPORT_TOOL.equals(toolId)) {
+            return "面试报告已准备好，可以下载 PDF；面试内容未被修改。";
         }
         return "训练计划草稿已保存，原始面试资料未被修改。";
     }

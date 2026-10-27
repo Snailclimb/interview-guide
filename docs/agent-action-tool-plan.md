@@ -47,9 +47,10 @@ Agent 自身的会话、记忆、审计、用量和 Loop 检查点属于内部�
 3. `agent.memory.save`：生成一条不超过 160 字的结构化长期记忆，确认后写入现有记忆服务，支持后续编辑和删除；
 4. `interview.title.rename`：生成面试记录名称建议，确认后只修改该面试的显示名称；
 5. `training.task.create`：已经接入，确认后创建独立训练任务；任务支持待开始、进行中、已完成和已取消，不修改原始面试资料；
-6. 简历编辑优化：已在“简历管理 → 编辑与优化”独立实现，基于 `resume_edit_drafts` 保存 AI 草稿，Agent 不重复接管；
-7. `knowledgebase.query`：继续保持只读查询，不允许 Agent 自动上传、删除或重向量化；
-8. `resume.draft.apply`：暂缓到草稿预览、确认、审计和回滚链路验收后再开放。
+6. `interview.report.export`：已经接入，确认后校验面试归属并下载 PDF，不修改面试内容；
+7. 简历编辑优化：已在“简历管理 → 编辑与优化”独立实现，基于 `resume_edit_drafts` 保存 AI 草稿，Agent 不重复接管；
+8. `knowledgebase.query`：继续保持只读查询，不允许 Agent 自动上传、删除或重向量化；
+9. `resume.draft.apply`：暂缓到草稿预览、确认、审计和回滚链路验收后再开放。
 
 第一版动作 API 已固定为以下边界：
 
@@ -57,6 +58,7 @@ Agent 自身的会话、记忆、审计、用量和 Loop 检查点属于内部�
 - `POST .../actions/training-plan-draft`：生成 `PROPOSED` 状态的训练计划草稿；
 - `POST .../actions/practice-questions-draft`：生成 `PROPOSED` 状态的练习题草稿；
 - `POST .../actions/training-task-draft`：生成 `PROPOSED` 状态的训练任务草稿；
+- `POST .../actions/interview-report-export-draft`：生成 `PROPOSED` 状态的报告导出动作；
 - `POST .../actions/memory-draft`：生成 `PROPOSED` 状态的长期记忆草稿，服务端保存分类和适用方向元数据；
 - `POST .../actions/interview-title-draft`：生成 `PROPOSED` 状态的面试名称草稿；
 - `PATCH /api/agent/actions/{actionId}`：仅允许用户在 `PROPOSED` 状态下人工编辑草稿；

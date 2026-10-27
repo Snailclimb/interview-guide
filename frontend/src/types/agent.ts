@@ -98,6 +98,10 @@ export function isAgentTitleAction(action: AgentAction): boolean {
   return action.toolId === 'interview.title.rename';
 }
 
+export function isAgentReportExportAction(action: AgentAction): boolean {
+  return action.toolId === 'interview.report.export';
+}
+
 export interface AgentConversationSummary {
   agentSessionId: string;
   interviewSessionId: string;

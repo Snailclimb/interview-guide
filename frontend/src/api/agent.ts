@@ -86,6 +86,18 @@ export const agentApi = {
     );
   },
 
+  proposeInterviewReportExportDraft(
+    sessionId: string,
+    agentSessionId: string,
+    idempotencyKey?: string,
+  ): Promise<AgentAction> {
+    return request.post<AgentAction>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversations/${encodeURIComponent(agentSessionId)}/actions/interview-report-export-draft`,
+      idempotencyKey ? { idempotencyKey } : undefined,
+      { headers: agentHeaders() },
+    );
+  },
+
   proposeMemoryDraft(
     sessionId: string,
     agentSessionId: string,

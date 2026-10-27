@@ -147,6 +147,34 @@ class AgentActionServiceTest {
     }
 
     @Test
+    @DisplayName("确认报告导出动作时校验当前用户的面试归属")
+    void confirmsInterviewReportExportActionForOwner() {
+        AgentActionService service = new AgentActionService(
+            repository, auditService, memoryService, interviewPersistenceService
+        );
+        when(repository.findByOwnerKeyAndIdempotencyKey("user-1", "export-1"))
+            .thenReturn(Optional.empty());
+        when(repository.findByActionIdForUpdate(any())).thenAnswer(invocation ->
+            Optional.of(exportAction("export-action-1", "user-1"))
+        );
+        when(repository.save(any(AgentActionRequestEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+        when(interviewPersistenceService.findBySessionIdForOwner("interview-1", "user-1"))
+            .thenReturn(Optional.of(new interview.guide.modules.interview.model.InterviewSessionEntity()));
+
+        var proposed = service.proposeInterviewReportExportDraft(
+            "interview-1", "agent-1", "user-1", "export-1"
+        );
+        var confirmed = service.confirm(proposed.actionId(), "user-1");
+
+        assertThat(proposed.toolId()).isEqualTo("interview.report.export");
+        assertThat(confirmed.status()).isEqualTo(AgentActionStatus.SUCCEEDED);
+        assertThat(confirmed.resultSummary()).contains("下载 PDF");
+        verify(interviewPersistenceService).findBySessionIdForOwner("interview-1", "user-1");
+        verify(memoryService, never()).rememberItem(any(), any(), any(), any());
+    }
+
+    @Test
     @DisplayName("确认动作按状态机完成，并且重复确认是幂等的")
     void confirmsActionIdempotently() {
         AgentActionService service = new AgentActionService(repository, auditService);
@@ -472,6 +500,14 @@ class AgentActionServiceTest {
         AgentActionRequestEntity action = draft(actionId, owner);
         action.setToolId("training.task.create");
         action.setTitle("训练任务草稿");
+        return action;
+    }
+
+    private AgentActionRequestEntity exportAction(String actionId, String owner) {
+        AgentActionRequestEntity action = draft(actionId, owner);
+        action.setToolId("interview.report.export");
+        action.setTitle("导出面试报告");
+        action.setDraftContent("导出当前面试报告 PDF");
         return action;
     }
 

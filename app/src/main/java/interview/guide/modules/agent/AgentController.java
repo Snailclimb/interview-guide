@@ -238,6 +238,23 @@ public class AgentController {
         ));
     }
 
+    /** 只生成待确认的面试报告导出动作。 */
+    @PostMapping("/api/agent/interview-sessions/{sessionId}/conversations/{agentSessionId}/actions/interview-report-export-draft")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
+    public Result<AgentActionResponse> proposeInterviewReportExportDraft(
+        @PathVariable String sessionId,
+        @PathVariable String agentSessionId,
+        @RequestBody(required = false) CreateAgentDraftActionRequest request,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        String identity = authIdentityService.requireIdentity(ownerKey);
+        conversationService.assertAccess(sessionId, agentSessionId, identity);
+        return Result.success(actionService.proposeInterviewReportExportDraft(
+            sessionId, agentSessionId, identity,
+            request == null ? null : request.idempotencyKey()
+        ));
+    }
+
     /** 只生成待确认的长期记忆草稿，确认后才写入结构化记忆。 */
     @PostMapping("/api/agent/interview-sessions/{sessionId}/conversations/{agentSessionId}/actions/memory-draft")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
