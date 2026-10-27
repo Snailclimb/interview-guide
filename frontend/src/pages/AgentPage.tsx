@@ -888,6 +888,20 @@ export default function AgentPage() {
       .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作取消失败，请稍后重试'));
   };
 
+  const retryAgentAction = (actionId: string) => {
+    const action = actions.find((item) => item.actionId === actionId);
+    setActionNotice(`正在重试${action?.title || 'Agent 动作'}...`);
+    void agentApi.retryAction(actionId)
+      .then((updated) => {
+        setActions((current) => current.map((item) => item.actionId === updated.actionId ? updated : item));
+        setActionNotice(updated.status === 'SUCCEEDED'
+          ? `${updated.title}已重试成功`
+          : `${updated.title}仍未执行成功，请稍后再试`);
+        void loadAuditEvents();
+      })
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作重试失败，请稍后重试'));
+  };
+
   const copyAgentAction = async (action: AgentAction) => {
     try {
       if (navigator.clipboard?.writeText) {
@@ -1735,6 +1749,16 @@ export default function AgentPage() {
                             className="btn-primary rounded-lg px-2.5 py-1.5 text-xs"
                           >
                             {action.toolId === 'interview.title.rename' ? '确认应用名称' : action.toolId === 'agent.memory.save' ? '确认保存记忆' : '确认保存草稿'}
+                          </button>
+                        </div>
+                      ) : action.status === 'FAILED' ? (
+                        <div className="mt-3 flex justify-end">
+                          <button
+                            onClick={() => retryAgentAction(action.actionId)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 px-2.5 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-900/20"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            重试动作
                           </button>
                         </div>
                       ) : null}

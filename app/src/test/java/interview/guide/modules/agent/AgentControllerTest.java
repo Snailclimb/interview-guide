@@ -114,4 +114,22 @@ class AgentControllerTest {
             "interview-1", "agent-1", "user-1", "Java 后端专项复盘", "title-1"
         );
     }
+
+    @Test
+    @DisplayName("失败动作重试接口使用当前身份转交给动作服务")
+    void retriesActionWithCurrentIdentity() {
+        when(authIdentityService.requireIdentity("user-1")).thenReturn("user-1");
+        AgentActionResponse action = new AgentActionResponse(
+            "action-1", "interview-1", "agent-1", "agent.memory.save", "MEMORY_WRITE",
+            AgentActionStatus.SUCCEEDED, "长期记忆草稿", "预览", "Redis 薄弱点", "已重试成功",
+            null, null, null, null
+        );
+        when(actionService.retry("action-1", "user-1")).thenReturn(action);
+
+        Result<AgentActionResponse> result = controller.retryAction("action-1", "user-1");
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getData().status()).isEqualTo(AgentActionStatus.SUCCEEDED);
+        verify(actionService).retry("action-1", "user-1");
+    }
 }

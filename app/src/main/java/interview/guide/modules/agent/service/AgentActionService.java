@@ -47,6 +47,7 @@ public class AgentActionService {
     private static final int MAX_CONTENT = 12_000;
     private static final int MAX_MEMORY_CONTENT = 160;
     private static final int MAX_TITLE = 120;
+    private static final int MAX_EXECUTION_ATTEMPTS = 3;
 
     private final AgentActionRequestRepository repository;
     private final AgentAuditService auditService;
@@ -265,9 +266,11 @@ public class AgentActionService {
         if (entity.getStatus() == AgentActionStatus.SUCCEEDED) {
             return AgentActionResponse.from(entity);
         }
-        if (entity.getStatus() == AgentActionStatus.CANCELLED
-            || entity.getStatus() == AgentActionStatus.FAILED) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "该 Agent 动作已结束，不能重复确认");
+        if (entity.getStatus() == AgentActionStatus.CANCELLED) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "该 Agent 动作已取消，不能重复确认");
+        }
+        if (entity.getStatus() == AgentActionStatus.FAILED) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "该 Agent 动作执行失败，请使用重试");
         }
 
         if (entity.getStatus() == AgentActionStatus.PROPOSED) {
@@ -275,7 +278,35 @@ public class AgentActionService {
             entity.setConfirmedAt(LocalDateTime.now());
             audit(entity, "ACTION_CONFIRMED", AgentActionStatus.CONFIRMED.name());
         }
+        return executeConfirmed(entity, false);
+    }
+
+    /** 重试一次已经失败的动作，最多允许三次实际执行。 */
+    @Transactional
+    public AgentActionResponse retry(String actionId, String ownerKey) {
+        AgentActionRequestEntity entity = findOwnedForUpdate(actionId, ownerKey);
+        if (entity.getStatus() == AgentActionStatus.SUCCEEDED) {
+            return AgentActionResponse.from(entity);
+        }
+        if (entity.getStatus() != AgentActionStatus.FAILED) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "只有执行失败的 Agent 动作可以重试");
+        }
+        if (executionAttempts(entity) >= MAX_EXECUTION_ATTEMPTS) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "该 Agent 动作已达到最大重试次数，请重新生成草稿");
+        }
+        return executeConfirmed(entity, true);
+    }
+
+    private AgentActionResponse executeConfirmed(AgentActionRequestEntity entity, boolean retry) {
+        if (executionAttempts(entity) >= MAX_EXECUTION_ATTEMPTS) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "该 Agent 动作已达到最大重试次数，请重新生成草稿");
+        }
+        if (retry) {
+            audit(entity, "ACTION_RETRY", String.valueOf(executionAttempts(entity) + 1));
+        }
+        entity.setExecutionAttempts(executionAttempts(entity) + 1);
         entity.setStatus(AgentActionStatus.RUNNING);
+        repository.save(entity);
         audit(entity, "ACTION_RUNNING", AgentActionStatus.RUNNING.name());
 
         try {
@@ -288,7 +319,7 @@ public class AgentActionService {
             return AgentActionResponse.from(entity);
         } catch (RuntimeException error) {
             entity.setStatus(AgentActionStatus.FAILED);
-            entity.setResultSummary("动作执行失败，原始资料未被修改，请检查后重试。");
+            entity.setResultSummary(failureSummary(entity));
             entity.setCompletedAt(LocalDateTime.now());
             repository.save(entity);
             audit(entity, "ACTION_FAILED", AgentActionStatus.FAILED.name());
@@ -383,6 +414,17 @@ public class AgentActionService {
             return "面试记录名称已更新，问题、回答、评分和简历未被修改。";
         }
         return "训练计划草稿已保存，原始面试资料未被修改。";
+    }
+
+    private String failureSummary(AgentActionRequestEntity entity) {
+        if (executionAttempts(entity) < MAX_EXECUTION_ATTEMPTS) {
+            return "第" + executionAttempts(entity) + "次执行失败，原始资料未被修改，可以重试。";
+        }
+        return "动作执行失败，原始资料未被修改，已达到最大重试次数，请重新生成草稿。";
+    }
+
+    private int executionAttempts(AgentActionRequestEntity entity) {
+        return entity.getExecutionAttempts() == null ? 0 : entity.getExecutionAttempts();
     }
 
     private String requireOwner(String value) {

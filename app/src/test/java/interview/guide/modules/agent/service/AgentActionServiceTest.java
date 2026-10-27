@@ -18,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -129,7 +130,7 @@ class AgentActionServiceTest {
         assertThat(result.status()).isEqualTo(AgentActionStatus.SUCCEEDED);
         assertThat(result.resultSummary()).contains("原始面试资料未被修改");
         assertThat(repeated.status()).isEqualTo(AgentActionStatus.SUCCEEDED);
-        verify(repository).save(action);
+        verify(repository, times(2)).save(action);
     }
 
     @Test
@@ -237,6 +238,79 @@ class AgentActionServiceTest {
             "interview-1", "user-1", "Java 后端 Redis 专项复盘"
         );
         verify(memoryService, never()).rememberItem(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("执行失败后可以重试，并且重试成功后动作恢复为已保存")
+    void retriesFailedActionWithinLimit() {
+        AgentActionService service = new AgentActionService(
+            repository, auditService, memoryService, interviewPersistenceService
+        );
+        AgentActionRequestEntity action = memoryAction("memory-action-1", "user-1");
+        when(repository.findByOwnerKeyAndIdempotencyKey("user-1", "memory-1"))
+            .thenReturn(Optional.empty());
+        when(repository.findByActionIdForUpdate(any()))
+            .thenReturn(Optional.of(action));
+        when(repository.save(any(AgentActionRequestEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+        when(memoryService.rememberItem(
+            "user-1", "weakness", "Redis 缓存击穿需要互斥锁保护", "java-backend"
+        ))
+            .thenThrow(new IllegalStateException("temporary failure"))
+            .thenReturn(null);
+
+        var proposed = service.proposeMemoryDraft(
+            "interview-1", "agent-1", "user-1", "Redis 缓存击穿需要互斥锁保护",
+            "weakness", "java-backend", "memory-1"
+        );
+        var failed = service.confirm(proposed.actionId(), "user-1");
+        var retried = service.retry(failed.actionId(), "user-1");
+
+        assertThat(failed.status()).isEqualTo(AgentActionStatus.FAILED);
+        assertThat(failed.resultSummary()).contains("可以重试");
+        assertThat(retried.status()).isEqualTo(AgentActionStatus.SUCCEEDED);
+        verify(memoryService, times(2)).rememberItem(
+            "user-1", "weakness", "Redis 缓存击穿需要互斥锁保护", "java-backend"
+        );
+        verify(auditService).recordQuietly(
+            "user-1", "interview-1", "agent-1", null,
+            "ACTION_RETRY", "agent-action", "memory-action-1", "2"
+        );
+    }
+
+    @Test
+    @DisplayName("失败动作达到三次后拒绝继续重试")
+    void stopsRetryingAfterThreeAttempts() {
+        AgentActionService service = new AgentActionService(
+            repository, auditService, memoryService, interviewPersistenceService
+        );
+        AgentActionRequestEntity action = memoryAction("memory-action-1", "user-1");
+        when(repository.findByOwnerKeyAndIdempotencyKey("user-1", "memory-1"))
+            .thenReturn(Optional.empty());
+        when(repository.findByActionIdForUpdate(any()))
+            .thenReturn(Optional.of(action));
+        when(repository.save(any(AgentActionRequestEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+        when(memoryService.rememberItem(
+            "user-1", "weakness", "Redis 缓存击穿需要互斥锁保护", "java-backend"
+        )).thenThrow(new IllegalStateException("persistent failure"));
+
+        var proposed = service.proposeMemoryDraft(
+            "interview-1", "agent-1", "user-1", "Redis 缓存击穿需要互斥锁保护",
+            "weakness", "java-backend", "memory-1"
+        );
+        var failed = service.confirm(proposed.actionId(), "user-1");
+        service.retry(failed.actionId(), "user-1");
+        var exhausted = service.retry(failed.actionId(), "user-1");
+
+        assertThat(exhausted.status()).isEqualTo(AgentActionStatus.FAILED);
+        assertThat(exhausted.resultSummary()).contains("最大重试次数");
+        assertThatThrownBy(() -> service.retry(failed.actionId(), "user-1"))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("最大重试次数");
+        verify(memoryService, times(3)).rememberItem(
+            "user-1", "weakness", "Redis 缓存击穿需要互斥锁保护", "java-backend"
+        );
     }
 
     @Test

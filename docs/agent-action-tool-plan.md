@@ -58,6 +58,7 @@ Agent 自身的会话、记忆、审计、用量和 Loop 检查点属于内部�
 - `POST .../actions/interview-title-draft`：生成 `PROPOSED` 状态的面试名称草稿；
 - `PATCH /api/agent/actions/{actionId}`：仅允许用户在 `PROPOSED` 状态下人工编辑草稿；
 - `POST /api/agent/actions/{actionId}/confirm`：明确确认后保存草稿；
+- `POST /api/agent/actions/{actionId}/retry`：仅允许重试 `FAILED` 动作，最多实际执行 3 次；
 - `POST /api/agent/actions/{actionId}/cancel`：取消待确认动作。
 
 草稿保存后，Agent 页面提供人工编辑、复制和 Markdown 下载；这是对已授权草稿结果的使用，不会新增原始业务数据写入权限。
@@ -74,6 +75,7 @@ Agent 自身的会话、记忆、审计、用量和 Loop 检查点属于内部�
 - 只保存参数摘要和结果摘要，不把完整简历、Prompt 或密钥写入审计；
 - 默认关闭自动执行，前端必须展示预览和确认按钮；
 - 工具异常不能让现有 Agent 对话或普通面试不可用；
+- 失败动作必须显示可重试状态；重试次数上限为 3 次，达到上限后要求重新生成草稿；
 - MCP 只作为外部系统适配层，不能绕过本地 owner、确认、审计和回滚策略。
 
 ## 实施顺序

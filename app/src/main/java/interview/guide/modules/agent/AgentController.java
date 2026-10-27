@@ -261,6 +261,18 @@ public class AgentController {
         ));
     }
 
+    /** 重试执行失败的 Agent 动作，服务端最多允许三次实际执行。 */
+    @PostMapping("/api/agent/actions/{actionId}/retry")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
+    public Result<AgentActionResponse> retryAction(
+        @PathVariable String actionId,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        return Result.success(actionService.retry(
+            actionId, authIdentityService.requireIdentity(ownerKey)
+        ));
+    }
+
     @PatchMapping("/api/agent/actions/{actionId}")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
     public Result<AgentActionResponse> updateActionDraft(

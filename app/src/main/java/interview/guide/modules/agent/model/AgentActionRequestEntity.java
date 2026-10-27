@@ -95,11 +95,18 @@ public class AgentActionRequestEntity {
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 
+    /** 当前动作已实际调用业务执行器的次数，用于限制瞬时故障重试。 */
+    @Column(name = "execution_attempts", nullable = false)
+    private Integer executionAttempts;
+
     @PrePersist
     protected void onCreate() {
         LocalDateTime now = LocalDateTime.now();
         if (createdAt == null) {
             createdAt = now;
+        }
+        if (executionAttempts == null) {
+            executionAttempts = 0;
         }
         updatedAt = now;
     }
