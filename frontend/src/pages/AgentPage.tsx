@@ -8,12 +8,14 @@ import {
   Activity,
   Bot,
   ClipboardCheck,
+  Copy,
   Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   Circle,
   Clock3,
+  Download,
   FileText,
   Loader2,
   MessageSquare,
@@ -33,6 +35,7 @@ import { historyApi, type InterviewDetail } from '../api/history';
 import { llmProviderApi } from '../api/llmProvider';
 import { getErrorMessage } from '../api/request';
 import { StreamHttpError } from '../api/stream';
+import { downloadBlob } from '../utils/download';
 import CodeBlock from '../components/CodeBlock';
 import { getRetryableRequest, removeLastRunMessages, resolveRetryProviderId, type AgentRunMessageIds, type AgentRunRequest } from './agentRun';
 import { normalizeAgentMarkdown } from './agentMarkdown';
@@ -229,6 +232,7 @@ export default function AgentPage() {
   const [actions, setActions] = useState<AgentAction[]>([]);
   const [actionsLoading, setActionsLoading] = useState(false);
   const [actionNotice, setActionNotice] = useState('');
+  const [actionFeedback, setActionFeedback] = useState<Record<string, string>>({});
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [editingMemoryContent, setEditingMemoryContent] = useState('');
   const [editingMemoryScope, setEditingMemoryScope] = useState('');
@@ -393,6 +397,7 @@ export default function AgentPage() {
     setRunUsage(null);
     setActions([]);
     setActionNotice('');
+    setActionFeedback({});
     setSteps(createInitialSteps());
     setMessages([createWelcomeMessage()]);
     setInput('');
@@ -746,11 +751,12 @@ export default function AgentPage() {
   };
 
   const confirmAgentAction = (actionId: string) => {
-    setActionNotice('正在保存训练计划草稿...');
+    const action = actions.find((item) => item.actionId === actionId);
+    setActionNotice(`正在保存${action?.title || 'Agent 动作'}...`);
     void agentApi.confirmAction(actionId)
       .then((updated) => {
         setActions((current) => current.map((item) => item.actionId === updated.actionId ? updated : item));
-        setActionNotice('训练计划草稿已保存，原始面试资料未被修改');
+        setActionNotice(`${updated.title}已保存，原始面试资料未被修改`);
         void loadAuditEvents();
       })
       .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作确认失败，请稍后重试'));
@@ -764,6 +770,35 @@ export default function AgentPage() {
         void loadAuditEvents();
       })
       .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作取消失败，请稍后重试'));
+  };
+
+  const copyAgentAction = async (action: AgentAction) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(action.draftContent);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = action.draftContent;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand('copy');
+        textarea.remove();
+        if (!copied) throw new Error('copy failed');
+      }
+      setActionFeedback((current) => ({ ...current, [action.actionId]: '已复制' }));
+    } catch {
+      setActionFeedback((current) => ({ ...current, [action.actionId]: '复制失败，请手动选择内容' }));
+    }
+  };
+
+  const downloadAgentAction = (action: AgentAction) => {
+    const safeTitle = action.title.replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '') || 'agent-草稿';
+    const markdown = `# ${action.title}\n\n${action.draftContent.trim()}\n\n---\n\n来源：Agent 动作草稿\n状态：${formatAgentActionStatus(action.status)}\n说明：${action.previewText}`;
+    downloadBlob(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }), `${safeTitle}.md`);
+    setActionFeedback((current) => ({ ...current, [action.actionId]: '已下载 Markdown' }));
   };
 
   const clearLongTermMemory = () => {
@@ -1475,6 +1510,27 @@ export default function AgentPage() {
                         </div>
                       </details>
                       {action.resultSummary ? <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">{action.resultSummary}</p> : null}
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <button
+                          onClick={() => void copyAgentAction(action)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 transition-colors hover:border-primary-300 hover:text-primary-600 dark:border-slate-600 dark:text-slate-300 dark:hover:text-primary-300"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                          复制草稿
+                        </button>
+                        <button
+                          onClick={() => downloadAgentAction(action)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 transition-colors hover:border-primary-300 hover:text-primary-600 dark:border-slate-600 dark:text-slate-300 dark:hover:text-primary-300"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          下载 Markdown
+                        </button>
+                        {actionFeedback[action.actionId] ? (
+                          <span className="text-[11px] text-emerald-600 dark:text-emerald-300">
+                            {actionFeedback[action.actionId]}
+                          </span>
+                        ) : null}
+                      </div>
                       {action.status === 'PROPOSED' ? (
                         <div className="mt-3 flex justify-end gap-2">
                           <button
