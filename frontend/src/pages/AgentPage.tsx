@@ -1997,7 +1997,7 @@ export default function AgentPage() {
                 </div>
               ) : null}
               {!actionsLoading && actions.length === 0 ? (
-                <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">暂无动作草稿。可从 Agent 回答生成训练计划、长期记忆或面试名称建议。</p>
+                <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">暂无动作草稿。可从 Agent 回答生成训练计划、长期记忆、面试名称或复习日程。</p>
               ) : null}
               {actions.length > 0 ? (
                 <div className="mt-3 space-y-3">
