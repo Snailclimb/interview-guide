@@ -4,6 +4,8 @@ import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.infrastructure.redis.InterviewSessionCache;
 import interview.guide.infrastructure.redis.InterviewSessionCache.CachedSession;
 import interview.guide.infrastructure.redis.RedisService;
+import interview.guide.modules.agent.service.AgentActionService;
+import interview.guide.modules.auth.AuthUserContext;
 import interview.guide.modules.interview.listener.EvaluateStreamProducer;
 import interview.guide.modules.interview.model.CreateInterviewRequest;
 import interview.guide.modules.interview.model.InterviewQuestionDTO;
@@ -26,6 +28,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -48,6 +51,8 @@ class InterviewSessionIdempotencyTest {
   private LlmProviderRegistry llmProviderRegistry;
   @Mock
   private RedisService redisService;
+  @Mock
+  private AgentActionService agentActionService;
 
   private ObjectMapper objectMapper;
   private InterviewSessionService service;
@@ -63,7 +68,8 @@ class InterviewSessionIdempotencyTest {
         objectMapper,
         evaluateStreamProducer,
         llmProviderRegistry,
-        redisService
+        redisService,
+        agentActionService
     );
     when(redisService.executeWithLock(anyString(), anyLong(), anyLong(), any(), any()))
         .thenAnswer(invocation -> {
@@ -105,7 +111,8 @@ class InterviewSessionIdempotencyTest {
         "mid",
         null,
         null,
-        requestId
+        requestId,
+        null
     );
 
     InterviewSessionDTO result = service.createSession(request);
@@ -113,5 +120,34 @@ class InterviewSessionIdempotencyTest {
     assertThat(result.sessionId()).isEqualTo(existingSessionId);
     verify(questionService, never()).generateQuestionsBySkill(
         any(), anyString(), anyString(), any(), anyInt(), any(), any(), any());
+  }
+
+  @Test
+  @DisplayName("创建专项面试时只把已确认 Agent 草稿作为出题重点传入")
+  void passesConfirmedAgentFocusToQuestionGeneration() {
+    AuthUserContext.set("user-1");
+    try {
+      when(agentActionService.loadConfirmedPracticeContext("practice-action-1", "user-1"))
+          .thenReturn("Redis 缓存击穿\n消息幂等");
+      when(questionService.generateQuestionsBySkill(
+          any(), anyString(), anyString(), any(), anyInt(), any(), any(), any(), anyString()
+      )).thenReturn(List.of(InterviewQuestionDTO.create(0, "专项题", "REDIS", "Redis")));
+
+      CreateInterviewRequest request = new CreateInterviewRequest(
+          "", 6, null, true, "glm", "java-backend", "mid", null, null, "focus-20261027",
+          "practice-action-1"
+      );
+
+      InterviewSessionDTO result = service.createSession(request);
+
+      assertThat(result.questions()).hasSize(1);
+      verify(agentActionService).loadConfirmedPracticeContext("practice-action-1", "user-1");
+      verify(questionService).generateQuestionsBySkill(
+          any(), eq("java-backend"), eq("mid"), eq(""), eq(6), any(), any(), eq(null),
+          eq("Redis 缓存击穿\n消息幂等")
+      );
+    } finally {
+      AuthUserContext.clear();
+    }
   }
 }

@@ -32,5 +32,7 @@ public record CreateInterviewRequest(
 
     String jdText,                         // JD 原文（自定义面试时作为出题依据）
 
-    String requestId                       // 创建请求幂等键，刷新/重试时复用同一会话
+    String requestId,                      // 创建请求幂等键，刷新/重试时复用同一会话
+
+    String agentActionId                   // 已确认的 Agent 练习题动作，可选
 ) {}

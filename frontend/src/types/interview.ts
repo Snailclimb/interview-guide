@@ -41,6 +41,7 @@ export interface CreateInterviewRequest {
   customCategories?: CategoryDTO[];
   jdText?: string;
   requestId?: string;
+  agentActionId?: string;
 }
 
 export interface SubmitAnswerRequest {

@@ -6,6 +6,7 @@ import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.common.model.AsyncTaskStatus;
 import interview.guide.modules.auth.AuthUserContext;
+import interview.guide.modules.agent.service.AgentActionService;
 import interview.guide.infrastructure.redis.InterviewSessionCache;
 import interview.guide.infrastructure.redis.InterviewSessionCache.CachedSession;
 import interview.guide.infrastructure.redis.RedisService;
@@ -55,6 +56,7 @@ public class InterviewSessionService {
     private final EvaluateStreamProducer evaluateStreamProducer;
     private final LlmProviderRegistry llmProviderRegistry;
     private final RedisService redisService;
+    private final AgentActionService agentActionService;
 
     /**
      * 创建新的面试会话
@@ -124,17 +126,22 @@ public class InterviewSessionService {
         List<HistoricalQuestion> historicalQuestions =
             persistenceService.getHistoricalQuestions(skillId, request.resumeId());
 
+        String focusContext = resolvePracticeFocus(request.agentActionId());
+
         // 基于 Skill 生成面试问题
-        List<InterviewQuestionDTO> questions = questionService.generateQuestionsBySkill(
-            request.llmProvider(),
-            skillId,
-            difficulty,
-            request.resumeText(),
-            request.questionCount(),
-            historicalQuestions,
-            request.customCategories(),
-            request.jdText()
-        );
+        List<InterviewQuestionDTO> questions;
+        if (focusContext.isBlank()) {
+            questions = questionService.generateQuestionsBySkill(
+                request.llmProvider(), skillId, difficulty, request.resumeText(),
+                request.questionCount(), historicalQuestions, request.customCategories(), request.jdText()
+            );
+        } else {
+            questions = questionService.generateQuestionsBySkill(
+                request.llmProvider(), skillId, difficulty, request.resumeText(),
+                request.questionCount(), historicalQuestions, request.customCategories(), request.jdText(),
+                focusContext
+            );
+        }
 
         if (requestId != null) {
             try {
@@ -229,6 +236,15 @@ public class InterviewSessionService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "requestId 格式不正确");
         }
         return normalized;
+    }
+
+    private String resolvePracticeFocus(String agentActionId) {
+        if (agentActionId == null || agentActionId.isBlank()) {
+            return "";
+        }
+        String ownerId = AuthUserContext.currentUserId()
+            .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录后使用 Agent 专项练习"));
+        return agentActionService.loadConfirmedPracticeContext(agentActionId, ownerId);
     }
 
     /**

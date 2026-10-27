@@ -314,6 +314,40 @@ class AgentActionServiceTest {
     }
 
     @Test
+    @DisplayName("只有当前用户已确认的练习题草稿可以注入下一轮面试")
+    void loadsOnlyConfirmedPracticeContext() {
+        AgentActionService service = new AgentActionService(repository, auditService);
+        AgentActionRequestEntity action = draft("practice-action-1", "user-1");
+        action.setToolId("practice.questions.draft");
+        action.setStatus(AgentActionStatus.SUCCEEDED);
+        action.setDraftContent("问题一：Redis 缓存击穿\n问题二：消息幂等");
+        when(repository.findByActionId("practice-action-1")).thenReturn(Optional.of(action));
+
+        assertThat(service.loadConfirmedPracticeContext("practice-action-1", "user-1"))
+            .contains("Redis 缓存击穿")
+            .contains("消息幂等");
+
+        action.setStatus(AgentActionStatus.PROPOSED);
+        assertThatThrownBy(() -> service.loadConfirmedPracticeContext("practice-action-1", "user-1"))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("已确认");
+    }
+
+    @Test
+    @DisplayName("下一轮专项练习拒绝跨用户读取练习草稿")
+    void rejectsCrossOwnerPracticeContext() {
+        AgentActionService service = new AgentActionService(repository, auditService);
+        AgentActionRequestEntity action = draft("practice-action-1", "owner-a");
+        action.setToolId("practice.questions.draft");
+        action.setStatus(AgentActionStatus.SUCCEEDED);
+        when(repository.findByActionId("practice-action-1")).thenReturn(Optional.of(action));
+
+        assertThatThrownBy(() -> service.loadConfirmedPracticeContext("practice-action-1", "owner-b"))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("无权访问");
+    }
+
+    @Test
     @DisplayName("记忆和名称草稿都遵守短内容边界")
     void rejectsOversizedMemoryAndTitleDrafts() {
         AgentActionService service = new AgentActionService(repository, auditService);

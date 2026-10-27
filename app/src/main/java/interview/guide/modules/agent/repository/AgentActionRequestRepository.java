@@ -21,6 +21,8 @@ public interface AgentActionRequestRepository extends JpaRepository<AgentActionR
     @Query("SELECT a FROM AgentActionRequestEntity a WHERE a.actionId = :actionId")
     Optional<AgentActionRequestEntity> findByActionIdForUpdate(@Param("actionId") String actionId);
 
+    Optional<AgentActionRequestEntity> findByActionId(String actionId);
+
     List<AgentActionRequestEntity> findTop50ByOwnerKeyAndInterviewSessionIdOrderByCreatedAtDesc(
         String ownerKey, String interviewSessionId
     );

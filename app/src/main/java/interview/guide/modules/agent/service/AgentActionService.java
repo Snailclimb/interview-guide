@@ -47,6 +47,7 @@ public class AgentActionService {
     private static final int MAX_CONTENT = 12_000;
     private static final int MAX_MEMORY_CONTENT = 160;
     private static final int MAX_TITLE = 120;
+    private static final int MAX_PRACTICE_CONTEXT = 6_000;
     private static final int MAX_EXECUTION_ATTEMPTS = 3;
 
     private final AgentActionRequestRepository repository;
@@ -295,6 +296,24 @@ public class AgentActionService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "该 Agent 动作已达到最大重试次数，请重新生成草稿");
         }
         return executeConfirmed(entity, true);
+    }
+
+    /** 读取当前用户已经确认的练习题草稿，供下一轮面试出题使用。 */
+    @Transactional
+    public String loadConfirmedPracticeContext(String actionId, String ownerKey) {
+        String owner = requireOwner(ownerKey);
+        AgentActionRequestEntity entity = repository.findByActionId(requireText(
+            actionId, "Agent 练习动作不能为空", 64
+        )).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "Agent 练习动作不存在"));
+        if (!owner.equals(entity.getOwnerKey())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该 Agent 练习动作");
+        }
+        if (!PRACTICE_QUESTIONS_TOOL.equals(entity.getToolId())
+            || entity.getStatus() != AgentActionStatus.SUCCEEDED) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "只有已确认的练习题草稿可以用于专项面试");
+        }
+        String content = normalizeContent(entity.getDraftContent());
+        return content.substring(0, Math.min(MAX_PRACTICE_CONTEXT, content.length()));
     }
 
     private AgentActionResponse executeConfirmed(AgentActionRequestEntity entity, boolean retry) {

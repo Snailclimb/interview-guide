@@ -128,6 +128,24 @@ public class InterviewQuestionService {
             List<CategoryDTO> customCategories,
             String jdText) {
 
+        return generateQuestionsBySkill(
+            llmProvider, skillId, difficulty, resumeText, questionCount,
+            historicalQuestions, customCategories, jdText, ""
+        );
+    }
+
+    /** 生成带有已确认 Agent 专项训练重点的面试题。 */
+    public List<InterviewQuestionDTO> generateQuestionsBySkill(
+            String llmProvider,
+            String skillId,
+            String difficulty,
+            String resumeText,
+            int questionCount,
+            List<HistoricalQuestion> historicalQuestions,
+            List<CategoryDTO> customCategories,
+            String jdText,
+            String focusContext) {
+
         SkillDTO skill = resolveSkill(skillId, customCategories, jdText);
         String difficultyDesc = resolveDifficulty(difficulty);
         ChatClient questionChatClient =
@@ -135,9 +153,10 @@ public class InterviewQuestionService {
 
         boolean hasResume = resumeText != null && !resumeText.isBlank();
         String historicalSection = buildHistoricalSection(historicalQuestions);
+        String focusSection = buildFocusSection(focusContext);
         if (!hasResume) {
             return generateDirectionOnly(questionChatClient, skill, difficultyDesc, questionCount,
-                historicalSection);
+                historicalSection, focusSection);
         }
 
         int resumeCount = Math.max(1, (int) Math.round(questionCount * RESUME_QUESTION_RATIO));
@@ -148,12 +167,12 @@ public class InterviewQuestionService {
 
         CompletableFuture<List<InterviewQuestionDTO>> resumeFuture = CompletableFuture.supplyAsync(
             () -> generateResumeQuestions(questionChatClient, resumeText, resumeCount, skill,
-                difficultyDesc, historicalSection),
+                difficultyDesc, historicalSection, focusSection),
             questionExecutor);
 
         CompletableFuture<List<InterviewQuestionDTO>> directionFuture = CompletableFuture.supplyAsync(
             () -> generateDirectionOnly(questionChatClient, skill, difficultyDesc, directionCount,
-                historicalSection),
+                historicalSection, focusSection),
             questionExecutor);
 
         List<InterviewQuestionDTO> resumeQuestions;
@@ -165,7 +184,7 @@ public class InterviewQuestionService {
                 ErrorLogSanitizer.forLogging(e.getCause()));
             directionFuture.cancel(true);
             return generateDirectionOnly(questionChatClient, skill, difficultyDesc, questionCount,
-                historicalSection);
+                historicalSection, focusSection);
         }
 
         try {
@@ -192,7 +211,7 @@ public class InterviewQuestionService {
 
     private List<InterviewQuestionDTO> generateResumeQuestions(
             ChatClient questionClient, String resumeText, int questionCount,
-            SkillDTO skill, String difficultyDesc, String historicalSection) {
+            SkillDTO skill, String difficultyDesc, String historicalSection, String focusSection) {
         try {
             Map<String, Object> variables = new HashMap<>();
             variables.put("questionCount", questionCount);
@@ -202,6 +221,7 @@ public class InterviewQuestionService {
             variables.put("difficultyDescription", difficultyDesc);
             variables.put("resumeText", resumeText);
             variables.put("historicalSection", historicalSection);
+            variables.put("focusSection", focusSection);
 
             String systemPrompt = resumeSystemPromptTemplate.render()
                 + buildSkillPersonaSection(skill)
@@ -229,7 +249,7 @@ public class InterviewQuestionService {
 
     private List<InterviewQuestionDTO> generateDirectionOnly(
             ChatClient questionClient, SkillDTO skill, String difficultyDesc,
-            int questionCount, String historicalSection) {
+            int questionCount, String historicalSection, String focusSection) {
         Map<String, Integer> allocation = skillService.calculateAllocation(skill.categories(), questionCount);
         String allocationTable = skillService.buildAllocationDescription(allocation, skill.categories());
 
@@ -247,6 +267,7 @@ public class InterviewQuestionService {
             variables.put("historicalSection", historicalSection);
             variables.put("referenceSection", skillService.buildReferenceSection(skill, allocation));
             variables.put("jdSection", buildJdSection(skill.sourceJd()));
+            variables.put("focusSection", focusSection);
 
             String systemPrompt = skillSystemPromptTemplate.render()
                 + buildSkillPersonaSection(skill)
@@ -304,6 +325,19 @@ public class InterviewQuestionService {
             return skillService.buildCustomSkill(customCategories, jdText != null ? jdText : "");
         }
         return skillService.getSkill(skillId);
+    }
+
+    private String buildFocusSection(String focusContext) {
+        if (focusContext == null || focusContext.isBlank()) {
+            return "未指定专项训练重点，请按当前面试方向正常出题。";
+        }
+        String normalized = focusContext.trim();
+        if (normalized.length() > 6_000) {
+            normalized = normalized.substring(0, 6_000);
+        }
+        return promptSanitizer.wrapWithDelimiters(
+            "agent_focus_context", promptSanitizer.sanitize(normalized)
+        );
     }
 
     private String resolveDifficulty(String difficulty) {

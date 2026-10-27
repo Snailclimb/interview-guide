@@ -126,6 +126,7 @@ interface InterviewEntryState {
     llmProvider?: string;
     customCategories?: CategoryDTO[];
     jdText?: string;
+    agentActionId?: string;
   };
 }
 

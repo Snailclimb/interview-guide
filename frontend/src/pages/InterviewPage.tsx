@@ -29,6 +29,7 @@ interface InterviewProps {
     difficulty?: Difficulty;
     customCategories?: CategoryDTO[];
     jdText?: string;
+    agentActionId?: string;
   };
   title?: string;
   subtitle?: string;
@@ -97,6 +98,7 @@ export default function Interview({
         difficulty,
         customCategories: skillId === CUSTOM_SKILL_ID ? customCategories : undefined,
         jdText: skillId === CUSTOM_SKILL_ID ? jdText : undefined,
+        agentActionId: initialConfig?.agentActionId,
         requestId,
       });
 
