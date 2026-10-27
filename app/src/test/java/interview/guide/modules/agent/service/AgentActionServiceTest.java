@@ -7,6 +7,7 @@ import interview.guide.modules.agent.repository.AgentActionRequestRepository;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
 import java.util.List;
 import java.util.Optional;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -340,6 +341,33 @@ class AgentActionServiceTest {
             .hasMessageContaining("最大重试次数");
         verify(memoryService, times(3)).rememberItem(
             "user-1", "weakness", "Redis 缓存击穿需要互斥锁保护", "java-backend"
+        );
+    }
+
+    @Test
+    @DisplayName("应用中断后只回收过期执行中的动作，不自动重放副作用")
+    void recoversStaleRunningActionWithoutReplayingIt() {
+        AgentActionService service = new AgentActionService(
+            repository, auditService, memoryService, interviewPersistenceService
+        );
+        AgentActionRequestEntity action = memoryAction("memory-action-1", "user-1");
+        action.setStatus(AgentActionStatus.RUNNING);
+        action.setExecutionAttempts(1);
+        action.setUpdatedAt(LocalDateTime.now().minusMinutes(6));
+        when(repository.findStaleRunningForUpdate(any(), any())).thenReturn(List.of(action));
+        when(repository.save(any(AgentActionRequestEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        int recovered = service.recoverStaleRunningActions();
+
+        assertThat(recovered).isEqualTo(1);
+        assertThat(action.getStatus()).isEqualTo(AgentActionStatus.FAILED);
+        assertThat(action.getResultSummary()).contains("未自动重复执行");
+        verify(memoryService, never()).rememberItem(any(), any(), any(), any());
+        verify(repository).save(action);
+        verify(auditService).recordQuietly(
+            "user-1", "interview-1", "agent-1", null,
+            "ACTION_RECOVERED", "agent-action", "memory-action-1", "FAILED"
         );
     }
 

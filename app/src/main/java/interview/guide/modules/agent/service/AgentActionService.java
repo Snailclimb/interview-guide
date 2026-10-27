@@ -50,6 +50,7 @@ public class AgentActionService {
     private static final int MAX_TITLE = 120;
     private static final int MAX_INTERVIEW_FOCUS = 6_000;
     private static final int MAX_EXECUTION_ATTEMPTS = 3;
+    private static final int RUNNING_RECOVERY_TIMEOUT_MINUTES = 5;
 
     private final AgentActionRequestRepository repository;
     private final AgentAuditService auditService;
@@ -328,6 +329,33 @@ public class AgentActionService {
         return executeConfirmed(entity, true);
     }
 
+    /**
+     * 将进程中断后遗留的 RUNNING 动作转成可见的失败状态。
+     *
+     * <p>恢复过程不会自动重新调用业务写入器，避免“写入成功但进程在落库前崩溃”
+     * 时产生重复副作用；用户检查结果后仍可通过现有重试入口决定是否重放。</p>
+     */
+    @Transactional
+    public int recoverStaleRunningActions() {
+        LocalDateTime staleBefore = LocalDateTime.now().minusMinutes(RUNNING_RECOVERY_TIMEOUT_MINUTES);
+        List<AgentActionRequestEntity> staleActions = repository.findStaleRunningForUpdate(
+            AgentActionStatus.RUNNING, staleBefore
+        );
+        int recovered = 0;
+        for (AgentActionRequestEntity entity : staleActions) {
+            if (entity.getStatus() != AgentActionStatus.RUNNING) {
+                continue;
+            }
+            entity.setStatus(AgentActionStatus.FAILED);
+            entity.setCompletedAt(LocalDateTime.now());
+            entity.setResultSummary(recoverySummary(entity));
+            repository.save(entity);
+            audit(entity, "ACTION_RECOVERED", AgentActionStatus.FAILED.name());
+            recovered++;
+        }
+        return recovered;
+    }
+
     /** 读取当前用户已经确认的训练动作，供下一轮面试出题使用。 */
     @Transactional
     public String loadConfirmedInterviewFocus(String actionId, String ownerKey) {
@@ -482,6 +510,13 @@ public class AgentActionService {
             return "第" + executionAttempts(entity) + "次执行失败，原始资料未被修改，可以重试。";
         }
         return "动作执行失败，原始资料未被修改，已达到最大重试次数，请重新生成草稿。";
+    }
+
+    private String recoverySummary(AgentActionRequestEntity entity) {
+        if (executionAttempts(entity) >= MAX_EXECUTION_ATTEMPTS) {
+            return "动作可能因应用中断未完成，已达到最大重试次数，请检查业务结果并重新生成草稿。";
+        }
+        return "动作可能因应用中断未完成，系统未自动重复执行；请检查业务结果后点击重试。";
     }
 
     private int executionAttempts(AgentActionRequestEntity entity) {

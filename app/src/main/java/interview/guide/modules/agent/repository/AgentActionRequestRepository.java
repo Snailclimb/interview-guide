@@ -1,8 +1,10 @@
 package interview.guide.modules.agent.repository;
 
 import interview.guide.modules.agent.model.AgentActionRequestEntity;
+import interview.guide.modules.agent.model.AgentActionStatus;
 import java.util.List;
 import java.util.Optional;
+import java.time.LocalDateTime;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -22,6 +24,15 @@ public interface AgentActionRequestRepository extends JpaRepository<AgentActionR
     Optional<AgentActionRequestEntity> findByActionIdForUpdate(@Param("actionId") String actionId);
 
     Optional<AgentActionRequestEntity> findByActionId(String actionId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT a FROM AgentActionRequestEntity a "
+        + "WHERE a.status = :status "
+        + "AND a.updatedAt < :staleBefore ORDER BY a.updatedAt ASC")
+    List<AgentActionRequestEntity> findStaleRunningForUpdate(
+        @Param("status") AgentActionStatus status,
+        @Param("staleBefore") LocalDateTime staleBefore
+    );
 
     List<AgentActionRequestEntity> findTop50ByOwnerKeyAndInterviewSessionIdOrderByCreatedAtDesc(
         String ownerKey, String interviewSessionId
