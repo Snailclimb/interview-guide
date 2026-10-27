@@ -133,6 +133,7 @@ function formatAuditAction(action: string) {
     ACTION_DRAFT_UPDATED: '修改动作草稿',
     ACTION_CANCELLED: '取消动作',
     ACTION_FAILED: '动作失败',
+    ACTION_RECOVERED: '恢复中断动作',
     TRAINING_TASK_CREATED: '创建训练任务',
     TRAINING_TASK_STATUS_UPDATED: '更新训练任务',
   };
