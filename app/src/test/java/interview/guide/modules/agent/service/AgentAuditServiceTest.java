@@ -5,10 +5,13 @@ import interview.guide.modules.agent.repository.AgentAuditEventRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -44,6 +47,31 @@ class AgentAuditServiceTest {
         new AgentAuditService(repository).recordQuietly(
             "user-1", null, null, null, "RUN_STARTED", "agent-run", "run-1", "success"
         );
+    }
+
+    @Test
+    void defersAuditUntilBusinessTransactionCommits() {
+        AgentAuditEventRepository repository = mock(AgentAuditEventRepository.class);
+        when(repository.save(any(AgentAuditEventEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+        AgentAuditService service = new AgentAuditService(repository);
+        TransactionSynchronizationManager.initSynchronization();
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+            service.recordQuietly(
+                "user-1", "interview-1", "agent-1", "run-1", "RUN_COMPLETED",
+                "agent-run", "run-1", "success"
+            );
+            verify(repository, never()).save(any(AgentAuditEventEntity.class));
+
+            TransactionSynchronization synchronization = TransactionSynchronizationManager
+                .getSynchronizations().getFirst();
+            synchronization.afterCommit();
+            verify(repository).save(any(AgentAuditEventEntity.class));
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+            TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
     }
 
     @Test

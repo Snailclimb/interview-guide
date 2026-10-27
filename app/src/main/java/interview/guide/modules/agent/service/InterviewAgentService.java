@@ -357,7 +357,7 @@ public class InterviewAgentService {
                     AgentLoopEngine loopEngine = new AgentLoopEngine();
                     List<String> loopSteps = agentLoopPlanner == null
                         ? List.of("读取面试报告并确认当前目标")
-                        : agentLoopPlanner.steps(plan);
+                        : agentLoopPlanner.steps(plan, context);
                     AgentLoopEngine.ExecutionPolicy loopPolicy = new AgentLoopEngine.ExecutionPolicy(
                         retryProperties.getLoopMaxSteps(),
                         retryProperties.getLoopStepRetryAttempts(),
@@ -1118,8 +1118,42 @@ public class InterviewAgentService {
         String systemPrompt = systemPromptTemplate.render()
             + PromptSecurityConstants.ANTI_INJECTION_INSTRUCTION
             + "\n\n"
+            + buildAnswerFormatInstruction(context, request, message)
+            + "\n\n"
             + fixedContextPromptTemplate.render(fixedContextVariables);
         return new PromptVariant(systemPrompt, userPromptTemplate.render(variables), history);
+    }
+
+    private String buildAnswerFormatInstruction(
+        AgentContextService.AgentContext context,
+        AgentMessageRequest request,
+        String message
+    ) {
+        String goal = request == null ? "" : request.goal();
+        String question = message == null ? "" : message;
+        String combined = (goal + "\n" + question).toLowerCase(java.util.Locale.ROOT);
+        boolean explicitlyNoRag = combined.contains("没有知识库")
+            || combined.contains("没有检索") || combined.contains("无知识库")
+            || combined.contains("无检索");
+        boolean ragRequested = context.sources().stream()
+            .anyMatch(source -> source != null && "rag".equalsIgnoreCase(source.kind()))
+            || (!explicitlyNoRag && (combined.contains("知识库") || combined.contains("rag")));
+        if (ragRequested) {
+            return """
+                本轮回复必须遵守以下可读性和证据边界：
+                1. 使用标准 Markdown，每个标题独占一行，标题与正文之间空一行。
+                2. 必须包含且只使用清晰的一级标题：## 结论、## 依据、## 建议。
+                3. 依据部分只能写入本轮上下文中真实存在的资料；没有实际 RAG 来源时，明确写“本次没有检索到可用知识库资料”，不得生成 [R1] 等引用。
+                4. 建议必须基于面试报告和真实资料，不能把未作答或占位分数当成能力结论。
+                """;
+        }
+        return """
+            本轮回复必须遵守以下可读性和证据边界：
+            1. 使用标准 Markdown，每个标题独占一行，标题与正文之间空一行。
+            2. 复盘类回复必须包含：## 结论、## 依据边界、## 重点、## 行动建议；每个标题后至少有一段正文或一个列表。
+            3. 依据边界要区分面试报告、Skill 资料和知识库是否真实可用；不能把未作答或占位分数当成能力结论。
+            4. 重点和行动建议要覆盖报告中实际出现的主要主题，不得编造报告没有出现的经历或结果。
+            """;
     }
 
     private String compactPromptText(String value, int maxChars) {
