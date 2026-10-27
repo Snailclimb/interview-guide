@@ -725,23 +725,24 @@ export default function AgentPage() {
     void loadAgentActions();
   }, [loadAgentActions]);
 
-  const saveTrainingPlanDraft = (message: AgentMessage) => {
+  const saveDraftAction = (message: AgentMessage, kind: 'plan' | 'practice') => {
     if (!sessionId || !agentSessionId || message.role !== 'assistant' || !message.content.trim()) {
       setActionNotice('当前 Agent 会话还未建立，暂时不能保存动作草稿');
       return;
     }
-    setActionNotice('正在生成待确认的训练计划草稿...');
-    void agentApi.proposeTrainingPlanDraft(
-      sessionId,
-      agentSessionId,
-      message.content,
-      `${agentSessionId}:${message.id}`,
+    const isPractice = kind === 'practice';
+    setActionNotice(`正在生成待确认的${isPractice ? '练习题' : '训练计划'}草稿...`);
+    const request = isPractice
+      ? agentApi.proposePracticeQuestionsDraft
+      : agentApi.proposeTrainingPlanDraft;
+    void request(
+      sessionId, agentSessionId, message.content, `${kind}:${agentSessionId}:${message.id}`,
     )
       .then((action) => {
         setActions((current) => [action, ...current.filter((item) => item.actionId !== action.actionId)]);
-        setActionNotice('训练计划草稿已生成，请在下方确认后保存');
+        setActionNotice(`${isPractice ? '练习题' : '训练计划'}草稿已生成，请在下方确认后保存`);
       })
-      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '训练计划草稿生成失败，请稍后重试'));
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || `${isPractice ? '练习题' : '训练计划'}草稿生成失败，请稍后重试`));
   };
 
   const confirmAgentAction = (actionId: string) => {
@@ -1387,12 +1388,12 @@ export default function AgentPage() {
                           && message.content.trim()
                           && !message.content.includes('本次任务未完成') ? (
                           <button
-                            onClick={() => saveTrainingPlanDraft(message)}
+                            onClick={() => saveDraftAction(message, goal === 'practice' ? 'practice' : 'plan')}
                             disabled={runStatus === 'running' || !agentSessionId}
                             className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
                           >
                             <ClipboardCheck className="w-3.5 h-3.5" />
-                            保存为训练计划草稿
+                            {goal === 'practice' ? '保存为练习题草稿' : '保存为训练计划草稿'}
                           </button>
                         ) : null}
                       </>

@@ -24,4 +24,8 @@ public interface AgentActionRequestRepository extends JpaRepository<AgentActionR
     List<AgentActionRequestEntity> findTop50ByOwnerKeyAndInterviewSessionIdOrderByCreatedAtDesc(
         String ownerKey, String interviewSessionId
     );
+
+    List<AgentActionRequestEntity> findTop50ByOwnerKeyAndInterviewSessionIdAndAgentSessionIdOrderByCreatedAtDesc(
+        String ownerKey, String interviewSessionId, String agentSessionId
+    );
 }

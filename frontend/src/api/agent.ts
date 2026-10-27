@@ -58,6 +58,19 @@ export const agentApi = {
     );
   },
 
+  proposePracticeQuestionsDraft(
+    sessionId: string,
+    agentSessionId: string,
+    content: string,
+    idempotencyKey?: string,
+  ): Promise<AgentAction> {
+    return request.post<AgentAction>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversations/${encodeURIComponent(agentSessionId)}/actions/practice-questions-draft`,
+      { content, idempotencyKey },
+      { headers: agentHeaders() },
+    );
+  },
+
   confirmAction(actionId: string): Promise<AgentAction> {
     return request.post<AgentAction>(
       `/api/agent/actions/${encodeURIComponent(actionId)}/confirm`,

@@ -11,7 +11,7 @@ import interview.guide.modules.agent.model.AgentStreamEvent;
 import interview.guide.modules.agent.model.CreateAgentConversationRequest;
 import interview.guide.modules.agent.model.RenameAgentConversationRequest;
 import interview.guide.modules.agent.model.AgentActionResponse;
-import interview.guide.modules.agent.model.CreateAgentTrainingPlanDraftRequest;
+import interview.guide.modules.agent.model.CreateAgentDraftActionRequest;
 import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.AgentActionService;
 import interview.guide.modules.agent.service.AgentMemoryService;
@@ -179,7 +179,7 @@ public class AgentController {
     ) {
         String identity = authIdentityService.requireIdentity(ownerKey);
         conversationService.assertAccess(sessionId, agentSessionId, identity);
-        return Result.success(actionService.listForOwner(sessionId, identity));
+        return Result.success(actionService.listForOwner(sessionId, agentSessionId, identity));
     }
 
     /** 只生成待确认的训练计划草稿，不修改原始面试或简历数据。 */
@@ -188,12 +188,28 @@ public class AgentController {
     public Result<AgentActionResponse> proposeTrainingPlanDraft(
         @PathVariable String sessionId,
         @PathVariable String agentSessionId,
-        @Valid @RequestBody CreateAgentTrainingPlanDraftRequest request,
+        @Valid @RequestBody CreateAgentDraftActionRequest request,
         @RequestHeader(value = "X-User-Id", required = false) String ownerKey
     ) {
         String identity = authIdentityService.requireIdentity(ownerKey);
         conversationService.assertAccess(sessionId, agentSessionId, identity);
         return Result.success(actionService.proposeTrainingPlanDraft(
+            sessionId, agentSessionId, identity, request.content(), request.idempotencyKey()
+        ));
+    }
+
+    /** 只生成待确认的练习题草稿，不修改题库或原始面试数据。 */
+    @PostMapping("/api/agent/interview-sessions/{sessionId}/conversations/{agentSessionId}/actions/practice-questions-draft")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
+    public Result<AgentActionResponse> proposePracticeQuestionsDraft(
+        @PathVariable String sessionId,
+        @PathVariable String agentSessionId,
+        @Valid @RequestBody CreateAgentDraftActionRequest request,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        String identity = authIdentityService.requireIdentity(ownerKey);
+        conversationService.assertAccess(sessionId, agentSessionId, identity);
+        return Result.success(actionService.proposePracticeQuestionsDraft(
             sessionId, agentSessionId, identity, request.content(), request.idempotencyKey()
         ));
     }

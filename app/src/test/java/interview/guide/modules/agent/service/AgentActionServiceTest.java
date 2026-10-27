@@ -89,6 +89,24 @@ class AgentActionServiceTest {
     }
 
     @Test
+    @DisplayName("练习题草稿复用同一动作框架但使用独立工具标识")
+    void proposesPracticeQuestionsDraft() {
+        AgentActionService service = new AgentActionService(repository, auditService);
+        when(repository.findByOwnerKeyAndIdempotencyKey("user-1", "practice-1"))
+            .thenReturn(Optional.empty());
+        when(repository.save(any(AgentActionRequestEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var result = service.proposePracticeQuestionsDraft(
+            "interview-1", "agent-1", "user-1", "问题：Redis 缓存击穿\n要点：互斥锁", "practice-1"
+        );
+
+        assertThat(result.toolId()).isEqualTo("practice.questions.draft");
+        assertThat(result.title()).isEqualTo("练习题草稿");
+        assertThat(result.previewText()).contains("练习题");
+    }
+
+    @Test
     @DisplayName("确认动作按状态机完成，并且重复确认是幂等的")
     void confirmsActionIdempotently() {
         AgentActionService service = new AgentActionService(repository, auditService);
@@ -116,6 +134,23 @@ class AgentActionServiceTest {
         assertThatThrownBy(() -> service.confirm("action-1", "owner-b"))
             .isInstanceOf(BusinessException.class)
             .hasMessageContaining("无权访问");
+    }
+
+    @Test
+    @DisplayName("查询动作草稿时按 Agent 子会话隔离")
+    void listsActionsForSelectedAgentSessionOnly() {
+        AgentActionService service = new AgentActionService(repository, auditService);
+        when(repository.findTop50ByOwnerKeyAndInterviewSessionIdAndAgentSessionIdOrderByCreatedAtDesc(
+            "user-1", "interview-1", "agent-2"
+        )).thenReturn(java.util.List.of());
+
+        assertThat(service.listForOwner("interview-1", "agent-2", "user-1")).isEmpty();
+        verify(repository).findTop50ByOwnerKeyAndInterviewSessionIdAndAgentSessionIdOrderByCreatedAtDesc(
+            "user-1", "interview-1", "agent-2"
+        );
+        verify(repository, never()).findTop50ByOwnerKeyAndInterviewSessionIdOrderByCreatedAtDesc(
+            "user-1", "interview-1"
+        );
     }
 
     private AgentActionRequestEntity draft(String actionId, String owner) {

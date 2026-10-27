@@ -20,17 +20,19 @@ import org.springframework.stereotype.Service;
 /**
  * Agent 安全动作服务。
  *
- * <p>第一批只支持训练计划草稿：确认动作的结果仍然保存在动作草稿区，不修改任何
+ * <p>第一批只支持训练计划和练习题草稿：确认动作的结果仍然保存在动作草稿区，不修改任何
  * 原始面试或简历数据。后续真正的业务写工具必须复用这里的 owner、确认、幂等和审计边界。</p>
  */
 @Service
 @RequiredArgsConstructor
 public class AgentActionService {
     private static final String TRAINING_PLAN_TOOL = "interview.plan.draft";
+    private static final String PRACTICE_QUESTIONS_TOOL = "practice.questions.draft";
     private static final String DRAFT_RISK = "DRAFT_WRITE";
     private static final String DRAFT_TITLE = "训练计划草稿";
     private static final String DRAFT_PREVIEW = "保存一份独立训练计划草稿，不修改原始面试报告、简历或知识库。";
-    private static final String SUCCESS_SUMMARY = "训练计划草稿已保存，原始面试资料未被修改。";
+    private static final String PRACTICE_TITLE = "练习题草稿";
+    private static final String PRACTICE_PREVIEW = "保存一组独立练习题草稿，不修改原始面试报告、简历或知识库。";
     private static final int MAX_OWNER_KEY = 64;
     private static final int MAX_IDEMPOTENCY_KEY = 128;
     private static final int MAX_CONTENT = 12_000;
@@ -45,6 +47,36 @@ public class AgentActionService {
         String ownerKey,
         String content,
         String requestedIdempotencyKey
+    ) {
+        return proposeDraft(
+            interviewSessionId, agentSessionId, ownerKey, content, requestedIdempotencyKey,
+            TRAINING_PLAN_TOOL, DRAFT_TITLE, DRAFT_PREVIEW
+        );
+    }
+
+    @Transactional
+    public AgentActionResponse proposePracticeQuestionsDraft(
+        String interviewSessionId,
+        String agentSessionId,
+        String ownerKey,
+        String content,
+        String requestedIdempotencyKey
+    ) {
+        return proposeDraft(
+            interviewSessionId, agentSessionId, ownerKey, content, requestedIdempotencyKey,
+            PRACTICE_QUESTIONS_TOOL, PRACTICE_TITLE, PRACTICE_PREVIEW
+        );
+    }
+
+    private AgentActionResponse proposeDraft(
+        String interviewSessionId,
+        String agentSessionId,
+        String ownerKey,
+        String content,
+        String requestedIdempotencyKey,
+        String toolId,
+        String title,
+        String preview
     ) {
         String owner = requireOwner(ownerKey);
         String interviewId = requireText(interviewSessionId, "面试会话不能为空", 64);
@@ -67,11 +99,11 @@ public class AgentActionService {
             .ownerKey(owner)
             .interviewSessionId(interviewId)
             .agentSessionId(agentId)
-            .toolId(TRAINING_PLAN_TOOL)
+            .toolId(toolId)
             .riskLevel(DRAFT_RISK)
             .status(AgentActionStatus.PROPOSED)
-            .title(DRAFT_TITLE)
-            .previewText(DRAFT_PREVIEW)
+            .title(title)
+            .previewText(preview)
             .draftContent(draft)
             .idempotencyKey(idempotencyKey)
             .build();
@@ -85,9 +117,21 @@ public class AgentActionService {
 
     @Transactional
     public List<AgentActionResponse> listForOwner(String interviewSessionId, String ownerKey) {
+        return listForOwner(interviewSessionId, null, ownerKey);
+    }
+
+    @Transactional
+    public List<AgentActionResponse> listForOwner(
+        String interviewSessionId, String agentSessionId, String ownerKey
+    ) {
         String owner = requireOwner(ownerKey);
         String interviewId = requireText(interviewSessionId, "面试会话不能为空", 64);
-        return repository.findTop50ByOwnerKeyAndInterviewSessionIdOrderByCreatedAtDesc(owner, interviewId)
+        String agentId = agentSessionId == null ? "" : agentSessionId.trim();
+        List<AgentActionRequestEntity> actions = agentId.isBlank()
+            ? repository.findTop50ByOwnerKeyAndInterviewSessionIdOrderByCreatedAtDesc(owner, interviewId)
+            : repository.findTop50ByOwnerKeyAndInterviewSessionIdAndAgentSessionIdOrderByCreatedAtDesc(
+                owner, interviewId, requireText(agentId, "Agent 会话不能为空", 64));
+        return actions
             .stream().map(AgentActionResponse::from).toList();
     }
 
@@ -112,7 +156,7 @@ public class AgentActionService {
 
         // 当前动作的“执行”就是将草稿保存到独立动作区；不触碰原始业务实体。
         entity.setStatus(AgentActionStatus.SUCCEEDED);
-        entity.setResultSummary(SUCCESS_SUMMARY);
+        entity.setResultSummary(successSummary(entity.getToolId()));
         entity.setCompletedAt(LocalDateTime.now());
         repository.save(entity);
         audit(entity, "ACTION_SUCCEEDED", AgentActionStatus.SUCCEEDED.name());
@@ -151,6 +195,13 @@ public class AgentActionService {
             entity.getOwnerKey(), entity.getInterviewSessionId(), entity.getAgentSessionId(),
             null, action, "agent-action", entity.getActionId(), result
         );
+    }
+
+    private String successSummary(String toolId) {
+        if (PRACTICE_QUESTIONS_TOOL.equals(toolId)) {
+            return "练习题草稿已保存，原始面试资料未被修改。";
+        }
+        return "训练计划草稿已保存，原始面试资料未被修改。";
     }
 
     private String requireOwner(String value) {
