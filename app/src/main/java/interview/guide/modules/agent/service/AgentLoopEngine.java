@@ -123,7 +123,7 @@ public class AgentLoopEngine {
             : policy;
         boolean useDefaultExecutor = stepExecutor == null;
         StepExecutor safeExecutor = useDefaultExecutor
-            ? (loopContext, action, index) -> defaultObservation(loopContext, index)
+            ? (loopContext, action, index) -> defaultObservation(loopContext, action, index)
             : stepExecutor;
         List<LoopIteration> iterations = new ArrayList<>();
         boolean checkpointIndexValid = startIndex >= 0 && startIndex <= safeSteps.size();
@@ -180,7 +180,7 @@ public class AgentLoopEngine {
                 try {
                     long timeoutMillis = Math.min(safePolicy.stepTimeoutMillis(), remainingMillis);
                     observation = useDefaultExecutor
-                        ? defaultObservation(context, index)
+                        ? defaultObservation(context, step, index)
                         : executeWithTimeout(safeExecutor, context, step, index, timeoutMillis);
                     if (observation == null || observation.isBlank()) {
                         throw new IllegalStateException("empty_observation");
@@ -480,11 +480,21 @@ public class AgentLoopEngine {
     }
 
     public static String defaultObservation(AgentContextService.AgentContext context, int index) {
+        return defaultObservation(context, "", index);
+    }
+
+    public static String defaultObservation(
+        AgentContextService.AgentContext context, String action, int index
+    ) {
         return switch (index) {
             case 0 -> "已读取面试报告；识别到 " + context.weaknesses().size() + " 个待关注项。";
-            case 1 -> context.sources().isEmpty()
-                ? "Skill/RAG 未提供可引用来源，本轮回答不得声称使用了外部依据。"
-                : "已核对 Skill/RAG 来源，共 " + context.sources().size() + " 个可引用来源。";
+            case 1 -> action.contains("核对")
+                ? context.sources().isEmpty()
+                    ? "Skill/RAG 未提供可引用来源，本轮回答不得声称使用了外部依据。"
+                    : "已核对 Skill/RAG 来源，共 " + context.sources().size() + " 个可引用来源。"
+                : action.contains("确认当前目标")
+                    ? "已确认当前目标和资料边界。"
+                    : "已整理固定资料边界，未声称使用不存在的外部依据。";
             default -> "已将报告事实、证据边界和用户目标整理为可执行建议。";
         };
     }
