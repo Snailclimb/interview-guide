@@ -2,6 +2,8 @@ package interview.guide.modules.agent.service;
 
 import interview.guide.common.ai.LlmProviderRegistry;
 import interview.guide.common.ai.PromptSanitizer;
+import interview.guide.modules.agent.model.AgentSource;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,6 +33,23 @@ class AgentLoopPlannerTest {
 
         assertThat(planner.steps("1. 先确认资料边界\n2. 深入分析并输出建议\n3. [parallel] 检索知识库"))
             .containsExactly("确认当前目标", "整理", "[parallel] 核对 Skill/RAG 来源");
+    }
+
+    @Test
+    void doesNotAdvertiseRagActionWhenTheRunHasNoRagSource() {
+        AgentRetryProperties properties = new AgentRetryProperties();
+        properties.setLoopMaxSteps(3);
+        AgentLoopPlanner planner = new AgentLoopPlanner(
+            mock(LlmProviderRegistry.class), mock(PromptSanitizer.class), properties
+        );
+        AgentContextService.AgentContext context = new AgentContextService.AgentContext(
+            "report", "java-backend", "skill", "暂无知识库检索上下文", "query", List.of(
+                new AgentSource("skill", "Java", null, "skill-reference")
+            )
+        );
+
+        assertThat(planner.steps("1. 读取报告\n2. 结合 Skill/RAG 资料核对薄弱点\n3. 输出建议", context))
+            .containsExactly("读取面试报告", "整理", "整理");
     }
 
     @Test

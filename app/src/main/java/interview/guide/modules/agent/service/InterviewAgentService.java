@@ -357,7 +357,7 @@ public class InterviewAgentService {
                     AgentLoopEngine loopEngine = new AgentLoopEngine();
                     List<String> loopSteps = agentLoopPlanner == null
                         ? List.of("读取面试报告并确认当前目标")
-                        : agentLoopPlanner.steps(plan);
+                        : agentLoopPlanner.steps(plan, context);
                     AgentLoopEngine.ExecutionPolicy loopPolicy = new AgentLoopEngine.ExecutionPolicy(
                         retryProperties.getLoopMaxSteps(),
                         retryProperties.getLoopStepRetryAttempts(),
