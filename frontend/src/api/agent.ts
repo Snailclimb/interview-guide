@@ -5,6 +5,8 @@ import type {
   AgentConversationSummary,
   AgentAuditEvent,
   AgentAction,
+  AgentTrainingTask,
+  AgentTrainingTaskStatus,
   AgentMemoryResponse,
   AgentMessageRequest,
   AgentStreamEvent,
@@ -71,6 +73,19 @@ export const agentApi = {
     );
   },
 
+  proposeTrainingTaskDraft(
+    sessionId: string,
+    agentSessionId: string,
+    content: string,
+    idempotencyKey?: string,
+  ): Promise<AgentAction> {
+    return request.post<AgentAction>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversations/${encodeURIComponent(agentSessionId)}/actions/training-task-draft`,
+      { content, idempotencyKey },
+      { headers: agentHeaders() },
+    );
+  },
+
   proposeMemoryDraft(
     sessionId: string,
     agentSessionId: string,
@@ -127,6 +142,21 @@ export const agentApi = {
     return request.post<AgentAction>(
       `/api/agent/actions/${encodeURIComponent(actionId)}/cancel`,
       undefined,
+      { headers: agentHeaders() },
+    );
+  },
+
+  listTrainingTasks(status?: AgentTrainingTaskStatus): Promise<AgentTrainingTask[]> {
+    const query = status ? `?status=${encodeURIComponent(status)}` : '';
+    return request.get<AgentTrainingTask[]>(`/api/agent/training-tasks${query}`, {
+      headers: agentHeaders(),
+    });
+  },
+
+  updateTrainingTask(taskId: string, status: AgentTrainingTaskStatus): Promise<AgentTrainingTask> {
+    return request.patch<AgentTrainingTask>(
+      `/api/agent/training-tasks/${encodeURIComponent(taskId)}`,
+      { status },
       { headers: agentHeaders() },
     );
   },

@@ -29,6 +29,7 @@ import org.springframework.stereotype.Service;
 public class AgentActionService {
     private static final String TRAINING_PLAN_TOOL = "interview.plan.draft";
     private static final String PRACTICE_QUESTIONS_TOOL = "practice.questions.draft";
+    private static final String TRAINING_TASK_TOOL = "training.task.create";
     private static final String MEMORY_TOOL = "agent.memory.save";
     private static final String INTERVIEW_TITLE_TOOL = "interview.title.rename";
     private static final String DRAFT_RISK = "DRAFT_WRITE";
@@ -54,13 +55,24 @@ public class AgentActionService {
     private final AgentAuditService auditService;
     private final AgentMemoryService memoryService;
     private final InterviewPersistenceService interviewPersistenceService;
+    private final AgentTrainingTaskService trainingTaskService;
 
     /** 保留轻量构造方式，便于只测试草稿状态机的调用方。 */
     public AgentActionService(
         AgentActionRequestRepository repository,
         AgentAuditService auditService
     ) {
-        this(repository, auditService, null, null);
+        this(repository, auditService, null, null, null);
+    }
+
+    /** 保留既有测试和轻量调用方的构造方式。 */
+    public AgentActionService(
+        AgentActionRequestRepository repository,
+        AgentAuditService auditService,
+        AgentMemoryService memoryService,
+        InterviewPersistenceService interviewPersistenceService
+    ) {
+        this(repository, auditService, memoryService, interviewPersistenceService, null);
     }
 
     @Autowired
@@ -68,12 +80,30 @@ public class AgentActionService {
         AgentActionRequestRepository repository,
         AgentAuditService auditService,
         AgentMemoryService memoryService,
-        InterviewPersistenceService interviewPersistenceService
+        InterviewPersistenceService interviewPersistenceService,
+        AgentTrainingTaskService trainingTaskService
     ) {
         this.repository = repository;
         this.auditService = auditService;
         this.memoryService = memoryService;
         this.interviewPersistenceService = interviewPersistenceService;
+        this.trainingTaskService = trainingTaskService;
+    }
+
+    /** 生成待确认的训练任务草稿；确认后才进入用户任务列表。 */
+    @Transactional
+    public AgentActionResponse proposeTrainingTaskDraft(
+        String interviewSessionId,
+        String agentSessionId,
+        String ownerKey,
+        String content,
+        String requestedIdempotencyKey
+    ) {
+        return proposeDraft(
+            interviewSessionId, agentSessionId, ownerKey, content, requestedIdempotencyKey,
+            TRAINING_TASK_TOOL, "训练任务草稿",
+            "确认后创建一条独立训练任务，可在任务列表中推进或完成，不修改原始面试资料。"
+        );
     }
 
     @Transactional
@@ -366,6 +396,13 @@ public class AgentActionService {
             interviewPersistenceService.renameSessionForOwner(
                 entity.getInterviewSessionId(), entity.getOwnerKey(), entity.getTargetTitle()
             );
+            return;
+        }
+        if (TRAINING_TASK_TOOL.equals(entity.getToolId())) {
+            if (trainingTaskService == null) {
+                throw new IllegalStateException("训练任务服务未配置");
+            }
+            trainingTaskService.createFromAction(entity);
         }
         // 训练计划和练习题的确认结果仍然只保存在动作表，不修改其他业务实体。
     }
@@ -433,6 +470,9 @@ public class AgentActionService {
         }
         if (INTERVIEW_TITLE_TOOL.equals(toolId)) {
             return "面试记录名称已更新，问题、回答、评分和简历未被修改。";
+        }
+        if (TRAINING_TASK_TOOL.equals(toolId)) {
+            return "训练任务已创建，可在 Agent 任务列表中开始或完成。原始面试资料未被修改。";
         }
         return "训练计划草稿已保存，原始面试资料未被修改。";
     }

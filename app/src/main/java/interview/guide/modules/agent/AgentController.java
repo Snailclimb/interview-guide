@@ -15,11 +15,15 @@ import interview.guide.modules.agent.model.CreateAgentDraftActionRequest;
 import interview.guide.modules.agent.model.CreateAgentMemoryDraftRequest;
 import interview.guide.modules.agent.model.CreateAgentTitleDraftRequest;
 import interview.guide.modules.agent.model.UpdateAgentActionDraftRequest;
+import interview.guide.modules.agent.model.AgentTrainingTaskResponse;
+import interview.guide.modules.agent.model.AgentTrainingTaskStatus;
+import interview.guide.modules.agent.model.UpdateAgentTrainingTaskRequest;
 import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.AgentActionService;
 import interview.guide.modules.agent.service.AgentMemoryService;
 import interview.guide.modules.agent.service.AgentAuditService;
 import interview.guide.modules.agent.service.InterviewAgentService;
+import interview.guide.modules.agent.service.AgentTrainingTaskService;
 import interview.guide.modules.auth.AuthIdentityService;
 import interview.guide.common.result.Result;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -63,6 +67,7 @@ public class AgentController {
     private final AgentMemoryService memoryService;
     private final AgentAuditService auditService;
     private final AgentActionService actionService;
+    private final AgentTrainingTaskService trainingTaskService;
     private final AuthIdentityService authIdentityService;
     private final ObjectMapper objectMapper;
 
@@ -217,6 +222,22 @@ public class AgentController {
         ));
     }
 
+    /** 只生成待确认的训练任务草稿，确认后才创建任务。 */
+    @PostMapping("/api/agent/interview-sessions/{sessionId}/conversations/{agentSessionId}/actions/training-task-draft")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
+    public Result<AgentActionResponse> proposeTrainingTaskDraft(
+        @PathVariable String sessionId,
+        @PathVariable String agentSessionId,
+        @Valid @RequestBody CreateAgentDraftActionRequest request,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        String identity = authIdentityService.requireIdentity(ownerKey);
+        conversationService.assertAccess(sessionId, agentSessionId, identity);
+        return Result.success(actionService.proposeTrainingTaskDraft(
+            sessionId, agentSessionId, identity, request.content(), request.idempotencyKey()
+        ));
+    }
+
     /** 只生成待确认的长期记忆草稿，确认后才写入结构化记忆。 */
     @PostMapping("/api/agent/interview-sessions/{sessionId}/conversations/{agentSessionId}/actions/memory-draft")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
@@ -293,6 +314,31 @@ public class AgentController {
     ) {
         return Result.success(actionService.cancel(
             actionId, authIdentityService.requireIdentity(ownerKey)
+        ));
+    }
+
+    /** 查询当前用户的 Agent 训练任务。 */
+    @GetMapping("/api/agent/training-tasks")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
+    public Result<List<AgentTrainingTaskResponse>> listTrainingTasks(
+        @RequestParam(value = "status", required = false) AgentTrainingTaskStatus status,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        return Result.success(trainingTaskService.listForOwner(
+            authIdentityService.requireIdentity(ownerKey), status
+        ));
+    }
+
+    /** 更新训练任务进度；已完成或已取消任务不可回退。 */
+    @PatchMapping("/api/agent/training-tasks/{taskId}")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
+    public Result<AgentTrainingTaskResponse> updateTrainingTask(
+        @PathVariable String taskId,
+        @Valid @RequestBody UpdateAgentTrainingTaskRequest request,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        return Result.success(trainingTaskService.updateStatus(
+            taskId, authIdentityService.requireIdentity(ownerKey), request.status()
         ));
     }
 

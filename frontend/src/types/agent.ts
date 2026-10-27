@@ -75,6 +75,21 @@ export interface AgentAction {
   completedAt?: string | null;
 }
 
+export type AgentTrainingTaskStatus = 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+
+export interface AgentTrainingTask {
+  taskId: string;
+  sourceInterviewSessionId: string;
+  sourceAgentSessionId: string;
+  sourceActionId: string;
+  title: string;
+  description: string;
+  status: AgentTrainingTaskStatus | string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  completedAt?: string | null;
+}
+
 export function isAgentMemoryAction(action: AgentAction): boolean {
   return action.toolId === 'agent.memory.save';
 }

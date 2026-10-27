@@ -56,6 +56,8 @@ import type {
   AgentHistoryMessage,
   AgentMemoryItem,
   AgentMemoryResponse,
+  AgentTrainingTask,
+  AgentTrainingTaskStatus,
   AgentRunUsage,
   AgentSource,
   AgentStreamEvent,
@@ -276,6 +278,9 @@ export default function AgentPage() {
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [editingMemoryContent, setEditingMemoryContent] = useState('');
   const [editingMemoryScope, setEditingMemoryScope] = useState('');
+  const [trainingTasks, setTrainingTasks] = useState<AgentTrainingTask[]>([]);
+  const [trainingTasksLoading, setTrainingTasksLoading] = useState(false);
+  const [trainingTaskBusyId, setTrainingTaskBusyId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([createWelcomeMessage()]);
   const [input, setInput] = useState('');
   const abortRef = useRef<AbortController | null>(null);
@@ -764,6 +769,14 @@ export default function AgentPage() {
       .finally(() => setActionsLoading(false));
   }, [agentSessionId, sessionId]);
 
+  const loadTrainingTasks = useCallback(() => {
+    setTrainingTasksLoading(true);
+    return agentApi.listTrainingTasks()
+      .then((value) => setTrainingTasks(value))
+      .catch(() => setActionNotice('训练任务读取失败，请稍后重试'))
+      .finally(() => setTrainingTasksLoading(false));
+  }, []);
+
   useEffect(() => {
     void loadLongTermMemory();
   }, [loadLongTermMemory]);
@@ -775,6 +788,10 @@ export default function AgentPage() {
   useEffect(() => {
     void loadAgentActions();
   }, [loadAgentActions]);
+
+  useEffect(() => {
+    void loadTrainingTasks();
+  }, [loadTrainingTasks]);
 
   const saveDraftAction = (message: AgentMessage, kind: 'plan' | 'practice') => {
     if (!sessionId || !agentSessionId || message.role !== 'assistant' || !message.content.trim()) {
@@ -870,6 +887,25 @@ export default function AgentPage() {
       .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '面试名称草稿生成失败，请稍后重试'));
   };
 
+  const saveTrainingTaskAction = (message: AgentMessage) => {
+    if (!sessionId || !agentSessionId || message.role !== 'assistant' || !message.content.trim()) {
+      setActionNotice('当前 Agent 会话还未建立，暂时不能创建训练任务');
+      return;
+    }
+    setActionNotice('正在生成待确认的训练任务...');
+    void agentApi.proposeTrainingTaskDraft(
+      sessionId,
+      agentSessionId,
+      message.content,
+      `task:${agentSessionId}:${message.id}`,
+    )
+      .then((action) => {
+        setActions((current) => [action, ...current.filter((item) => item.actionId !== action.actionId)]);
+        setActionNotice('训练任务草稿已生成，请确认后创建');
+      })
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '训练任务草稿生成失败，请稍后重试'));
+  };
+
   const confirmAgentAction = (actionId: string) => {
     if (actionBusyId) return;
     const action = actions.find((item) => item.actionId === actionId);
@@ -885,10 +921,24 @@ export default function AgentPage() {
         if (updated.toolId === 'interview.title.rename') {
           setInterview((current) => current ? { ...current, title: updated.draftContent } : current);
         }
+        if (updated.toolId === 'training.task.create') {
+          void loadTrainingTasks();
+        }
         void loadAuditEvents();
       })
       .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作确认失败，请稍后重试'))
       .finally(() => setActionBusyId(null));
+  };
+
+  const updateTrainingTask = (task: AgentTrainingTask, status: AgentTrainingTaskStatus) => {
+    if (trainingTaskBusyId) return;
+    setTrainingTaskBusyId(task.taskId);
+    void agentApi.updateTrainingTask(task.taskId, status)
+      .then((updated) => {
+        setTrainingTasks((current) => current.map((item) => item.taskId === updated.taskId ? updated : item));
+      })
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '训练任务更新失败，请稍后重试'))
+      .finally(() => setTrainingTaskBusyId(null));
   };
 
   const cancelAgentAction = (actionId: string) => {
@@ -1636,6 +1686,14 @@ export default function AgentPage() {
                               <Pencil className="w-3.5 h-3.5" />
                               建议面试名称
                             </button>
+                            <button
+                              onClick={() => saveTrainingTaskAction(message)}
+                              disabled={runStatus === 'running' || !agentSessionId}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                            >
+                              <Target className="w-3.5 h-3.5" />
+                              创建训练任务
+                            </button>
                           </div>
                         ) : null}
                       </>
@@ -1797,7 +1855,10 @@ export default function AgentPage() {
                           >
                             {actionBusyId === action.actionId
                               ? '处理中...'
-                              : action.toolId === 'interview.title.rename' ? '确认应用名称' : action.toolId === 'agent.memory.save' ? '确认保存记忆' : '确认保存草稿'}
+                              : action.toolId === 'interview.title.rename' ? '确认应用名称'
+                                : action.toolId === 'agent.memory.save' ? '确认保存记忆'
+                                  : action.toolId === 'training.task.create' ? '确认创建任务'
+                                    : '确认保存草稿'}
                           </button>
                         </div>
                       ) : action.status === 'FAILED' ? (
@@ -1809,6 +1870,66 @@ export default function AgentPage() {
                           >
                             <RotateCcw className="h-3.5 w-3.5" />
                             {actionBusyId === action.actionId ? '重试中...' : '重试动作'}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <div className="mt-4 rounded-xl border border-slate-200 bg-white/70 p-3 dark:border-slate-700 dark:bg-slate-800/60" aria-label="Agent 训练任务">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold dark-text">训练任务</p>
+                  <p className="mt-1 text-[11px] dark-text-muted">确认 Agent 动作后，任务会进入这里；完成状态由你手动推进。</p>
+                </div>
+                {trainingTasksLoading ? <Loader2 className="h-4 w-4 animate-spin text-primary-500" /> : null}
+              </div>
+              {!trainingTasksLoading && trainingTasks.length === 0 ? (
+                <p className="mt-3 text-xs dark-text-muted">暂无训练任务。可以从任意一条 Agent 回答创建。</p>
+              ) : null}
+              {trainingTasks.length > 0 ? (
+                <div className="mt-3 space-y-2">
+                  {trainingTasks.slice(0, 8).map((task) => (
+                    <div key={task.taskId} className="rounded-lg border border-slate-100 bg-slate-50/80 p-3 dark:border-slate-700 dark:bg-slate-900/50">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium dark-text">{task.title}</p>
+                          <p className="mt-1 whitespace-pre-wrap text-xs leading-5 dark-text-muted">{task.description}</p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                          {task.status === 'TODO' ? '待开始' : task.status === 'IN_PROGRESS' ? '进行中' : task.status === 'COMPLETED' ? '已完成' : '已取消'}
+                        </span>
+                      </div>
+                      {task.status === 'TODO' ? (
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            disabled={trainingTaskBusyId !== null}
+                            onClick={() => updateTrainingTask(task, 'IN_PROGRESS')}
+                            className="btn-primary rounded-lg px-2.5 py-1.5 text-xs disabled:opacity-50"
+                          >
+                            开始训练
+                          </button>
+                          <button
+                            type="button"
+                            disabled={trainingTaskBusyId !== null}
+                            onClick={() => updateTrainingTask(task, 'CANCELLED')}
+                            className="btn-secondary rounded-lg px-2.5 py-1.5 text-xs disabled:opacity-50"
+                          >
+                            取消
+                          </button>
+                        </div>
+                      ) : task.status === 'IN_PROGRESS' ? (
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            disabled={trainingTaskBusyId !== null}
+                            onClick={() => updateTrainingTask(task, 'COMPLETED')}
+                            className="btn-primary rounded-lg px-2.5 py-1.5 text-xs disabled:opacity-50"
+                          >
+                            标记完成
                           </button>
                         </div>
                       ) : null}

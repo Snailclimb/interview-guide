@@ -37,6 +37,9 @@ class AgentActionServiceTest {
     @Mock
     private InterviewPersistenceService interviewPersistenceService;
 
+    @Mock
+    private AgentTrainingTaskService trainingTaskService;
+
     @Test
     @DisplayName("生成训练计划草稿时默认只提出动作，不改原始资料")
     void proposesDraftWithStableContract() {
@@ -116,6 +119,33 @@ class AgentActionServiceTest {
     }
 
     @Test
+    @DisplayName("确认训练任务动作时创建独立任务，不修改面试资料")
+    void confirmsTrainingTaskActionThroughTaskService() {
+        AgentActionService service = new AgentActionService(
+            repository, auditService, memoryService, interviewPersistenceService, trainingTaskService
+        );
+        when(repository.findByOwnerKeyAndIdempotencyKey("user-1", "task-1"))
+            .thenReturn(Optional.empty());
+        when(repository.findByActionIdForUpdate(any())).thenAnswer(invocation ->
+            Optional.of(taskAction("task-action-1", "user-1"))
+        );
+        when(repository.save(any(AgentActionRequestEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+        when(trainingTaskService.createFromAction(any(AgentActionRequestEntity.class))).thenReturn(null);
+
+        var proposed = service.proposeTrainingTaskDraft(
+            "interview-1", "agent-1", "user-1", "先补 Redis 缓存击穿\n每天练一道题", "task-1"
+        );
+        var confirmed = service.confirm(proposed.actionId(), "user-1");
+
+        assertThat(proposed.toolId()).isEqualTo("training.task.create");
+        assertThat(confirmed.status()).isEqualTo(AgentActionStatus.SUCCEEDED);
+        verify(trainingTaskService).createFromAction(any(AgentActionRequestEntity.class));
+        verify(memoryService, never()).rememberItem(any(), any(), any(), any());
+        verify(interviewPersistenceService, never()).renameSessionForOwner(any(), any(), any());
+    }
+
+    @Test
     @DisplayName("确认动作按状态机完成，并且重复确认是幂等的")
     void confirmsActionIdempotently() {
         AgentActionService service = new AgentActionService(repository, auditService);
@@ -190,7 +220,7 @@ class AgentActionServiceTest {
     @DisplayName("确认长期记忆动作时复用现有记忆服务")
     void confirmsMemoryActionThroughMemoryService() {
         AgentActionService service = new AgentActionService(
-            repository, auditService, memoryService, interviewPersistenceService
+            repository, auditService, memoryService, interviewPersistenceService, trainingTaskService
         );
         when(repository.findByOwnerKeyAndIdempotencyKey("user-1", "memory-1"))
             .thenReturn(Optional.empty());
@@ -408,6 +438,13 @@ class AgentActionServiceTest {
             .memoryJobScope("java-backend")
             .idempotencyKey("memory-1")
             .build();
+    }
+
+    private AgentActionRequestEntity taskAction(String actionId, String owner) {
+        AgentActionRequestEntity action = draft(actionId, owner);
+        action.setToolId("training.task.create");
+        action.setTitle("训练任务草稿");
+        return action;
     }
 
     private AgentActionRequestEntity titleAction(String actionId, String owner) {
