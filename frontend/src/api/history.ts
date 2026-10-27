@@ -45,6 +45,7 @@ export interface InterviewItem {
   status: string;
   sourceType?: string;
   knowledgeBaseId?: number | null;
+  resumeId?: number | null;
   skillId?: string | null;
   evaluateStatus?: EvaluateStatus;
   evaluateError?: string;

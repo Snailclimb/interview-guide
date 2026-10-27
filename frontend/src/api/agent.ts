@@ -98,6 +98,19 @@ export const agentApi = {
     );
   },
 
+  proposeResumeEditDraft(
+    sessionId: string,
+    agentSessionId: string,
+    content: string,
+    idempotencyKey?: string,
+  ): Promise<AgentAction> {
+    return request.post<AgentAction>(
+      `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversations/${encodeURIComponent(agentSessionId)}/actions/resume-edit-draft`,
+      { content, idempotencyKey },
+      { headers: agentHeaders() },
+    );
+  },
+
   proposeMemoryDraft(
     sessionId: string,
     agentSessionId: string,

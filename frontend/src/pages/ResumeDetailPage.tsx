@@ -64,6 +64,12 @@ export default function ResumeDetailPage({ resumeId, onBack, onStartInterview }:
     loadResumeDetail();
   }, [loadResumeDetail]);
 
+  useEffect(() => {
+    if ((location.state as { initialTab?: TabType } | null)?.initialTab === 'editor') {
+      setActiveTab('editor');
+    }
+  }, [location.state]);
+
   const loadEditor = useCallback(async () => {
     setEditorLoading(true);
     setEditorError(null);

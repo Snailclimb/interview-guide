@@ -120,6 +120,32 @@ public class ResumeEditorService {
         return toDto(resume, saved);
     }
 
+    /**
+     * 保存 Agent 生成的简历优化内容为独立编辑版草稿。
+     *
+     * <p>Agent 只写入编辑草稿的原文区，原始上传文件和已应用到面试的正文保持不变；
+     * 用户可以在简历管理页继续结构化编辑，确认后再应用到后续面试。</p>
+     */
+    @Transactional
+    public ResumeEditorDTO saveAgentDraftForOwner(Long resumeId, String ownerId, String content) {
+        ResumeEntity resume = findResumeForOwner(resumeId, ownerId);
+        String normalized = content == null ? "" : content.trim();
+        if (normalized.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "Agent 生成的简历内容不能为空");
+        }
+        if (normalized.length() > 60_000) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "Agent 生成的简历内容过长");
+        }
+        ResumeEditDraftEntity draft = draftRepository.findByResumeId(resumeId)
+            .orElseGet(() -> ResumeEditDraftEntity.builder().resume(resume).version(0).build());
+        copy(new ResumeEditorContent(
+            null, null, null, null, null, null, null, null, null, null, normalized
+        ), draft);
+        draft.setVersion(draft.getVersion() + 1);
+        draft.setSource(ResumeEditorSource.AI_DRAFT);
+        return toDto(resume, draftRepository.save(draft));
+    }
+
     /** 生成并保存 AI 草稿，用户仍可在前端继续手动修改后再应用。 */
     public ResumeEditorDTO optimize(Long resumeId, SaveResumeEditorRequest request) {
         ResumeEntity resume = findResume(resumeId);
@@ -194,6 +220,17 @@ public class ResumeEditorService {
             .orElseGet(() -> resumeRepository.findById(resumeId));
         return resume
             .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND));
+    }
+
+    private ResumeEntity findResumeForOwner(Long resumeId, String ownerId) {
+        if (ownerId == null || ownerId.isBlank()) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "简历归属身份不能为空");
+        }
+        Optional<ResumeEntity> resume = AuthUserContext.currentUserId().isPresent()
+            ? resumeRepository.findByIdAndOwnerId(resumeId, ownerId)
+            : resumeRepository.findById(resumeId)
+                .filter(item -> item.getOwnerId() == null || ownerId.equals(item.getOwnerId()));
+        return resume.orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND));
     }
 
     private ResumeEditorContent requireContent(SaveResumeEditorRequest request) {

@@ -102,6 +102,10 @@ export function isAgentReportExportAction(action: AgentAction): boolean {
   return action.toolId === 'interview.report.export';
 }
 
+export function isAgentResumeEditAction(action: AgentAction): boolean {
+  return action.toolId === 'resume.editor.save';
+}
+
 export interface AgentConversationSummary {
   agentSessionId: string;
   interviewSessionId: string;

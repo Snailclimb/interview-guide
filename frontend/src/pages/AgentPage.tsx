@@ -48,7 +48,7 @@ import {
   resolveAgentSessionId,
   resolveAgentThreadId,
 } from './agentSession';
-import { isAgentReportExportAction } from '../types/agent';
+import { isAgentReportExportAction, isAgentResumeEditAction } from '../types/agent';
 import type {
   AgentGoal,
   AgentAuditEvent,
@@ -166,6 +166,10 @@ function compactMemoryDraft(content: string) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 160);
+}
+
+function compactResumeEditDraft(content: string) {
+  return content.replace(/\u0000/g, '').trim().slice(0, 12_000);
 }
 
 function suggestInterviewTitle(content: string, fallback: string) {
@@ -929,6 +933,30 @@ export default function AgentPage() {
       .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '报告导出动作生成失败，请稍后重试'));
   };
 
+  const saveResumeEditAction = (message: AgentMessage) => {
+    if (!sessionId || !agentSessionId || message.role !== 'assistant' || !message.content.trim()) {
+      setActionNotice('当前 Agent 会话还未建立，暂时不能生成简历优化版');
+      return;
+    }
+    const content = compactResumeEditDraft(message.content);
+    if (!content) {
+      setActionNotice('这条回答没有可保存的简历优化内容');
+      return;
+    }
+    setActionNotice('正在生成待确认的简历优化编辑版...');
+    void agentApi.proposeResumeEditDraft(
+      sessionId,
+      agentSessionId,
+      content,
+      `resume-edit:${agentSessionId}:${message.id}`,
+    )
+      .then((action) => {
+        setActions((current) => [action, ...current.filter((item) => item.actionId !== action.actionId)]);
+        setActionNotice('简历优化编辑版已生成，请确认后保存');
+      })
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '简历优化编辑版生成失败，请稍后重试'));
+  };
+
   const confirmAgentAction = (actionId: string) => {
     if (actionBusyId) return;
     const action = actions.find((item) => item.actionId === actionId);
@@ -946,6 +974,9 @@ export default function AgentPage() {
         }
         if (updated.toolId === 'training.task.create') {
           void loadTrainingTasks();
+        }
+        if (isAgentResumeEditAction(updated) && updated.status === 'SUCCEEDED') {
+          setActionNotice('简历优化编辑版已保存，请到简历管理中继续编辑或导出');
         }
         if (isAgentReportExportAction(updated) && updated.status === 'SUCCEEDED' && sessionId) {
           setActionNotice('报告导出已确认，正在下载 PDF...');
@@ -1066,6 +1097,11 @@ export default function AgentPage() {
         ...current,
         [action.actionId]: getErrorMessage(error) || '下载失败，请稍后重试',
       })));
+  };
+
+  const openResumeEditor = () => {
+    if (!interview?.resumeId) return;
+    navigate(`/history/${interview.resumeId}`, { state: { initialTab: 'editor' } });
   };
 
   const startEditAgentAction = (action: AgentAction) => {
@@ -1755,6 +1791,16 @@ export default function AgentPage() {
                               <Download className="w-3.5 h-3.5" />
                               导出面试报告
                             </button>
+                            {interview?.resumeId ? (
+                              <button
+                                onClick={() => saveResumeEditAction(message)}
+                                disabled={runStatus === 'running' || !agentSessionId}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                生成简历优化版
+                              </button>
+                            ) : null}
                           </div>
                         ) : null}
                       </>
@@ -1880,6 +1926,15 @@ export default function AgentPage() {
                           下载面试报告 PDF
                         </button>
                       ) : null}
+                      {action.status === 'SUCCEEDED' && isAgentResumeEditAction(action) && interview?.resumeId ? (
+                        <button
+                          onClick={openResumeEditor}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 px-2.5 py-1.5 text-xs text-emerald-700 transition-colors hover:border-emerald-400 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-900/20"
+                        >
+                          <FileText className="h-3.5 w-3.5" />
+                          打开简历编辑
+                        </button>
+                      ) : null}
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         <button
                           onClick={() => void copyAgentAction(action)}
@@ -1930,7 +1985,8 @@ export default function AgentPage() {
                                 : action.toolId === 'agent.memory.save' ? '确认保存记忆'
                                   : action.toolId === 'training.task.create' ? '确认创建任务'
                                     : isAgentReportExportAction(action) ? '确认导出报告'
-                                    : '确认保存草稿'}
+                                      : isAgentResumeEditAction(action) ? '确认保存简历版'
+                                      : '确认保存草稿'}
                           </button>
                         </div>
                       ) : action.status === 'FAILED' ? (

@@ -7,6 +7,7 @@ import interview.guide.modules.agent.model.AgentActionResponse;
 import interview.guide.modules.agent.model.AgentActionStatus;
 import interview.guide.modules.agent.repository.AgentActionRequestRepository;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
+import interview.guide.modules.resume.service.ResumeEditorService;
 import jakarta.transaction.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -31,6 +32,7 @@ public class AgentActionService {
     private static final String PRACTICE_QUESTIONS_TOOL = "practice.questions.draft";
     private static final String TRAINING_TASK_TOOL = "training.task.create";
     private static final String INTERVIEW_REPORT_EXPORT_TOOL = "interview.report.export";
+    private static final String RESUME_EDITOR_SAVE_TOOL = "resume.editor.save";
     private static final String MEMORY_TOOL = "agent.memory.save";
     private static final String INTERVIEW_TITLE_TOOL = "interview.title.rename";
     private static final String DRAFT_RISK = "DRAFT_WRITE";
@@ -46,6 +48,8 @@ public class AgentActionService {
     private static final String TITLE_PREVIEW = "确认后只修改这场面试的显示名称，不修改问题、回答、评分或简历。";
     private static final String REPORT_EXPORT_TITLE = "导出面试报告";
     private static final String REPORT_EXPORT_PREVIEW = "确认后校验当前面试归属并下载 PDF 报告，不修改面试内容。";
+    private static final String RESUME_EDITOR_TITLE = "简历优化编辑版";
+    private static final String RESUME_EDITOR_PREVIEW = "确认后保存为当前简历的 AI 编辑版草稿，原始上传文件不被覆盖；可继续手动修改、应用或导出。";
     private static final int MAX_OWNER_KEY = 64;
     private static final int MAX_IDEMPOTENCY_KEY = 128;
     private static final int MAX_CONTENT = 12_000;
@@ -60,13 +64,14 @@ public class AgentActionService {
     private final AgentMemoryService memoryService;
     private final InterviewPersistenceService interviewPersistenceService;
     private final AgentTrainingTaskService trainingTaskService;
+    private final ResumeEditorService resumeEditorService;
 
     /** 保留轻量构造方式，便于只测试草稿状态机的调用方。 */
     public AgentActionService(
         AgentActionRequestRepository repository,
         AgentAuditService auditService
     ) {
-        this(repository, auditService, null, null, null);
+        this(repository, auditService, null, null, null, null);
     }
 
     /** 保留既有测试和轻量调用方的构造方式。 */
@@ -76,7 +81,19 @@ public class AgentActionService {
         AgentMemoryService memoryService,
         InterviewPersistenceService interviewPersistenceService
     ) {
-        this(repository, auditService, memoryService, interviewPersistenceService, null);
+        this(repository, auditService, memoryService, interviewPersistenceService, null, null);
+    }
+
+    /** 保留既有测试和轻量调用方的五参数构造方式。 */
+    public AgentActionService(
+        AgentActionRequestRepository repository,
+        AgentAuditService auditService,
+        AgentMemoryService memoryService,
+        InterviewPersistenceService interviewPersistenceService,
+        AgentTrainingTaskService trainingTaskService
+    ) {
+        this(repository, auditService, memoryService, interviewPersistenceService,
+            trainingTaskService, null);
     }
 
     @Autowired
@@ -85,13 +102,38 @@ public class AgentActionService {
         AgentAuditService auditService,
         AgentMemoryService memoryService,
         InterviewPersistenceService interviewPersistenceService,
-        AgentTrainingTaskService trainingTaskService
+        AgentTrainingTaskService trainingTaskService,
+        ResumeEditorService resumeEditorService
     ) {
         this.repository = repository;
         this.auditService = auditService;
         this.memoryService = memoryService;
         this.interviewPersistenceService = interviewPersistenceService;
         this.trainingTaskService = trainingTaskService;
+        this.resumeEditorService = resumeEditorService;
+    }
+
+    /** 生成待确认的简历编辑版草稿；确认后写入现有简历编辑器，不覆盖原始上传文件。 */
+    @Transactional
+    public AgentActionResponse proposeResumeEditDraft(
+        String interviewSessionId,
+        String agentSessionId,
+        String ownerKey,
+        String content,
+        String requestedIdempotencyKey
+    ) {
+        String owner = requireOwner(ownerKey);
+        String interviewId = requireText(interviewSessionId, "面试会话不能为空", 64);
+        if (interviewPersistenceService == null
+            || !interviewPersistenceService.findBySessionIdForOwner(interviewId, owner)
+                .map(session -> session.getResumeId() != null)
+                .orElse(false)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "当前面试没有可编辑的关联简历");
+        }
+        return proposeDraft(
+            interviewId, agentSessionId, owner, content, requestedIdempotencyKey,
+            RESUME_EDITOR_SAVE_TOOL, RESUME_EDITOR_TITLE, RESUME_EDITOR_PREVIEW
+        );
     }
 
     /** 生成待确认的训练任务草稿；确认后才进入用户任务列表。 */
@@ -482,6 +524,20 @@ public class AgentActionService {
                 throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND, "面试报告不存在或无权访问");
             }
         }
+        if (RESUME_EDITOR_SAVE_TOOL.equals(entity.getToolId())) {
+            if (resumeEditorService == null || interviewPersistenceService == null) {
+                throw new IllegalStateException("简历编辑服务未配置");
+            }
+            Long resumeId = interviewPersistenceService.findBySessionIdForOwner(
+                entity.getInterviewSessionId(), entity.getOwnerKey()
+            ).map(session -> session.getResumeId()).orElse(null);
+            if (resumeId == null) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "当前面试没有可编辑的关联简历");
+            }
+            resumeEditorService.saveAgentDraftForOwner(
+                resumeId, entity.getOwnerKey(), entity.getDraftContent()
+            );
+        }
         // 训练计划和练习题的确认结果仍然只保存在动作表，不修改其他业务实体。
     }
 
@@ -554,6 +610,9 @@ public class AgentActionService {
         }
         if (INTERVIEW_REPORT_EXPORT_TOOL.equals(toolId)) {
             return "面试报告已准备好，可以下载 PDF；面试内容未被修改。";
+        }
+        if (RESUME_EDITOR_SAVE_TOOL.equals(toolId)) {
+            return "简历优化内容已保存为编辑版草稿，原始上传文件未被修改。";
         }
         return "训练计划草稿已保存，原始面试资料未被修改。";
     }

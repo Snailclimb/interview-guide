@@ -17,6 +17,7 @@ public record InterviewDetailDTO(
     Integer overallScore,
     String sourceType,
     Long knowledgeBaseId,
+    Long resumeId,
     String skillId,
     String overallFeedback,
     LocalDateTime createdAt,

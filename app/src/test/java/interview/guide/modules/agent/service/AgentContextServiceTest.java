@@ -156,7 +156,7 @@ class AgentContextServiceTest {
     private InterviewDetailDTO detail(String skillId, Long knowledgeBaseId) {
         return new InterviewDetailDTO(
             1L, "session", null, 1, "COMPLETED", "COMPLETED", null, 60,
-            knowledgeBaseId == null ? "NORMAL" : "KNOWLEDGE_BASE", knowledgeBaseId, skillId,
+            knowledgeBaseId == null ? "NORMAL" : "KNOWLEDGE_BASE", knowledgeBaseId, null, skillId,
             "需要继续练习", null, null, List.of(), List.of("补充缓存知识"),
             List.of(), List.of(), List.of()
         );

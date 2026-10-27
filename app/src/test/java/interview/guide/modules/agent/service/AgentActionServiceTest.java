@@ -5,6 +5,7 @@ import interview.guide.modules.agent.model.AgentActionRequestEntity;
 import interview.guide.modules.agent.model.AgentActionStatus;
 import interview.guide.modules.agent.repository.AgentActionRequestRepository;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
+import interview.guide.modules.resume.service.ResumeEditorService;
 import java.util.List;
 import java.util.Optional;
 import java.time.LocalDateTime;
@@ -40,6 +41,9 @@ class AgentActionServiceTest {
 
     @Mock
     private AgentTrainingTaskService trainingTaskService;
+
+    @Mock
+    private ResumeEditorService resumeEditorService;
 
     @Test
     @DisplayName("生成训练计划草稿时默认只提出动作，不改原始资料")
@@ -172,6 +176,61 @@ class AgentActionServiceTest {
         assertThat(confirmed.resultSummary()).contains("下载 PDF");
         verify(interviewPersistenceService).findBySessionIdForOwner("interview-1", "user-1");
         verify(memoryService, never()).rememberItem(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("确认简历优化动作时只保存编辑版，不覆盖原始简历")
+    void confirmsResumeEditActionThroughEditorService() {
+        AgentActionService service = new AgentActionService(
+            repository, auditService, memoryService, interviewPersistenceService,
+            trainingTaskService, resumeEditorService
+        );
+        var interview = org.mockito.Mockito.mock(
+            interview.guide.modules.interview.model.InterviewSessionEntity.class
+        );
+        when(interview.getResumeId()).thenReturn(42L);
+        when(repository.findByOwnerKeyAndIdempotencyKey("user-1", "resume-1"))
+            .thenReturn(Optional.empty());
+        when(interviewPersistenceService.findBySessionIdForOwner("interview-1", "user-1"))
+            .thenReturn(Optional.of(interview));
+        when(repository.findByActionIdForUpdate(any())).thenReturn(
+            Optional.of(resumeAction("resume-action-1", "user-1"))
+        );
+        when(repository.save(any(AgentActionRequestEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var proposed = service.proposeResumeEditDraft(
+            "interview-1", "agent-1", "user-1",
+            "## 项目经历\n- 补充可验证的性能结果", "resume-1"
+        );
+        var confirmed = service.confirm(proposed.actionId(), "user-1");
+
+        assertThat(proposed.toolId()).isEqualTo("resume.editor.save");
+        assertThat(confirmed.status()).isEqualTo(AgentActionStatus.SUCCEEDED);
+        verify(resumeEditorService).saveAgentDraftForOwner(
+            42L, "user-1", "## 项目经历\n- 补充可验证的性能结果"
+        );
+    }
+
+    @Test
+    @DisplayName("没有关联简历的面试不能生成简历优化动作")
+    void rejectsResumeEditActionWithoutResume() {
+        AgentActionService service = new AgentActionService(
+            repository, auditService, memoryService, interviewPersistenceService,
+            trainingTaskService, resumeEditorService
+        );
+        var interview = org.mockito.Mockito.mock(
+            interview.guide.modules.interview.model.InterviewSessionEntity.class
+        );
+        when(interview.getResumeId()).thenReturn(null);
+        when(interviewPersistenceService.findBySessionIdForOwner("interview-1", "user-1"))
+            .thenReturn(Optional.of(interview));
+
+        assertThatThrownBy(() -> service.proposeResumeEditDraft(
+            "interview-1", "agent-1", "user-1", "优化内容", "resume-no-id"
+        )).isInstanceOf(BusinessException.class)
+            .hasMessageContaining("没有可编辑的关联简历");
+        verify(resumeEditorService, never()).saveAgentDraftForOwner(any(), any(), any());
     }
 
     @Test
@@ -534,6 +593,14 @@ class AgentActionServiceTest {
         action.setToolId("interview.report.export");
         action.setTitle("导出面试报告");
         action.setDraftContent("导出当前面试报告 PDF");
+        return action;
+    }
+
+    private AgentActionRequestEntity resumeAction(String actionId, String owner) {
+        AgentActionRequestEntity action = draft(actionId, owner);
+        action.setToolId("resume.editor.save");
+        action.setTitle("简历优化编辑版");
+        action.setDraftContent("## 项目经历\n- 补充可验证的性能结果");
         return action;
     }
 
