@@ -394,6 +394,29 @@ public class AgentActionService {
         return content.substring(0, Math.min(MAX_INTERVIEW_FOCUS, content.length()));
     }
 
+    /** 返回已确认报告导出动作对应的面试，会再次校验动作和面试归属。 */
+    @Transactional
+    public String loadConfirmedReportSessionId(String actionId, String ownerKey) {
+        String owner = requireOwner(ownerKey);
+        AgentActionRequestEntity entity = repository.findByActionId(requireText(
+            actionId, "Agent 导出动作不能为空", 64
+        )).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "Agent 导出动作不存在"));
+        if (!owner.equals(entity.getOwnerKey())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该 Agent 导出动作");
+        }
+        if (!INTERVIEW_REPORT_EXPORT_TOOL.equals(entity.getToolId())
+            || entity.getStatus() != AgentActionStatus.SUCCEEDED) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "只有已确认的报告导出动作可以下载面试报告");
+        }
+        if (interviewPersistenceService == null
+            || interviewPersistenceService.findBySessionIdForOwner(
+                entity.getInterviewSessionId(), owner
+            ).isEmpty()) {
+            throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND, "面试报告不存在或无权访问");
+        }
+        return entity.getInterviewSessionId();
+    }
+
     private AgentActionResponse executeConfirmed(AgentActionRequestEntity entity, boolean retry) {
         if (executionAttempts(entity) >= MAX_EXECUTION_ATTEMPTS) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "该 Agent 动作已达到最大重试次数，请重新生成草稿");

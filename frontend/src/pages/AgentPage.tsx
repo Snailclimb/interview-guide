@@ -949,7 +949,7 @@ export default function AgentPage() {
         }
         if (isAgentReportExportAction(updated) && updated.status === 'SUCCEEDED' && sessionId) {
           setActionNotice('报告导出已确认，正在下载 PDF...');
-          void historyApi.exportInterviewPdf(sessionId)
+          void agentApi.downloadConfirmedInterviewReport(updated.actionId)
             .then((blob) => {
               const safeTitle = (interview?.title || '模拟面试报告')
                 .replace(/[\\/:*?"<>|\s]+/g, '-')
@@ -1054,7 +1054,7 @@ export default function AgentPage() {
   const downloadInterviewReport = (action: AgentAction) => {
     if (!sessionId) return;
     setActionFeedback((current) => ({ ...current, [action.actionId]: '正在下载...' }));
-    void historyApi.exportInterviewPdf(sessionId)
+    void agentApi.downloadConfirmedInterviewReport(action.actionId)
       .then((blob) => {
         const safeTitle = (interview?.title || '模拟面试报告')
           .replace(/[\\/:*?"<>|\s]+/g, '-')

@@ -134,6 +134,13 @@ export const agentApi = {
     );
   },
 
+  downloadConfirmedInterviewReport(actionId: string): Promise<Blob> {
+    return request.download(
+      `/api/agent/actions/${encodeURIComponent(actionId)}/interview-report`,
+      { headers: agentHeaders() },
+    );
+  },
+
   retryAction(actionId: string): Promise<AgentAction> {
     return request.post<AgentAction>(
       `/api/agent/actions/${encodeURIComponent(actionId)}/retry`,

@@ -24,6 +24,7 @@ import interview.guide.modules.agent.service.AgentMemoryService;
 import interview.guide.modules.agent.service.AgentAuditService;
 import interview.guide.modules.agent.service.InterviewAgentService;
 import interview.guide.modules.agent.service.AgentTrainingTaskService;
+import interview.guide.modules.interview.service.InterviewHistoryService;
 import interview.guide.modules.auth.AuthIdentityService;
 import interview.guide.common.result.Result;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -68,6 +69,7 @@ public class AgentController {
     private final AgentAuditService auditService;
     private final AgentActionService actionService;
     private final AgentTrainingTaskService trainingTaskService;
+    private final InterviewHistoryService interviewHistoryService;
     private final AuthIdentityService authIdentityService;
     private final ObjectMapper objectMapper;
 
@@ -297,6 +299,22 @@ public class AgentController {
         return Result.success(actionService.confirm(
             actionId, authIdentityService.requireIdentity(ownerKey)
         ));
+    }
+
+    /** 仅允许当前用户使用已确认的报告导出动作下载 PDF。 */
+    @GetMapping("/api/agent/actions/{actionId}/interview-report")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 10)
+    public ResponseEntity<byte[]> exportConfirmedInterviewReport(
+        @PathVariable String actionId,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        String identity = authIdentityService.requireIdentity(ownerKey);
+        String sessionId = actionService.loadConfirmedReportSessionId(actionId, identity);
+        byte[] pdfBytes = interviewHistoryService.exportInterviewPdfForOwner(sessionId, identity);
+        return ResponseEntity.ok()
+            .header("Content-Disposition", "attachment; filename=interview-report.pdf")
+            .contentType(MediaType.APPLICATION_PDF)
+            .body(pdfBytes);
     }
 
     /** 重试执行失败的 Agent 动作，服务端最多允许三次实际执行。 */

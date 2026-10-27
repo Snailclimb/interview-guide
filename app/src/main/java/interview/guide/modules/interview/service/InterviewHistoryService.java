@@ -160,4 +160,19 @@ public class InterviewHistoryService {
             throw new BusinessException(ErrorCode.EXPORT_PDF_FAILED, "导出PDF失败: " + e.getMessage());
         }
     }
+
+    /** Agent 已完成归属校验后的报告导出入口。 */
+    public byte[] exportInterviewPdfForOwner(String sessionId, String ownerId) {
+        Optional<InterviewSessionEntity> sessionOpt = interviewPersistenceService
+            .findBySessionIdForOwner(sessionId, ownerId);
+        if (sessionOpt.isEmpty()) {
+            throw new BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND);
+        }
+        try {
+            return pdfExportService.exportInterviewReport(sessionOpt.get());
+        } catch (Exception e) {
+            log.error("Agent 导出PDF失败: sessionId={}", sessionId, e);
+            throw new BusinessException(ErrorCode.EXPORT_PDF_FAILED, "导出PDF失败: " + e.getMessage());
+        }
+    }
 }

@@ -14,6 +14,7 @@ import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.AgentMemoryService;
 import interview.guide.modules.agent.service.InterviewAgentService;
 import interview.guide.modules.auth.AuthIdentityService;
+import interview.guide.modules.interview.service.InterviewHistoryService;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -36,6 +37,7 @@ class AgentControllerTest {
     @Mock private AgentConversationService conversationService;
     @Mock private AgentMemoryService memoryService;
     @Mock private AgentActionService actionService;
+    @Mock private InterviewHistoryService interviewHistoryService;
     @Mock private AuthIdentityService authIdentityService;
     @Mock private ObjectMapper objectMapper;
     @InjectMocks private AgentController controller;
@@ -131,5 +133,25 @@ class AgentControllerTest {
         assertThat(result.isSuccess()).isTrue();
         assertThat(result.getData().status()).isEqualTo(AgentActionStatus.SUCCEEDED);
         verify(actionService).retry("action-1", "user-1");
+    }
+
+    @Test
+    @DisplayName("报告下载接口只通过已确认动作解析面试并返回 PDF")
+    void downloadsReportThroughConfirmedAction() {
+        when(authIdentityService.requireIdentity("user-1")).thenReturn("user-1");
+        when(actionService.loadConfirmedReportSessionId("action-1", "user-1"))
+            .thenReturn("interview-1");
+        when(interviewHistoryService.exportInterviewPdfForOwner("interview-1", "user-1"))
+            .thenReturn(new byte[] { 1, 2, 3 });
+
+        var response = controller.exportConfirmedInterviewReport("action-1", "user-1");
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getHeaders().getFirst("Content-Disposition"))
+            .contains("interview-report.pdf");
+        assertThat(response.getHeaders().getContentType()).isEqualTo(org.springframework.http.MediaType.APPLICATION_PDF);
+        assertThat(response.getBody()).containsExactly(1, 2, 3);
+        verify(actionService).loadConfirmedReportSessionId("action-1", "user-1");
+        verify(interviewHistoryService).exportInterviewPdfForOwner("interview-1", "user-1");
     }
 }

@@ -175,6 +175,32 @@ class AgentActionServiceTest {
     }
 
     @Test
+    @DisplayName("报告导出下载只接受当前用户已成功确认的动作")
+    void loadsConfirmedReportSessionIdForOwnerOnly() {
+        AgentActionService service = new AgentActionService(
+            repository, auditService, memoryService, interviewPersistenceService
+        );
+        AgentActionRequestEntity action = exportAction("export-action-1", "user-1");
+        action.setStatus(AgentActionStatus.SUCCEEDED);
+        when(repository.findByActionId("export-action-1")).thenReturn(Optional.of(action));
+        when(interviewPersistenceService.findBySessionIdForOwner("interview-1", "user-1"))
+            .thenReturn(Optional.of(new interview.guide.modules.interview.model.InterviewSessionEntity()));
+
+        assertThat(service.loadConfirmedReportSessionId("export-action-1", "user-1"))
+            .isEqualTo("interview-1");
+
+        action.setStatus(AgentActionStatus.PROPOSED);
+        assertThatThrownBy(() -> service.loadConfirmedReportSessionId("export-action-1", "user-1"))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("已确认");
+
+        action.setStatus(AgentActionStatus.SUCCEEDED);
+        assertThatThrownBy(() -> service.loadConfirmedReportSessionId("export-action-1", "owner-b"))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("无权访问");
+    }
+
+    @Test
     @DisplayName("确认动作按状态机完成，并且重复确认是幂等的")
     void confirmsActionIdempotently() {
         AgentActionService service = new AgentActionService(repository, auditService);
