@@ -144,6 +144,12 @@ function formatAgentActionStatus(status: string) {
   return labels[status] || status;
 }
 
+function agentActionResultClass(status: string) {
+  if (status === 'FAILED') return 'text-rose-700 dark:text-rose-300';
+  if (status === 'CANCELLED') return 'text-slate-500 dark:text-slate-400';
+  return 'text-emerald-700 dark:text-emerald-300';
+}
+
 function compactMemoryDraft(content: string) {
   return content
     .replace(/```[\s\S]*?```/g, ' ')
@@ -261,6 +267,7 @@ export default function AgentPage() {
   const [actions, setActions] = useState<AgentAction[]>([]);
   const [actionsLoading, setActionsLoading] = useState(false);
   const [actionNotice, setActionNotice] = useState('');
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<Record<string, string>>({});
   const [editingActionId, setEditingActionId] = useState<string | null>(null);
   const [editingActionContent, setEditingActionContent] = useState('');
@@ -428,6 +435,7 @@ export default function AgentPage() {
     setRunUsage(null);
     setActions([]);
     setActionNotice('');
+    setActionBusyId(null);
     setActionFeedback({});
     setEditingActionId(null);
     setEditingActionContent('');
@@ -861,7 +869,9 @@ export default function AgentPage() {
   };
 
   const confirmAgentAction = (actionId: string) => {
+    if (actionBusyId) return;
     const action = actions.find((item) => item.actionId === actionId);
+    setActionBusyId(actionId);
     setActionNotice(`正在保存${action?.title || 'Agent 动作'}...`);
     void agentApi.confirmAction(actionId)
       .then((updated) => {
@@ -875,21 +885,27 @@ export default function AgentPage() {
         }
         void loadAuditEvents();
       })
-      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作确认失败，请稍后重试'));
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作确认失败，请稍后重试'))
+      .finally(() => setActionBusyId(null));
   };
 
   const cancelAgentAction = (actionId: string) => {
+    if (actionBusyId) return;
+    setActionBusyId(actionId);
     void agentApi.cancelAction(actionId)
       .then((updated) => {
         setActions((current) => current.map((item) => item.actionId === updated.actionId ? updated : item));
         setActionNotice('动作已取消，原始面试资料未被修改');
         void loadAuditEvents();
       })
-      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作取消失败，请稍后重试'));
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作取消失败，请稍后重试'))
+      .finally(() => setActionBusyId(null));
   };
 
   const retryAgentAction = (actionId: string) => {
+    if (actionBusyId) return;
     const action = actions.find((item) => item.actionId === actionId);
+    setActionBusyId(actionId);
     setActionNotice(`正在重试${action?.title || 'Agent 动作'}...`);
     void agentApi.retryAction(actionId)
       .then((updated) => {
@@ -899,7 +915,8 @@ export default function AgentPage() {
           : `${updated.title}仍未执行成功，请稍后再试`);
         void loadAuditEvents();
       })
-      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作重试失败，请稍后重试'));
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '动作重试失败，请稍后重试'))
+      .finally(() => setActionBusyId(null));
   };
 
   const copyAgentAction = async (action: AgentAction) => {
@@ -1705,7 +1722,7 @@ export default function AgentPage() {
                           </div>
                         )}
                       </details>
-                      {action.resultSummary ? <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">{action.resultSummary}</p> : null}
+                      {action.resultSummary ? <p className={`mt-2 text-xs ${agentActionResultClass(action.status)}`}>{action.resultSummary}</p> : null}
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         <button
                           onClick={() => void copyAgentAction(action)}
@@ -1739,26 +1756,31 @@ export default function AgentPage() {
                       {action.status === 'PROPOSED' ? (
                         <div className="mt-3 flex justify-end gap-2">
                           <button
+                            disabled={actionBusyId !== null}
                             onClick={() => cancelAgentAction(action.actionId)}
-                            className="btn-secondary rounded-lg px-2.5 py-1.5 text-xs"
+                            className="btn-secondary rounded-lg px-2.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            取消
+                            {actionBusyId === action.actionId ? '处理中...' : '取消'}
                           </button>
                           <button
+                            disabled={actionBusyId !== null}
                             onClick={() => confirmAgentAction(action.actionId)}
-                            className="btn-primary rounded-lg px-2.5 py-1.5 text-xs"
+                            className="btn-primary rounded-lg px-2.5 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            {action.toolId === 'interview.title.rename' ? '确认应用名称' : action.toolId === 'agent.memory.save' ? '确认保存记忆' : '确认保存草稿'}
+                            {actionBusyId === action.actionId
+                              ? '处理中...'
+                              : action.toolId === 'interview.title.rename' ? '确认应用名称' : action.toolId === 'agent.memory.save' ? '确认保存记忆' : '确认保存草稿'}
                           </button>
                         </div>
                       ) : action.status === 'FAILED' ? (
                         <div className="mt-3 flex justify-end">
                           <button
+                            disabled={actionBusyId !== null}
                             onClick={() => retryAgentAction(action.actionId)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 px-2.5 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-900/20"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 px-2.5 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-900/20"
                           >
                             <RotateCcw className="h-3.5 w-3.5" />
-                            重试动作
+                            {actionBusyId === action.actionId ? '重试中...' : '重试动作'}
                           </button>
                         </div>
                       ) : null}
