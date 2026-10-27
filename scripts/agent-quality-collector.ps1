@@ -28,6 +28,13 @@ $jar = Join-Path $env:TEMP "agent-quality-$([guid]::NewGuid()).cookie"
 $createdInterview = $false
 $createdThreads = [System.Collections.Generic.List[string]]::new()
 
+if ($RunQualityGate -and $CreateInterview) {
+    throw '质量门禁不能直接使用 -CreateInterview：随机生成的面试报告和知识库条件不稳定，请传入已准备好的 -InterviewSessionId；-CreateInterview 仅用于真实模型 smoke。'
+}
+if ($RunQualityGate -and [string]::IsNullOrWhiteSpace($InterviewSessionId)) {
+    throw '运行质量门禁必须传入 -InterviewSessionId，确保评测报告和 RAG 条件是确定的。'
+}
+
 function Assert-Pass([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
     Write-Host "[PASS] $Message" -ForegroundColor Green
