@@ -40,6 +40,7 @@ import CodeBlock from '../components/CodeBlock';
 import { getRetryableRequest, removeLastRunMessages, resolveRetryProviderId, type AgentRunMessageIds, type AgentRunRequest } from './agentRun';
 import { normalizeAgentMarkdown } from './agentMarkdown';
 import { isNearChatBottom } from './agentChatScroll';
+import { detectAgentActionIntent, type AgentActionIntent } from './agentIntent';
 import {
   getStoredAgentSessionId,
   getStoredAgentThreadId,
@@ -314,6 +315,7 @@ export default function AgentPage() {
   const shouldFollowChatRef = useRef(true);
   const lastRunRequestRef = useRef<AgentRunRequest | null>(null);
   const lastRunMessageIdsRef = useRef<AgentRunMessageIds | null>(null);
+  const lastRunActionIntentRef = useRef<AgentActionIntent | null>(null);
 
   useEffect(() => {
     if (routeSessionId) {
@@ -642,7 +644,7 @@ export default function AgentPage() {
 
   const streamAgentMessage = (
     content: string,
-    options?: { goal?: AgentGoal; providerId?: string; retrying?: boolean },
+    options?: { goal?: AgentGoal; providerId?: string; retrying?: boolean; actionIntent?: AgentActionIntent | null },
   ) => {
     if (!sessionId || !interview || !content || runStatus === 'running') {
       if (!sessionId || !interview) setRunError('请先从面试详情页进入，并加载一份面试报告');
@@ -651,6 +653,9 @@ export default function AgentPage() {
 
     const runGoal = options?.goal ?? goal;
     const runProviderId = options?.providerId ?? providerId;
+    const actionIntent = options?.actionIntent
+      ?? (options?.retrying ? lastRunActionIntentRef.current : null);
+    lastRunActionIntentRef.current = actionIntent;
     const runRequest: AgentRunRequest = {
       goal: runGoal,
       message: content,
@@ -736,6 +741,18 @@ export default function AgentPage() {
             .then((conversation) => {
               restoreRunProgress(conversation);
               autoProposeGoalAction(conversation, runGoal);
+              if (actionIntent?.type === 'schedule') {
+                const assistantMessage = [...conversation.messages]
+                  .reverse()
+                  .find((message) => message.role === 'assistant' && message.content.trim());
+                if (assistantMessage && !assistantMessage.content.includes('本次任务未完成')) {
+                  openScheduleDraft({
+                    id: Date.now(),
+                    role: 'assistant',
+                    content: assistantMessage.content,
+                  }, actionIntent.suggestedTime);
+                }
+              }
             })
             .catch(() => undefined);
         },
@@ -973,7 +990,7 @@ export default function AgentPage() {
       .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '简历优化编辑版生成失败，请稍后重试'));
   };
 
-  const openScheduleDraft = (message: AgentMessage) => {
+  const openScheduleDraft = (message: AgentMessage, suggestedTime?: string) => {
     if (!sessionId || !agentSessionId || message.role !== 'assistant' || !message.content.trim()) {
       setActionNotice('当前 Agent 会话还未建立，暂时不能安排复习日程');
       return;
@@ -983,7 +1000,7 @@ export default function AgentPage() {
       messageId: message.id,
       companyName: fallbackTitle,
       position: interview?.skillId || '面试复盘',
-      interviewTime: defaultScheduleTime(),
+      interviewTime: suggestedTime || defaultScheduleTime(),
       notes: `基于 Agent 复盘安排：${message.content.trim().replace(/\s+/g, ' ').slice(0, 1800)}`,
     });
     setActionNotice('请填写复习日程后生成待确认动作');
@@ -1286,7 +1303,7 @@ export default function AgentPage() {
       setRunError(`单条消息不能超过 ${MAX_AGENT_MESSAGE_CHARS} 个字符，请分多次发送`);
       return;
     }
-    streamAgentMessage(content);
+    streamAgentMessage(content, { actionIntent: detectAgentActionIntent(content) });
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {

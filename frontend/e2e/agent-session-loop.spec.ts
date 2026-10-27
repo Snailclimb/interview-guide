@@ -175,6 +175,9 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
         body: envelope(id === 'thread-b' ? threadB : threadA),
       });
     });
+    await page.route('**/api/agent/interview-sessions/interview-1/actions*', async route => {
+      await route.fulfill({ contentType: 'application/json', body: envelope([]) });
+    });
     await page.route('**/api/agent/interview-sessions/interview-1/messages/stream', async route => {
       const events = [
         ['agent-step', { type: 'step', step: 'context', status: 'completed' }],
@@ -230,6 +233,42 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page.getByText('执行观察：已读取面试报告；识别到 1 个待关注项。')).toBeVisible();
   });
 
+  test('自然语言安排复习时自动打开日程草稿并等待确认', async ({ page }) => {
+    await page.route('**/api/agent/interview-sessions/interview-1/conversations/thread-a/actions/interview-schedule-draft', async route => {
+      const payload = route.request().postDataJSON() as { companyName: string; position: string; interviewTime: string };
+      expect(payload.companyName).toBeTruthy();
+      expect(payload.position).toBeTruthy();
+      expect(payload.interviewTime).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+      await route.fulfill({
+        contentType: 'application/json',
+        body: envelope({
+          actionId: 'schedule-action-1',
+          interviewSessionId: 'interview-1',
+          agentSessionId: 'thread-a',
+          toolId: 'interview.schedule.create',
+          riskLevel: 'BUSINESS_WRITE',
+          status: 'PROPOSED',
+          title: '安排复习日程',
+          previewText: '确认后创建复习日程',
+          draftContent: `主题：${payload.companyName}\n岗位：${payload.position}\n时间：${payload.interviewTime}`,
+          resultSummary: null,
+        }),
+      });
+    });
+
+    await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
+    const input = page.getByPlaceholder('问问你的面试教练...');
+    await input.fill('帮我安排明天下午3点复习 Redis');
+    await input.press('Enter');
+
+    await expect(page.getByLabel('复习日程草稿表单')).toBeVisible();
+    await expect(page.getByLabel('复习时间')).toHaveValue(/T15:00$/);
+    await page.getByRole('button', { name: '生成待确认日程' }).click();
+    const scheduleAction = page.getByLabel('Agent 动作草稿');
+    await expect(scheduleAction.getByText('安排复习日程', { exact: true })).toBeVisible();
+    await expect(scheduleAction.getByText('待确认', { exact: true })).toBeVisible();
+  });
+
   test('SSE 失败后保留原请求，重试成功且不重复显示失败消息', async ({ page }) => {
     await page.unroute('**/api/agent/interview-sessions/interview-1/messages/stream');
     let attempts = 0;
@@ -272,7 +311,7 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await page.getByLabel('编辑记忆：Redis 缓存').click();
     await page.getByLabel('编辑记忆内容').fill('Redis 缓存穿透与击穿');
     await page.getByLabel('编辑记忆适用方向').fill('java-backend');
-    await page.getByRole('button', { name: '保存' }).click();
+    await page.getByRole('button', { name: '保存', exact: true }).click();
     await expect(page.getByLabel('删除记忆：Redis 缓存穿透与击穿')).toBeVisible();
 
     page.once('dialog', dialog => dialog.accept());
