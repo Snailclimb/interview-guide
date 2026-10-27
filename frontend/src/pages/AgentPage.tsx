@@ -128,10 +128,13 @@ function formatAuditAction(action: string) {
     ACTION_PROPOSED: '提出动作',
     ACTION_CONFIRMED: '确认动作',
     ACTION_RUNNING: '执行动作',
+    ACTION_RETRY: '重试动作',
     ACTION_SUCCEEDED: '动作完成',
     ACTION_DRAFT_UPDATED: '修改动作草稿',
     ACTION_CANCELLED: '取消动作',
     ACTION_FAILED: '动作失败',
+    TRAINING_TASK_CREATED: '创建训练任务',
+    TRAINING_TASK_STATUS_UPDATED: '更新训练任务',
   };
   return labels[action] || action;
 }
