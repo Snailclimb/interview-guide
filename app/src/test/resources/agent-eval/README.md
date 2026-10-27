@@ -33,10 +33,15 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\agent-quality-collector.
 ```
 
 脚本默认使用 `pixel` 提供方并执行完整语料；可传入 `-ProviderId` 切换到候选环境中已启用的
-提供方，也可传入 `-MaxSamples 1` 做低成本烟测。它只归档自己创建的 Agent
-线程，并删除自己创建的临时面试；真实模型调用会产生费用，应优先在候选环境执行。采集器
+提供方，也可传入 `-MaxSamples 1` 做低成本烟测。`-CreateInterview` 创建的是随机题目，
+只适合验证接口、模型、SSE、持久化和用量链路，不保证满足语料中的具体事实或 RAG 条件。
+它只归档自己创建的 Agent 线程，并删除自己创建的临时面试；真实模型调用会产生费用，应优先在候选环境执行。采集器
 发现 SSE 业务错误、请求未进入 `RUNNING` 或最终状态不是 `COMPLETED` 时会立即失败，不会把
 空回答写成成功样本。
+
+要运行质量门禁，必须传入已经准备好的确定性 `-InterviewSessionId`，并确保该面试报告和
+知识库配置与 `dataset-v1.jsonl` 的样本契约匹配。脚本会拒绝组合使用
+`-RunQualityGate -CreateInterview`，避免把随机面试误报成质量回归。
 
 执行真实评测并生成 `JSON + Markdown` 报告：
 
