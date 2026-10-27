@@ -740,7 +740,8 @@ export default function AgentPage() {
           void agentApi.getConversation(sessionId, agentSessionId)
             .then((conversation) => {
               restoreRunProgress(conversation);
-              autoProposeGoalAction(conversation, runGoal);
+              // 明确的自然语言动作优先，避免“创建训练任务”同时被当前下拉目标再次生成训练计划草稿。
+              if (!actionIntent) autoProposeGoalAction(conversation, runGoal);
               autoProposeActionIntent(conversation, actionIntent);
               if (actionIntent?.type === 'schedule') {
                 const assistantMessage = [...conversation.messages]
