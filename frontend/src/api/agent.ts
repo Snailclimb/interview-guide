@@ -79,6 +79,14 @@ export const agentApi = {
     );
   },
 
+  updateActionDraft(actionId: string, content: string): Promise<AgentAction> {
+    return request.patch<AgentAction>(
+      `/api/agent/actions/${encodeURIComponent(actionId)}`,
+      { content },
+      { headers: agentHeaders() },
+    );
+  },
+
   cancelAction(actionId: string): Promise<AgentAction> {
     return request.post<AgentAction>(
       `/api/agent/actions/${encodeURIComponent(actionId)}/cancel`,

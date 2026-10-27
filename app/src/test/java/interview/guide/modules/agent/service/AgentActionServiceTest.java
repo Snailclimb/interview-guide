@@ -153,6 +153,30 @@ class AgentActionServiceTest {
         );
     }
 
+    @Test
+    @DisplayName("待确认草稿允许人工编辑，确认后不允许修改")
+    void editsOnlyProposedDraft() {
+        AgentActionService service = new AgentActionService(repository, auditService);
+        AgentActionRequestEntity action = draft("action-1", "user-1");
+        when(repository.findByActionIdForUpdate("action-1")).thenReturn(Optional.of(action));
+        when(repository.save(any(AgentActionRequestEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var updated = service.updateDraft("action-1", "user-1", "人工补充：每天完成一道题");
+
+        assertThat(updated.draftContent()).isEqualTo("人工补充：每天完成一道题");
+        assertThat(updated.status()).isEqualTo(AgentActionStatus.PROPOSED);
+        verify(auditService).recordQuietly(
+            "user-1", "interview-1", "agent-1", null,
+            "ACTION_DRAFT_UPDATED", "agent-action", "action-1", "PROPOSED"
+        );
+
+        action.setStatus(AgentActionStatus.SUCCEEDED);
+        assertThatThrownBy(() -> service.updateDraft("action-1", "user-1", "再次修改"))
+            .isInstanceOf(BusinessException.class)
+            .hasMessageContaining("只有待确认");
+    }
+
     private AgentActionRequestEntity draft(String actionId, String owner) {
         return AgentActionRequestEntity.builder()
             .actionId(actionId)

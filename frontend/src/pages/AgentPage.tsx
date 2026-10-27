@@ -233,6 +233,8 @@ export default function AgentPage() {
   const [actionsLoading, setActionsLoading] = useState(false);
   const [actionNotice, setActionNotice] = useState('');
   const [actionFeedback, setActionFeedback] = useState<Record<string, string>>({});
+  const [editingActionId, setEditingActionId] = useState<string | null>(null);
+  const [editingActionContent, setEditingActionContent] = useState('');
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [editingMemoryContent, setEditingMemoryContent] = useState('');
   const [editingMemoryScope, setEditingMemoryScope] = useState('');
@@ -398,6 +400,8 @@ export default function AgentPage() {
     setActions([]);
     setActionNotice('');
     setActionFeedback({});
+    setEditingActionId(null);
+    setEditingActionContent('');
     setSteps(createInitialSteps());
     setMessages([createWelcomeMessage()]);
     setInput('');
@@ -799,6 +803,31 @@ export default function AgentPage() {
     const markdown = `# ${action.title}\n\n${action.draftContent.trim()}\n\n---\n\n来源：Agent 动作草稿\n状态：${formatAgentActionStatus(action.status)}\n说明：${action.previewText}`;
     downloadBlob(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }), `${safeTitle}.md`);
     setActionFeedback((current) => ({ ...current, [action.actionId]: '已下载 Markdown' }));
+  };
+
+  const startEditAgentAction = (action: AgentAction) => {
+    if (action.status !== 'PROPOSED') return;
+    setEditingActionId(action.actionId);
+    setEditingActionContent(action.draftContent);
+    setActionNotice('');
+  };
+
+  const cancelEditAgentAction = () => {
+    setEditingActionId(null);
+    setEditingActionContent('');
+  };
+
+  const saveEditedAgentAction = (actionId: string) => {
+    if (!editingActionContent.trim()) return;
+    setActionNotice('正在保存人工修改...');
+    void agentApi.updateActionDraft(actionId, editingActionContent)
+      .then((updated) => {
+        setActions((current) => current.map((item) => item.actionId === updated.actionId ? updated : item));
+        setActionNotice('人工修改已保存，可以继续确认动作');
+        cancelEditAgentAction();
+        void loadAuditEvents();
+      })
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '草稿修改失败，请稍后重试'));
   };
 
   const clearLongTermMemory = () => {
@@ -1503,11 +1532,34 @@ export default function AgentPage() {
                         <span className="text-[11px] text-slate-400">{formatDate(action.createdAt)}</span>
                       </div>
                       <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">{action.previewText}</p>
-                      <details className="mt-2">
+                      <details className="mt-2" open={editingActionId === action.actionId || undefined}>
                         <summary className="cursor-pointer text-xs font-medium text-primary-600 dark:text-primary-300">查看草稿内容</summary>
-                        <div className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs leading-6 text-slate-600 dark:bg-slate-900/70 dark:text-slate-300">
-                          {action.draftContent}
-                        </div>
+                        {editingActionId === action.actionId ? (
+                          <div className="mt-2 space-y-2">
+                            <textarea
+                              value={editingActionContent}
+                              onChange={(event) => setEditingActionContent(event.target.value)}
+                              maxLength={12000}
+                              rows={8}
+                              className="dark-input w-full resize-y rounded-lg px-3 py-2 text-xs leading-6 outline-none"
+                              aria-label={`编辑${action.title}`}
+                            />
+                            <div className="flex justify-end gap-2">
+                              <button onClick={cancelEditAgentAction} className="btn-secondary rounded-lg px-2.5 py-1.5 text-xs">取消</button>
+                              <button
+                                onClick={() => saveEditedAgentAction(action.actionId)}
+                                disabled={!editingActionContent.trim()}
+                                className="btn-primary rounded-lg px-2.5 py-1.5 text-xs disabled:opacity-50"
+                              >
+                                保存修改
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs leading-6 text-slate-600 dark:bg-slate-900/70 dark:text-slate-300">
+                            {action.draftContent}
+                          </div>
+                        )}
                       </details>
                       {action.resultSummary ? <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">{action.resultSummary}</p> : null}
                       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1525,6 +1577,15 @@ export default function AgentPage() {
                           <Download className="h-3.5 w-3.5" />
                           下载 Markdown
                         </button>
+                        {action.status === 'PROPOSED' && editingActionId !== action.actionId ? (
+                          <button
+                            onClick={() => startEditAgentAction(action)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 transition-colors hover:border-primary-300 hover:text-primary-600 dark:border-slate-600 dark:text-slate-300 dark:hover:text-primary-300"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            编辑草稿
+                          </button>
+                        ) : null}
                         {actionFeedback[action.actionId] ? (
                           <span className="text-[11px] text-emerald-600 dark:text-emerald-300">
                             {actionFeedback[action.actionId]}

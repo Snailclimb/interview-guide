@@ -12,6 +12,7 @@ import interview.guide.modules.agent.model.CreateAgentConversationRequest;
 import interview.guide.modules.agent.model.RenameAgentConversationRequest;
 import interview.guide.modules.agent.model.AgentActionResponse;
 import interview.guide.modules.agent.model.CreateAgentDraftActionRequest;
+import interview.guide.modules.agent.model.UpdateAgentActionDraftRequest;
 import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.AgentActionService;
 import interview.guide.modules.agent.service.AgentMemoryService;
@@ -222,6 +223,18 @@ public class AgentController {
     ) {
         return Result.success(actionService.confirm(
             actionId, authIdentityService.requireIdentity(ownerKey)
+        ));
+    }
+
+    @PatchMapping("/api/agent/actions/{actionId}")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 20)
+    public Result<AgentActionResponse> updateActionDraft(
+        @PathVariable String actionId,
+        @Valid @RequestBody UpdateAgentActionDraftRequest request,
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        return Result.success(actionService.updateDraft(
+            actionId, authIdentityService.requireIdentity(ownerKey), request.content()
         ));
     }
 

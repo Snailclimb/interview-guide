@@ -52,10 +52,11 @@ Agent 自身的会话、记忆、审计、用量和 Loop 检查点属于内部�
 - `GET /api/agent/interview-sessions/{sessionId}/actions`：查询当前用户自己的动作草稿；
 - `POST .../actions/training-plan-draft`：生成 `PROPOSED` 状态的训练计划草稿；
 - `POST .../actions/practice-questions-draft`：生成 `PROPOSED` 状态的练习题草稿；
+- `PATCH /api/agent/actions/{actionId}`：仅允许用户在 `PROPOSED` 状态下人工编辑草稿；
 - `POST /api/agent/actions/{actionId}/confirm`：明确确认后保存草稿；
 - `POST /api/agent/actions/{actionId}/cancel`：取消待确认动作。
 
-草稿保存后，Agent 页面提供复制和 Markdown 下载；这是前端对已授权草稿结果的使用，不会新增业务写入权限。
+草稿保存后，Agent 页面提供人工编辑、复制和 Markdown 下载；这是对已授权草稿结果的使用，不会新增原始业务数据写入权限。
 
 当前“保存草稿”本身就是低风险执行结果，不会修改原始面试报告、简历或题库。后续动作必须复用同一动作资源和状态机，不能让模型通过自由文本拼接数据库写操作。
 

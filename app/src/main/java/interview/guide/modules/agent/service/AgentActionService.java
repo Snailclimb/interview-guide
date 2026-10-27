@@ -164,6 +164,19 @@ public class AgentActionService {
     }
 
     @Transactional
+    public AgentActionResponse updateDraft(String actionId, String ownerKey, String content) {
+        AgentActionRequestEntity entity = findOwnedForUpdate(actionId, ownerKey);
+        if (entity.getStatus() != AgentActionStatus.PROPOSED) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "只有待确认的 Agent 草稿可以编辑");
+        }
+        entity.setDraftContent(normalizeContent(content));
+        entity.setResultSummary(null);
+        AgentActionRequestEntity saved = repository.save(entity);
+        audit(saved, "ACTION_DRAFT_UPDATED", AgentActionStatus.PROPOSED.name());
+        return AgentActionResponse.from(saved);
+    }
+
+    @Transactional
     public AgentActionResponse cancel(String actionId, String ownerKey) {
         AgentActionRequestEntity entity = findOwnedForUpdate(actionId, ownerKey);
         if (entity.getStatus() == AgentActionStatus.SUCCEEDED) {
