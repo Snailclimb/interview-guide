@@ -162,6 +162,15 @@ function suggestInterviewTitle(content: string, fallback: string) {
   return candidate.slice(0, 120);
 }
 
+function stableActionKey(kind: 'plan' | 'practice', agentSessionId: string, content: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < content.length; index += 1) {
+    hash ^= content.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `auto:${kind}:${agentSessionId}:${(hash >>> 0).toString(16)}`;
+}
+
 function getScoreTone(score: number | null | undefined) {
   if (score == null) return 'text-slate-400';
   if (score >= 80) return 'text-emerald-500';
@@ -684,7 +693,10 @@ export default function AgentPage() {
           void loadLongTermMemory();
           void loadAuditEvents();
           void agentApi.getConversation(sessionId, agentSessionId)
-            .then(restoreRunProgress)
+            .then((conversation) => {
+              restoreRunProgress(conversation);
+              autoProposeGoalAction(conversation, runGoal);
+            })
             .catch(() => undefined);
         },
         onError: (error) => {
@@ -765,13 +777,39 @@ export default function AgentPage() {
       ? agentApi.proposePracticeQuestionsDraft
       : agentApi.proposeTrainingPlanDraft;
     void request(
-      sessionId, agentSessionId, message.content, `${kind}:${agentSessionId}:${message.id}`,
+      sessionId, agentSessionId, message.content, stableActionKey(kind, agentSessionId, message.content),
     )
       .then((action) => {
         setActions((current) => [action, ...current.filter((item) => item.actionId !== action.actionId)]);
         setActionNotice(`${isPractice ? '练习题' : '训练计划'}草稿已生成，请在下方确认后保存`);
       })
       .catch((error: unknown) => setActionNotice(getErrorMessage(error) || `${isPractice ? '练习题' : '训练计划'}草稿生成失败，请稍后重试`));
+  };
+
+  const autoProposeGoalAction = (conversation: AgentConversationResponse, runGoal: AgentGoal) => {
+    if ((runGoal !== 'plan' && runGoal !== 'practice') || !conversation.agentSessionId || !sessionId) return;
+    const assistantMessage = [...conversation.messages]
+      .reverse()
+      .find((message) => message.role === 'assistant' && message.content.trim());
+    if (!assistantMessage || assistantMessage.content.includes('本次任务未完成')) return;
+    const actionRequest = runGoal === 'practice'
+      ? agentApi.proposePracticeQuestionsDraft
+      : agentApi.proposeTrainingPlanDraft;
+    const kind = runGoal === 'practice' ? 'practice' : 'plan';
+    void actionRequest(
+      sessionId,
+      conversation.agentSessionId,
+      assistantMessage.content,
+      stableActionKey(kind, conversation.agentSessionId, assistantMessage.content),
+    )
+      .then((action) => {
+        setActions((current) => [action, ...current.filter((item) => item.actionId !== action.actionId)]);
+        setActionNotice(`本轮已自动生成${action.title}，请确认后保存`);
+      })
+      .catch((error: unknown) => {
+        // 动作建议是附加能力，不能让已完成的 Agent 回答变成失败。
+        setActionNotice(getErrorMessage(error) || '动作草稿生成失败，可稍后手动生成');
+      });
   };
 
   const saveMemoryAction = (message: AgentMessage) => {
