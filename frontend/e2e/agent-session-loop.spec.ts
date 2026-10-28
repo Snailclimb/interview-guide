@@ -301,6 +301,69 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(taskAction.getByText('待确认', { exact: true })).toBeVisible();
   });
 
+  test('确认的练习草稿可以带着 Agent 动作进入专项文字面试', async ({ page }) => {
+    const actionId = 'practice-action-confirmed';
+    await page.unroute('**/api/agent/interview-sessions/interview-1/actions*');
+    await page.route('**/api/agent/interview-sessions/interview-1/actions*', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: envelope([{
+          actionId,
+          interviewSessionId: 'interview-1',
+          agentSessionId: 'thread-a',
+          toolId: 'practice.questions.draft',
+          riskLevel: 'DRAFT_WRITE',
+          status: 'SUCCEEDED',
+          title: '练习题草稿',
+          previewText: '已确认的练习重点',
+          draftContent: '重点练习 Redis 缓存穿透与击穿',
+          resultSummary: '练习题草稿已保存',
+          createdAt: '2026-10-24T09:06:00',
+          updatedAt: '2026-10-24T09:06:00',
+        }]),
+      });
+    });
+
+    let createPayload: Record<string, unknown> | null = null;
+    await page.unroute('**/api/interview/sessions');
+    await page.route('**/api/interview/sessions', async route => {
+      if (route.request().method() !== 'POST') {
+        await route.fulfill({ contentType: 'application/json', body: envelope(sessions) });
+        return;
+      }
+      createPayload = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: envelope({
+          sessionId: 'focused-interview-1',
+          resumeText: '',
+          totalQuestions: 3,
+          currentQuestionIndex: 0,
+          questions: [{
+            questionIndex: 0,
+            question: 'Redis 缓存穿透如何处理？',
+            type: 'JAVA',
+            category: 'Redis',
+            userAnswer: null,
+            score: null,
+            feedback: null,
+          }],
+          status: 'CREATED',
+        }),
+      });
+    });
+
+    await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
+    await page.getByRole('button', { name: '开始专项练习' }).click();
+    await expect.poll(() => createPayload).not.toBeNull();
+    expect(createPayload).toMatchObject({
+      agentActionId: actionId,
+      skillId: 'java-backend',
+      forceCreate: true,
+    });
+    await expect(page).toHaveURL(/\/interview\/session\/focused-interview-1$/);
+  });
+
   test('SSE 失败后保留原请求，重试成功且不重复显示失败消息', async ({ page }) => {
     await page.unroute('**/api/agent/interview-sessions/interview-1/messages/stream');
     let attempts = 0;
