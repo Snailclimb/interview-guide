@@ -99,6 +99,7 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
         jobScope: 'java-backend', confidence: 0.9, updatedAt: '2026-10-24T09:05:00', expiresAt: '2027-04-22T09:05:00',
       }],
     };
+    let auditRequestCount = 0;
 
     await page.route('**/api/interview/sessions', async route => {
       await route.fulfill({ contentType: 'application/json', body: envelope(sessions) });
@@ -123,6 +124,11 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
       await route.fulfill({ contentType: 'application/json', body: envelope(memory) });
     });
     await page.route('**/api/agent/audit/events*', async route => {
+      auditRequestCount += 1;
+      if (auditRequestCount === 1) {
+        await route.fulfill({ status: 503, contentType: 'text/plain', body: 'temporary unavailable' });
+        return;
+      }
       await route.fulfill({ contentType: 'application/json', body: envelope([
         {
           interviewSessionId: 'interview-1', agentSessionId: 'thread-a',
@@ -219,6 +225,21 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page).toHaveURL(/agentSessionId=thread-new/);
     await expect(page.getByText('新 Agent 对话', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: '新建 Agent 对话' })).toBeEnabled();
+  });
+
+  test('面试报告失效时不允许创建无归属的 Agent 对话', async ({ page }) => {
+    await page.route('**/api/interview/sessions/missing/details', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 3001, message: '面试会话不存在', data: null }),
+      });
+    });
+
+    await page.goto('/agent?sessionId=missing');
+
+    const createButton = page.getByRole('button', { name: '新建 Agent 对话' });
+    await expect(createButton).toBeDisabled();
+    await expect(page.getByText('这份面试记录不在当前环境或已失效，请从当前环境的面试中心重新选择。')).toBeVisible();
   });
 
   test('快速重复点击新建只创建一个 Agent 对话', async ({ page }) => {

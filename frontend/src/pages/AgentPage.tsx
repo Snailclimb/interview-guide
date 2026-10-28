@@ -72,6 +72,8 @@ import { createRequestId } from '../utils/requestId';
 type RunStatus = 'idle' | 'running' | 'completed' | 'error' | 'cancelled';
 type StepStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
 
+const AUDIT_RETRY_DELAYS_MS = [500, 1000, 2000];
+
 interface AgentStep {
   id: string;
   title: string;
@@ -463,9 +465,6 @@ export default function AgentPage() {
     clearReconciliationTimer();
     lastRunRequestRef.current = null;
     lastRunMessageIdsRef.current = null;
-    setInterview(null);
-    setContextError('');
-    setLoadingContext(Boolean(sessionId));
     setRunStatus('idle');
     setRunError('');
     setRunNotice('');
@@ -484,6 +483,13 @@ export default function AgentPage() {
   }, [agentSessionId, clearReconciliationTimer, sessionId]);
 
   useEffect(() => {
+    // 面试上下文属于报告，不属于 Agent 线程；同一份报告切换线程时必须保留它。
+    setInterview(null);
+    setContextError('');
+    setLoadingContext(Boolean(sessionId));
+  }, [sessionId]);
+
+  useEffect(() => {
     if (!sessionId) {
       setLoadingContext(false);
       return;
@@ -497,7 +503,12 @@ export default function AgentPage() {
         if (!cancelled) setInterview(detail);
       })
       .catch((error: unknown) => {
-        if (!cancelled) setContextError(getErrorMessage(error) || '无法加载面试上下文');
+        if (!cancelled) {
+          const message = getErrorMessage(error);
+          setContextError(message === '面试会话不存在' || message === '禁止访问'
+            ? '这份面试记录不在当前环境或已失效，请从当前环境的面试中心重新选择。'
+            : message || '无法加载面试上下文');
+        }
       })
       .finally(() => {
         if (!cancelled) setLoadingContext(false);
@@ -532,6 +543,11 @@ export default function AgentPage() {
 
   useEffect(() => {
     if (!sessionId) return;
+
+    // 只有面试报告确认加载成功后，才允许读取/创建其下的 Agent 对话。
+    // 否则旧环境或已失效的 sessionId 会让页面显示可操作按钮，随后所有创建请求
+    // 都会被后端以“面试会话不存在/无权访问”拒绝。
+    if (!interview) return;
 
     let cancelled = false;
     void (async () => {
@@ -589,7 +605,7 @@ export default function AgentPage() {
       cancelled = true;
       clearReconciliationTimer();
     };
-  }, [agentSessionId, reconcileConversation, rememberRetryableRequest, restoreConversationMessages, restoreRunProgress, routeAgentSessionId, sessionId, setSearchParams]);
+  }, [agentSessionId, interview, reconcileConversation, rememberRetryableRequest, restoreConversationMessages, restoreRunProgress, routeAgentSessionId, sessionId, setSearchParams]);
 
   useEffect(() => {
     if (!sessionId || !agentSessionId || runStatus !== 'running') return;
@@ -800,14 +816,28 @@ export default function AgentPage() {
   const loadAuditEvents = useCallback(() => {
     setAuditLoading(true);
     setAuditNotice('');
-    return agentApi.getAuditEvents(20)
+    let attempt = 0;
+    const load = (): Promise<void> => agentApi.getAuditEvents(20)
       .then((value) => setAuditEvents(value))
-      .catch(() => setAuditNotice('活动记录读取失败，请稍后重试'))
+      .catch((error: unknown) => {
+        if (attempt < AUDIT_RETRY_DELAYS_MS.length) {
+          const delay = AUDIT_RETRY_DELAYS_MS[attempt];
+          attempt += 1;
+          return new Promise<void>((resolve) => {
+            window.setTimeout(resolve, delay);
+          }).then(load);
+        }
+        const message = getErrorMessage(error);
+        setAuditNotice(message === '请先登录'
+          ? '登录状态已失效，请重新登录后再查看活动记录'
+          : '活动记录读取失败，请稍后重试');
+      });
+    return load()
       .finally(() => setAuditLoading(false));
   }, []);
 
   const loadAgentActions = useCallback(() => {
-    if (!sessionId) {
+    if (!sessionId || !interview) {
       setActions([]);
       return Promise.resolve();
     }
@@ -816,7 +846,7 @@ export default function AgentPage() {
       .then((value) => setActions(value))
       .catch(() => setActionNotice('待确认动作读取失败，请稍后重试'))
       .finally(() => setActionsLoading(false));
-  }, [agentSessionId, sessionId]);
+  }, [agentSessionId, interview, sessionId]);
 
   const loadTrainingTasks = useCallback(() => {
     setTrainingTasksLoading(true);
@@ -1415,7 +1445,7 @@ export default function AgentPage() {
   };
 
   const createAgentConversation = async (): Promise<AgentConversationSummary | void> => {
-    if (!sessionId || runStatus === 'running') return;
+    if (!sessionId || !interview || runStatus === 'running') return;
     const conversation = await agentApi.createConversation(sessionId);
     rememberAgentThreadId(conversation.agentSessionId);
     setSearchParams({ sessionId, agentSessionId: conversation.agentSessionId });
@@ -1645,6 +1675,7 @@ export default function AgentPage() {
           onSelectAgentConversation={selectAgentConversation}
           onCreateAgentConversation={createAgentConversation}
           onClearAgentConversation={clearAgentConversation}
+          disabled={runStatus === 'running' || !interview}
         />
 
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)] gap-6 items-start min-w-0">
