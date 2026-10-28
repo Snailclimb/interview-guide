@@ -9,6 +9,8 @@ import interview.guide.modules.agent.model.AgentRunUsage;
 import interview.guide.modules.agent.model.AgentRunStatus;
 import interview.guide.modules.agent.model.AgentSource;
 import interview.guide.modules.agent.repository.AgentChatMessageRepository;
+import interview.guide.modules.agent.repository.AgentConversationCreationRequestRepository;
+import interview.guide.modules.agent.model.AgentConversationCreationRequestEntity;
 import interview.guide.modules.agent.repository.AgentChatSessionRepository;
 import java.util.List;
 import java.util.Optional;
@@ -26,6 +28,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -45,6 +48,9 @@ class AgentConversationServiceTest {
 
     @Mock
     private AgentAuditService auditService;
+
+    @Mock
+    private AgentConversationCreationRequestRepository creationRequestRepository;
 
     @InjectMocks
     private AgentConversationService service;
@@ -482,6 +488,44 @@ class AgentConversationServiceTest {
         assertThat(first.interviewSessionId()).isEqualTo("interview-1");
         assertThat(first.title()).isEqualTo("复盘线程");
         assertThat(second.title()).isEqualTo("训练线程");
+    }
+
+    @Test
+    @DisplayName("同一创建请求重试时复用已有 Agent 对话，不重复创建线程")
+    void reusesConversationForRepeatedCreationRequest() {
+        AgentConversationCreationRequestEntity request = AgentConversationCreationRequestEntity.builder()
+            .ownerKey("user-1")
+            .interviewSessionId("interview-1")
+            .idempotencyKey("create-1")
+            .agentSessionId("agent-existing")
+            .build();
+        AgentChatSessionEntity existing = AgentChatSessionEntity.builder()
+            .id(12L)
+            .interviewSessionId("interview-1")
+            .agentSessionId("agent-existing")
+            .ownerKey("user-1")
+            .title("第一次创建")
+            .runStatus(AgentRunStatus.IDLE)
+            .build();
+        when(creationRequestRepository.tryClaim(
+            eq("user-1"), eq("interview-1"), eq("create-1"), any()
+        ))
+            .thenReturn(0);
+        when(creationRequestRepository.findByOwnerKeyAndIdempotencyKey("user-1", "create-1"))
+            .thenReturn(Optional.of(request));
+        when(sessionRepository.findByAgentSessionId("agent-existing"))
+            .thenReturn(Optional.of(existing));
+
+        AgentConversationSummary result = service.createConversation(
+            "interview-1", "重试标题", "user-1", "create-1"
+        );
+
+        assertThat(result.agentSessionId()).isEqualTo("agent-existing");
+        assertThat(result.title()).isEqualTo("第一次创建");
+        verify(sessionRepository, never()).save(any(AgentChatSessionEntity.class));
+        verify(auditService, never()).recordQuietly(
+            any(), any(), any(), any(), any(), any(), any(), any()
+        );
     }
 
     @Test

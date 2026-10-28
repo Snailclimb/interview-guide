@@ -337,6 +337,7 @@ export default function AgentPage() {
   const lastRunRequestRef = useRef<AgentRunRequest | null>(null);
   const lastRunMessageIdsRef = useRef<AgentRunMessageIds | null>(null);
   const lastRunActionIntentRef = useRef<AgentActionIntent | null>(null);
+  const createConversationRequestRef = useRef<{ sessionId: string; key: string } | null>(null);
 
   useEffect(() => {
     if (routeSessionId) {
@@ -494,6 +495,9 @@ export default function AgentPage() {
     setSteps(createInitialSteps());
     setMessages([createWelcomeMessage()]);
     setInput('');
+    if (createConversationRequestRef.current?.sessionId !== sessionId) {
+      createConversationRequestRef.current = null;
+    }
   }, [agentSessionId, clearReconciliationTimer, sessionId]);
 
   useEffect(() => {
@@ -604,7 +608,7 @@ export default function AgentPage() {
         // 首次打开某份面试报告时建立一个默认线程，确保第一条消息也能绑定稳定的线程 ID。
         if (!conversation.agentSessionId) {
           const existing = await agentApi.listConversations(sessionId);
-          const target = existing[0] ?? await agentApi.createConversation(sessionId);
+          const target = existing[0] ?? await agentApi.createConversation(sessionId, undefined, createRequestId());
           conversation = await agentApi.getConversation(sessionId, target.agentSessionId);
         }
         if (cancelled) return;
@@ -1512,10 +1516,20 @@ export default function AgentPage() {
 
   const createAgentConversation = async (): Promise<AgentConversationSummary | void> => {
     if (!sessionId || !interview || runStatus === 'running') return;
-    const conversation = await agentApi.createConversation(sessionId);
-    rememberAgentThreadId(conversation.agentSessionId);
-    setSearchParams({ sessionId, agentSessionId: conversation.agentSessionId });
-    return conversation;
+    const pending = createConversationRequestRef.current?.sessionId === sessionId
+      ? createConversationRequestRef.current
+      : { sessionId, key: createRequestId() };
+    createConversationRequestRef.current = pending;
+    try {
+      const conversation = await agentApi.createConversation(sessionId, undefined, pending.key);
+      createConversationRequestRef.current = null;
+      rememberAgentThreadId(conversation.agentSessionId);
+      setSearchParams({ sessionId, agentSessionId: conversation.agentSessionId });
+      return conversation;
+    } catch (error) {
+      // 保留同一个键，让按钮重试时可以复用服务端可能已经提交成功的创建请求。
+      throw error;
+    }
   };
 
   useEffect(() => {

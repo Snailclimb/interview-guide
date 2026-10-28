@@ -282,10 +282,12 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
 
   test('快速重复点击新建只创建一个 Agent 对话', async ({ page }) => {
     let createRequests = 0;
+    let createRequestBody: { idempotencyKey?: string } | null = null;
     page.on('request', request => {
       if (request.method() === 'POST'
         && request.url().endsWith('/api/agent/interview-sessions/interview-1/conversations')) {
         createRequests += 1;
+        createRequestBody = request.postDataJSON() as { idempotencyKey?: string };
       }
     });
 
@@ -295,6 +297,36 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
 
     await expect(page).toHaveURL(/agentSessionId=thread-new/);
     expect(createRequests).toBe(1);
+    expect(createRequestBody?.idempotencyKey).toBeTruthy();
+  });
+
+  test('新建请求超时后重试复用同一个幂等键', async ({ page }) => {
+    let createRequests = 0;
+    const idempotencyKeys: string[] = [];
+    await page.unroute('**/api/agent/interview-sessions/interview-1/conversations');
+    await page.route('**/api/agent/interview-sessions/interview-1/conversations', async route => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      createRequests += 1;
+      idempotencyKeys.push((route.request().postDataJSON() as { idempotencyKey: string }).idempotencyKey);
+      if (createRequests === 1) {
+        await route.fulfill({ status: 503, contentType: 'text/plain', body: 'temporary unavailable' });
+        return;
+      }
+      const created = { agentSessionId: 'thread-recovered', interviewSessionId: 'interview-1', title: '新 Agent 对话', runStatus: 'IDLE', createdAt: '2026-10-24T09:05:00', updatedAt: '2026-10-24T09:05:00' };
+      await route.fulfill({ contentType: 'application/json', body: envelope(created) });
+    });
+
+    await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
+    const createButton = page.getByRole('button', { name: '新建 Agent 对话' });
+    await createButton.click();
+    await expect(page.locator('p.text-rose-500').filter({ hasText: /失败|不可用|请求/ })).toBeVisible();
+    await expect(createButton).toBeEnabled();
+    await createButton.click();
+
+    await expect(page).toHaveURL(/agentSessionId=thread-recovered/);
+    expect(createRequests).toBe(2);
+    expect(idempotencyKeys[0]).toBeTruthy();
+    expect(idempotencyKeys[0]).toBe(idempotencyKeys[1]);
   });
 
   test('从其他页面返回 Agent 时恢复保存的面试报告和线程', async ({ page }) => {

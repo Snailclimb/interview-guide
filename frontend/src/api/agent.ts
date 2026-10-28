@@ -229,10 +229,18 @@ export const agentApi = {
     );
   },
 
-  createConversation(sessionId: string, title?: string): Promise<AgentConversationSummary> {
+  createConversation(
+    sessionId: string,
+    title?: string,
+    idempotencyKey?: string,
+  ): Promise<AgentConversationSummary> {
+    const body = {
+      ...(title?.trim() ? { title: title.trim() } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    };
     return request.post<AgentConversationSummary>(
       `/api/agent/interview-sessions/${encodeURIComponent(sessionId)}/conversations`,
-      title?.trim() ? { title: title.trim() } : undefined,
+      Object.keys(body).length > 0 ? body : undefined,
       { headers: agentHeaders() },
     );
   },

@@ -10,6 +10,8 @@ import interview.guide.modules.agent.model.AgentSource;
 import interview.guide.modules.agent.model.AgentRunStatus;
 import interview.guide.modules.agent.repository.AgentChatMessageRepository;
 import interview.guide.modules.agent.repository.AgentChatSessionRepository;
+import interview.guide.modules.agent.repository.AgentConversationCreationRequestRepository;
+import interview.guide.modules.agent.model.AgentConversationCreationRequestEntity;
 import interview.guide.common.exception.BusinessException;
 import interview.guide.common.exception.ErrorCode;
 import interview.guide.modules.interview.service.InterviewPersistenceService;
@@ -51,6 +53,7 @@ public class AgentConversationService {
     private final InterviewPersistenceService interviewPersistenceService;
     private final AgentAuditService auditService;
     private final AgentUsageService usageService;
+    private final AgentConversationCreationRequestRepository creationRequestRepository;
 
     /** 兼容无 Spring 容器的旧测试和内部调用方。 */
     public AgentConversationService(
@@ -59,7 +62,7 @@ public class AgentConversationService {
         ObjectMapper objectMapper,
         InterviewPersistenceService interviewPersistenceService
     ) {
-        this(sessionRepository, messageRepository, objectMapper, interviewPersistenceService, null, null);
+        this(sessionRepository, messageRepository, objectMapper, interviewPersistenceService, null, null, null);
     }
 
     @Autowired
@@ -69,7 +72,8 @@ public class AgentConversationService {
         ObjectMapper objectMapper,
         InterviewPersistenceService interviewPersistenceService,
         AgentAuditService auditService,
-        AgentUsageService usageService
+        AgentUsageService usageService,
+        AgentConversationCreationRequestRepository creationRequestRepository
     ) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
@@ -77,6 +81,7 @@ public class AgentConversationService {
         this.interviewPersistenceService = interviewPersistenceService;
         this.auditService = auditService;
         this.usageService = usageService;
+        this.creationRequestRepository = creationRequestRepository;
     }
 
     @Transactional
@@ -201,19 +206,47 @@ public class AgentConversationService {
 
     @Transactional
     public AgentConversationSummary createConversation(String interviewSessionId, String title) {
-        return createConversation(interviewSessionId, title, null);
+        return createConversation(interviewSessionId, title, null, null);
     }
 
     @Transactional
     public AgentConversationSummary createConversation(
         String interviewSessionId, String title, String ownerKey
     ) {
+        return createConversation(interviewSessionId, title, ownerKey, null);
+    }
+
+    @Transactional
+    public AgentConversationSummary createConversation(
+        String interviewSessionId, String title, String ownerKey, String requestedIdempotencyKey
+    ) {
         String normalizedOwnerKey = normalizeOwnerKey(ownerKey, false);
         assertInterviewAccess(interviewSessionId, normalizedOwnerKey);
         String normalizedTitle = title == null || title.isBlank() ? "新 Agent 对话" : truncate(title.trim(), 120);
+        String idempotencyKey = normalizeCreationIdempotencyKey(requestedIdempotencyKey);
+        String agentSessionId = UUID.randomUUID().toString();
+
+        if (creationRequestRepository != null && normalizedOwnerKey != null && idempotencyKey != null) {
+            int claimed = creationRequestRepository.tryClaim(
+                normalizedOwnerKey, interviewSessionId, idempotencyKey, agentSessionId
+            );
+            if (claimed == 0) {
+                AgentConversationCreationRequestEntity existingRequest = creationRequestRepository
+                    .findByOwnerKeyAndIdempotencyKey(normalizedOwnerKey, idempotencyKey)
+                    .orElseThrow(() -> new IllegalStateException("Agent 创建请求幂等记录未找到"));
+                if (!interviewSessionId.equals(existingRequest.getInterviewSessionId())) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "Agent 创建请求标识已用于其他面试");
+                }
+                return sessionRepository.findByAgentSessionId(existingRequest.getAgentSessionId())
+                    .filter(existing -> isOwnedBy(existing, normalizedOwnerKey))
+                    .map(this::toSummary)
+                    .orElseThrow(() -> new IllegalStateException("Agent 创建请求对应的会话不存在"));
+            }
+        }
+
         AgentChatSessionEntity session = AgentChatSessionEntity.builder()
             .interviewSessionId(interviewSessionId)
-            .agentSessionId(UUID.randomUUID().toString())
+            .agentSessionId(agentSessionId)
             .title(normalizedTitle)
             .ownerKey(normalizedOwnerKey)
             .memoryKey(normalizedOwnerKey)
@@ -828,6 +861,14 @@ public class AgentConversationService {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "Agent 身份标识不合法");
         }
         return normalized;
+    }
+
+    private String normalizeCreationIdempotencyKey(String key) {
+        if (key == null || key.isBlank()) {
+            return null;
+        }
+        String normalized = key.trim();
+        return normalized.length() > 128 ? normalized.substring(0, 128) : normalized;
     }
 
     private BusinessException accessDenied() {

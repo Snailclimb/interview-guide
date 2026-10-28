@@ -117,7 +117,10 @@ public class AgentController {
     ) {
         String identity = authIdentityService.requireIdentity(ownerKey);
         return Result.success(conversationService.createConversation(
-            sessionId, request == null ? null : request.title(), identity
+            sessionId,
+            request == null ? null : request.title(),
+            identity,
+            request == null ? null : request.idempotencyKey()
         ));
     }
 
