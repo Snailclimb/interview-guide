@@ -200,7 +200,7 @@ pwsh -NoProfile -File .\scripts\agent-restart-acceptance.ps1 -BaseUrl http://loc
 
 本轮先不实现以下能力，避免扩大验收面：
 
-- Token、费用和 Provider 账单级统计；当前只保留运行、重试、Provider、工具调用次数和耗时指标。
+- Provider 账单级、账户级和跨会话累计费用统计；当前已经支持 Agent 单次运行级的输入/输出/总 Token、模型调用次数、耗时和费用摘要。费用只有在配置 Provider 输入/输出单价后才计算，未配置时只展示 Token，不猜测金额。
 - MCP Server/Client 接入；当前已有的 SkillsTool 和 ToolCallingAdvisor 足够支撑面试教练的只读能力。
 - 长期记忆管理页面、记忆编辑和跨面试复杂召回；当前保留轻量结构化摘要和一键清除。
 - Agent 写入训练计划、修改面试报告等高风险工具；需要权限、幂等、审计和回滚设计后再做。
