@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Archive, FileText, Loader2, MessageSquare, Pencil, Plus, RefreshCw } from 'lucide-react';
 import { agentApi } from '../api/agent';
 import { interviewApi, type TextSessionMeta } from '../api/interview';
@@ -64,6 +64,7 @@ export default function AgentSessionList({
   const [conversationError, setConversationError] = useState('');
   const [conversationReloadToken, setConversationReloadToken] = useState(0);
   const [creatingConversation, setCreatingConversation] = useState(false);
+  const creatingConversationRef = useRef(false);
 
   const loadSessions = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -116,7 +117,8 @@ export default function AgentSessionList({
   }, [conversationReloadToken, selectedSessionId]);
 
   const createAgentConversation = async () => {
-    if (!onCreateAgentConversation || creatingConversation) return;
+    if (!onCreateAgentConversation || creatingConversationRef.current) return;
+    creatingConversationRef.current = true;
     setCreatingConversation(true);
     setConversationError('');
     try {
@@ -130,6 +132,7 @@ export default function AgentSessionList({
     } catch (createError: unknown) {
       setConversationError(getErrorMessage(createError) || '新建 Agent 对话失败');
     } finally {
+      creatingConversationRef.current = false;
       setCreatingConversation(false);
     }
   };

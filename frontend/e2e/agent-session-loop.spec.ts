@@ -221,6 +221,23 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page.getByRole('button', { name: '新建 Agent 对话' })).toBeEnabled();
   });
 
+  test('快速重复点击新建只创建一个 Agent 对话', async ({ page }) => {
+    let createRequests = 0;
+    page.on('request', request => {
+      if (request.method() === 'POST'
+        && request.url().endsWith('/api/agent/interview-sessions/interview-1/conversations')) {
+        createRequests += 1;
+      }
+    });
+
+    await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
+    const createButton = page.getByRole('button', { name: '新建 Agent 对话' });
+    await Promise.all([createButton.click(), createButton.click()]);
+
+    await expect(page).toHaveURL(/agentSessionId=thread-new/);
+    expect(createRequests).toBe(1);
+  });
+
   test('从其他页面返回 Agent 时恢复保存的面试报告和线程', async ({ page }) => {
     await page.addInitScript(() => {
       sessionStorage.setItem('agent-active-interview-session', 'interview-1');
