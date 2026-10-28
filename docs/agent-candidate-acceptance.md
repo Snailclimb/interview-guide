@@ -30,6 +30,19 @@ docker exec interview-guide-agent-candidate-frontend nginx -T | Select-String 'p
 
 ## 主流程验收
 
+### 自动化动作验收
+
+在候选环境可以先执行以下脚本，验证受控动作接口的核心状态机；脚本使用临时账号，
+不调用 Agent 模型，不产生额外模型费用：
+
+```powershell
+pwsh -NoProfile -File .\scripts\agent-action-acceptance.ps1 `
+  -BaseUrl http://101.126.33.248:18084
+```
+
+脚本覆盖草稿生成、幂等、人工编辑、确认前不落任务、确认后创建任务、任务状态推进、
+结束状态保护和跨账号拒绝。通过后再进行下面的页面验收。
+
 ### 1. 生成并确认训练任务
 
 1. 登录候选环境，打开一份已完成的文字面试报告。
