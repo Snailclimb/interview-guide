@@ -3,6 +3,7 @@ package interview.guide.modules.auth;
 import interview.guide.modules.auth.model.UserAccountEntity;
 import interview.guide.modules.auth.repository.UserAccountRepository;
 import jakarta.servlet.FilterChain;
+import jakarta.servlet.DispatcherType;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -70,6 +71,28 @@ class AuthSessionFilterTest {
         verify(sessionService).invalidate(any(), any());
         verify(filterChain).doFilter(any(), any());
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    void restoresAuthenticationOnAsyncDispatch() throws Exception {
+        when(sessionService.readToken(any())).thenReturn("session-token");
+        when(sessionService.resolve("session-token")).thenReturn(Optional.of("user-1"));
+        when(userRepository.findById("user-1")).thenReturn(Optional.of(user("user-1", "USER", "ACTIVE")));
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setDispatcherType(DispatcherType.ASYNC);
+
+        doAnswer(invocation -> {
+            assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
+            assertThat(AuthUserContext.currentUserId()).contains("user-1");
+            return null;
+        }).when(filterChain).doFilter(any(), any());
+
+        new AuthSessionFilter(sessionService, userRepository).doFilter(
+            request, new MockHttpServletResponse(), filterChain
+        );
+
+        verify(sessionService).resolve("session-token");
+        verify(userRepository).findById("user-1");
     }
 
     private UserAccountEntity user(String id, String role, String status) {

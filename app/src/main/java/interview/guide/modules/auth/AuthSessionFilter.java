@@ -61,6 +61,17 @@ public class AuthSessionFilter extends OncePerRequestFilter {
         SecurityContextHolder.getContext().setAuthentication(authentication);
     }
 
+    /**
+     * SSE 和其他 Spring MVC 异步请求会在响应完成前再次进入异步分派。
+     * 初始请求线程上的认证上下文不能直接作为异步分派的安全凭证，必须重新
+     * 校验服务端 Cookie 会话，否则响应已经开始写出后可能被 Spring Security
+     * 判定为匿名请求并提前关闭连接。
+     */
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
+    }
+
     private String legacyIdentity(HttpServletRequest request) {
         String identity = request.getHeader("X-User-Id");
         if (identity == null || identity.isBlank()) {
