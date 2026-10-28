@@ -1675,7 +1675,8 @@ export default function AgentPage() {
           onSelectAgentConversation={selectAgentConversation}
           onCreateAgentConversation={createAgentConversation}
           onClearAgentConversation={clearAgentConversation}
-          disabled={runStatus === 'running' || !interview}
+          disabled={runStatus === 'running'}
+          agentConversationDisabled={runStatus === 'running' || !interview}
         />
 
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)] gap-6 items-start min-w-0">

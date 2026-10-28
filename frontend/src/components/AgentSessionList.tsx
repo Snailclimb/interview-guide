@@ -8,6 +8,7 @@ import type { AgentConversationSummary } from '../types/agent';
 interface AgentSessionListProps {
   selectedSessionId: string | null;
   disabled?: boolean;
+  agentConversationDisabled?: boolean;
   onSelect: (sessionId: string) => void;
   onCreate: () => void;
   selectedAgentSessionId?: string | null;
@@ -48,6 +49,7 @@ function getStatusClass(session: TextSessionMeta) {
 export default function AgentSessionList({
   selectedSessionId,
   disabled = false,
+  agentConversationDisabled = false,
   onSelect,
   onCreate,
   selectedAgentSessionId = null,
@@ -55,6 +57,7 @@ export default function AgentSessionList({
   onCreateAgentConversation,
   onClearAgentConversation,
 }: AgentSessionListProps) {
+  const conversationDisabled = disabled || agentConversationDisabled;
   const [sessions, setSessions] = useState<TextSessionMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -88,7 +91,7 @@ export default function AgentSessionList({
   }, [loadSessions]);
 
   useEffect(() => {
-    if (!selectedSessionId) {
+    if (!selectedSessionId || agentConversationDisabled) {
       setConversations([]);
       setConversationLoading(false);
       setConversationError('');
@@ -114,7 +117,7 @@ export default function AgentSessionList({
     return () => {
       cancelled = true;
     };
-  }, [conversationReloadToken, selectedSessionId]);
+  }, [agentConversationDisabled, conversationReloadToken, selectedSessionId]);
 
   const createAgentConversation = async () => {
     if (!onCreateAgentConversation || creatingConversationRef.current) return;
@@ -210,8 +213,9 @@ export default function AgentSessionList({
         <button
           type="button"
           onClick={() => void createAgentConversation()}
-          disabled={disabled || creatingConversation}
+          disabled={conversationDisabled || creatingConversation}
           className="btn-secondary w-full mt-2 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-sm disabled:opacity-50"
+          title={agentConversationDisabled && !disabled ? '请先选择一份有效的面试报告' : undefined}
         >
           {creatingConversation ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageSquare className="w-4 h-4" />}
           {creatingConversation ? '创建中...' : '新建 Agent 对话'}
@@ -308,11 +312,11 @@ export default function AgentSessionList({
                     key={conversation.agentSessionId}
                     type="button"
                     onClick={() => onSelectAgentConversation?.(conversation.agentSessionId)}
-                    disabled={disabled}
+                    disabled={conversationDisabled}
                     className={`w-full text-left px-2.5 py-2 rounded-lg border transition-colors ${active
                       ? 'border-primary-300 bg-primary-50 dark:border-primary-600 dark:bg-primary-900/25'
                       : 'border-transparent hover:border-slate-200 hover:bg-slate-50 dark:hover:border-slate-700 dark:hover:bg-slate-800/70'
-                    } ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}
+                    } ${conversationDisabled ? 'cursor-not-allowed opacity-60' : ''}`}
                   >
                     <div className="flex items-center gap-2">
                       <MessageSquare className={`w-3.5 h-3.5 shrink-0 ${active ? 'text-primary-500' : 'text-slate-400'}`} />
@@ -322,18 +326,18 @@ export default function AgentSessionList({
                       {running && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />}
                       <span
                         role="button"
-                        tabIndex={disabled ? -1 : 0}
+                        tabIndex={conversationDisabled ? -1 : 0}
                         aria-label={`重命名 ${conversation.title || 'Agent 对话'}`}
                         title="重命名对话"
                         onClick={(event) => {
                           event.stopPropagation();
-                          if (!disabled) void renameConversation(conversation);
+                          if (!conversationDisabled) void renameConversation(conversation);
                         }}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter' || event.key === ' ') {
                             event.preventDefault();
                             event.stopPropagation();
-                            if (!disabled) void renameConversation(conversation);
+                            if (!conversationDisabled) void renameConversation(conversation);
                           }
                         }}
                         className="ml-auto p-0.5 rounded text-slate-400 hover:text-primary-500 shrink-0"
@@ -342,18 +346,18 @@ export default function AgentSessionList({
                       </span>
                       <span
                         role="button"
-                        tabIndex={disabled ? -1 : 0}
+                        tabIndex={conversationDisabled ? -1 : 0}
                         aria-label={`归档 ${conversation.title || 'Agent 对话'}`}
                         title="归档对话"
                         onClick={(event) => {
                           event.stopPropagation();
-                          if (!disabled) void archiveConversation(conversation);
+                          if (!conversationDisabled) void archiveConversation(conversation);
                         }}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter' || event.key === ' ') {
                             event.preventDefault();
                             event.stopPropagation();
-                            if (!disabled) void archiveConversation(conversation);
+                            if (!conversationDisabled) void archiveConversation(conversation);
                           }
                         }}
                         className="p-0.5 rounded text-slate-400 hover:text-rose-500 shrink-0"
