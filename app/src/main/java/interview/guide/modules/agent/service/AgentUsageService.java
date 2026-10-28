@@ -7,13 +7,13 @@ import interview.guide.modules.agent.model.AgentRunUsageEntity;
 import interview.guide.modules.agent.model.AgentUsageCostSummary;
 import interview.guide.modules.agent.model.AgentUsageSummaryResponse;
 import interview.guide.modules.agent.repository.AgentRunUsageRepository;
+import interview.guide.modules.agent.repository.AgentRunUsageRepository.AgentUsageCostProjection;
+import interview.guide.modules.agent.repository.AgentRunUsageRepository.AgentUsageTotalsProjection;
 import jakarta.transaction.Transactional;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.EnumSet;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
@@ -73,37 +73,23 @@ public class AgentUsageService {
             return AgentUsageSummaryResponse.empty();
         }
 
-        long runCount = 0;
-        long completedRunCount = 0;
-        long failedRunCount = 0;
-        long cancelledRunCount = 0;
-        long promptTokens = 0;
-        long completionTokens = 0;
-        long totalTokens = 0;
-        long modelCalls = 0;
-        long durationMillis = 0;
-        Map<CostKey, BigDecimal> costs = new HashMap<>();
+        AgentUsageTotalsProjection totals = usageRepository.summarizeTotals(normalizedOwnerKey);
+        long runCount = usageRepository.countByOwnerKey(normalizedOwnerKey);
+        long completedRunCount = usageRepository.countByOwnerKeyAndRunStatus(
+            normalizedOwnerKey, AgentRunStatus.COMPLETED
+        );
+        long failedRunCount = usageRepository.countByOwnerKeyAndRunStatus(
+            normalizedOwnerKey, AgentRunStatus.FAILED
+        );
+        long cancelledRunCount = usageRepository.countByOwnerKeyAndRunStatus(
+            normalizedOwnerKey, AgentRunStatus.CANCELLED
+        );
 
-        for (AgentRunUsageEntity entity : usageRepository.findByOwnerKeyOrderByCreatedAtDesc(normalizedOwnerKey)) {
-            runCount++;
-            if (entity.getRunStatus() == AgentRunStatus.COMPLETED) completedRunCount++;
-            if (entity.getRunStatus() == AgentRunStatus.FAILED) failedRunCount++;
-            if (entity.getRunStatus() == AgentRunStatus.CANCELLED) cancelledRunCount++;
-            promptTokens += Math.max(0, entity.getPromptTokens());
-            completionTokens += Math.max(0, entity.getCompletionTokens());
-            totalTokens += Math.max(0, entity.getTotalTokens());
-            modelCalls += Math.max(0, entity.getModelCalls());
-            durationMillis += Math.max(0, entity.getDurationMillis());
-            if (entity.getCost() != null && entity.getCost().signum() >= 0) {
-                CostKey key = new CostKey(normalize(entity.getProvider()), normalize(entity.getCurrency()));
-                costs.merge(key, entity.getCost(), BigDecimal::add);
-            }
-        }
-
-        List<AgentUsageCostSummary> costSummaries = new ArrayList<>();
-        costs.forEach((key, amount) -> costSummaries.add(
-            new AgentUsageCostSummary(key.provider(), key.currency(), amount)
-        ));
+        List<AgentUsageCostSummary> costSummaries = new ArrayList<>(
+            usageRepository.summarizeCosts(normalizedOwnerKey).stream()
+                .map(this::toCostSummary)
+                .toList()
+        );
         costSummaries.sort((left, right) -> {
             int provider = Objects.toString(left.provider(), "")
                 .compareToIgnoreCase(Objects.toString(right.provider(), ""));
@@ -115,9 +101,26 @@ public class AgentUsageService {
 
         return new AgentUsageSummaryResponse(
             runCount, completedRunCount, failedRunCount, cancelledRunCount,
-            promptTokens, completionTokens, totalTokens, modelCalls, durationMillis,
+            value(totals == null ? null : totals.getPromptTokens()),
+            value(totals == null ? null : totals.getCompletionTokens()),
+            value(totals == null ? null : totals.getTotalTokens()),
+            value(totals == null ? null : totals.getModelCalls()),
+            value(totals == null ? null : totals.getDurationMillis()),
             costSummaries
         );
+    }
+
+    private AgentUsageCostSummary toCostSummary(AgentUsageCostProjection projection) {
+        return new AgentUsageCostSummary(
+            normalize(projection.getProvider()),
+            normalize(projection.getCurrency()),
+            projection.getAmount() == null || projection.getAmount().signum() < 0
+                ? BigDecimal.ZERO : projection.getAmount()
+        );
+    }
+
+    private long value(Long value) {
+        return value == null ? 0 : Math.max(0, value);
     }
 
     private String normalize(String value) {
@@ -125,5 +128,4 @@ public class AgentUsageService {
         return value.trim();
     }
 
-    private record CostKey(String provider, String currency) {}
 }

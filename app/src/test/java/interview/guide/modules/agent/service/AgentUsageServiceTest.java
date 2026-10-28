@@ -11,6 +11,8 @@ import interview.guide.modules.agent.model.AgentRunUsage;
 import interview.guide.modules.agent.model.AgentRunUsageEntity;
 import interview.guide.modules.agent.model.AgentUsageSummaryResponse;
 import interview.guide.modules.agent.repository.AgentRunUsageRepository;
+import interview.guide.modules.agent.repository.AgentRunUsageRepository.AgentUsageCostProjection;
+import interview.guide.modules.agent.repository.AgentRunUsageRepository.AgentUsageTotalsProjection;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -68,11 +70,22 @@ class AgentUsageServiceTest {
 
     @Test
     void summarizesTokensStatusesDurationAndCostsByOwner() {
-        when(usageRepository.findByOwnerKeyOrderByCreatedAtDesc("user-1")).thenReturn(List.of(
-            usage("user-1", AgentRunStatus.COMPLETED, 100, 50, 150, 2, 2_000, "0.10", "USD", "pixel"),
-            usage("user-1", AgentRunStatus.FAILED, 40, 0, 40, 1, 1_000, "0.20", "USD", "pixel"),
-            usage("user-1", AgentRunStatus.CANCELLED, 10, 5, 15, 1, 500, null, null, "other")
-        ));
+        AgentUsageTotalsProjection totals = org.mockito.Mockito.mock(AgentUsageTotalsProjection.class);
+        when(totals.getPromptTokens()).thenReturn(150L);
+        when(totals.getCompletionTokens()).thenReturn(55L);
+        when(totals.getTotalTokens()).thenReturn(205L);
+        when(totals.getModelCalls()).thenReturn(4L);
+        when(totals.getDurationMillis()).thenReturn(3_500L);
+        when(usageRepository.summarizeTotals("user-1")).thenReturn(totals);
+        when(usageRepository.countByOwnerKey("user-1")).thenReturn(3L);
+        when(usageRepository.countByOwnerKeyAndRunStatus("user-1", AgentRunStatus.COMPLETED)).thenReturn(1L);
+        when(usageRepository.countByOwnerKeyAndRunStatus("user-1", AgentRunStatus.FAILED)).thenReturn(1L);
+        when(usageRepository.countByOwnerKeyAndRunStatus("user-1", AgentRunStatus.CANCELLED)).thenReturn(1L);
+        AgentUsageCostProjection costs = org.mockito.Mockito.mock(AgentUsageCostProjection.class);
+        when(costs.getProvider()).thenReturn("pixel");
+        when(costs.getCurrency()).thenReturn("USD");
+        when(costs.getAmount()).thenReturn(new BigDecimal("0.30"));
+        when(usageRepository.summarizeCosts("user-1")).thenReturn(List.of(costs));
 
         AgentUsageSummaryResponse summary = service.summarize("user-1");
 
@@ -100,35 +113,5 @@ class AgentUsageServiceTest {
         service.record(running, AgentRunUsage.empty());
         assertThat(service.summarize(" ").runCount()).isZero();
         org.mockito.Mockito.verifyNoInteractions(usageRepository);
-    }
-
-    private AgentRunUsageEntity usage(
-        String owner,
-        AgentRunStatus status,
-        int prompt,
-        int completion,
-        int total,
-        int calls,
-        long duration,
-        String cost,
-        String currency,
-        String provider
-    ) {
-        return AgentRunUsageEntity.builder()
-            .ownerKey(owner)
-            .interviewSessionId("interview-1")
-            .agentSessionId("agent-" + total)
-            .runId("run-" + total)
-            .runStatus(status)
-            .promptTokens(prompt)
-            .completionTokens(completion)
-            .totalTokens(total)
-            .modelCalls(calls)
-            .durationMillis(duration)
-            .cost(cost == null ? null : new BigDecimal(cost))
-            .currency(currency)
-            .provider(provider)
-            .createdAt(LocalDateTime.now())
-            .build();
     }
 }
