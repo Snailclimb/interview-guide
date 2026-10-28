@@ -260,6 +260,26 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page).toHaveURL(/sessionId=interview-1.*agentSessionId=thread-new/);
   });
 
+  test('面试报告失效且当前账号没有记录时回到面试中心', async ({ page }) => {
+    await page.route('**/api/interview/sessions/missing/details', async route => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ code: 3001, message: '面试会话不存在', data: null }),
+      });
+    });
+    await page.route('**/api/interview/sessions', async route => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ code: 200, message: 'success', data: [] }) });
+      } else {
+        await route.continue();
+      }
+    });
+
+    await page.goto('/agent?sessionId=missing');
+
+    await expect(page).toHaveURL(/\/interview-hub$/);
+  });
+
   test('快速重复点击新建只创建一个 Agent 对话', async ({ page }) => {
     let createRequests = 0;
     page.on('request', request => {

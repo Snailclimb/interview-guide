@@ -27,6 +27,12 @@ import org.springframework.stereotype.Service;
 @Slf4j
 @Service
 public class AgentLoopPlanner {
+    private static final String TOOL_ACTION_PREFIX = "ACTION=";
+    private static final String TOOL_READ_INTERVIEW_REPORT = "read_interview_report";
+    private static final String TOOL_CONFIRM_AGENT_GOAL = "confirm_agent_goal";
+    private static final String TOOL_VERIFY_SKILL_RAG_SOURCES = "verify_skill_rag_sources";
+    private static final String TOOL_ORGANIZE_AGENT_CONTEXT = "organize_agent_context";
+
     public static final String DEFAULT_PLAN =
         "1. 读取本场面试报告并确认当前目标。\n"
             + "2. 结合 Skill 参考资料和可用知识库核对薄弱点。\n"
@@ -79,8 +85,11 @@ public class AgentLoopPlanner {
             return DEFAULT_PLAN;
         }
         String prompt = """
-            你是 AI 面试教练的规划器。请只输出最多 3 条短步骤，不要输出隐藏推理、长篇解释或 Markdown 标题。
-            规划必须围绕：读取面试报告、必要时使用只读 Skill/RAG 资料、给出可执行回答。
+            你是 AI 面试教练的规划器。请只输出最多 3 行动作，不要输出隐藏推理、长篇解释或 Markdown 标题。
+            每一行必须优先使用 ACTION= 后的一个安全只读工具标识：
+            read_interview_report、confirm_agent_goal、verify_skill_rag_sources、organize_agent_context。
+            你可以根据当前请求和上下文自主选择需要的工具，但不能编造其他工具名、参数或写入动作。
+            如果没有必要检索知识库，选择 organize_agent_context；没有来源时不要选择 verify_skill_rag_sources。
             只有相邻且互不依赖的只读步骤才可以在步骤开头加 [parallel] 标记；不要为了凑并行而标记有先后依赖的步骤。
             当前目标：%s
             当前请求：%s
@@ -176,6 +185,18 @@ public class AgentLoopPlanner {
     private String canonicalizeStep(String value, boolean hasRagSource) {
         boolean parallel = value.startsWith("[parallel]");
         String action = parallel ? value.substring("[parallel]".length()).trim() : value;
+        String explicitTool = explicitTool(action);
+        if (explicitTool != null) {
+            String selected = switch (explicitTool) {
+                case TOOL_READ_INTERVIEW_REPORT -> "读取面试报告";
+                case TOOL_CONFIRM_AGENT_GOAL -> "确认当前目标";
+                case TOOL_VERIFY_SKILL_RAG_SOURCES -> hasRagSource
+                    ? "核对 Skill/RAG 来源" : "整理";
+                case TOOL_ORGANIZE_AGENT_CONTEXT -> "整理";
+                default -> "整理";
+            };
+            return parallel ? "[parallel] " + selected : selected;
+        }
         String normalized = action.toLowerCase(java.util.Locale.ROOT);
         String canonical = action;
         if (action.contains("读取") && action.contains("报告")) {
@@ -193,5 +214,20 @@ public class AgentLoopPlanner {
             canonical = "整理";
         }
         return parallel ? "[parallel] " + canonical : canonical;
+    }
+
+    /**
+     * 只接受完整的 ACTION= 工具标识。其余模型输出继续走兼容的自然语言规整逻辑，
+     * 但不会把未知标识直接传给 Loop 执行器。
+     */
+    private String explicitTool(String action) {
+        if (action == null || !action.startsWith(TOOL_ACTION_PREFIX)) {
+            return null;
+        }
+        String value = action.substring(TOOL_ACTION_PREFIX.length()).trim();
+        if (value.isBlank() || value.contains(" ") || value.contains("\t")) {
+            return "__invalid__";
+        }
+        return value;
     }
 }

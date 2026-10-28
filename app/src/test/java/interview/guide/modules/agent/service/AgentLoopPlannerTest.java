@@ -36,6 +36,50 @@ class AgentLoopPlannerTest {
     }
 
     @Test
+    void letsThePlannerSelectOnlyTheAllowlistedReadonlyTools() {
+        AgentRetryProperties properties = new AgentRetryProperties();
+        properties.setLoopMaxSteps(4);
+        AgentLoopPlanner planner = new AgentLoopPlanner(
+            mock(LlmProviderRegistry.class), mock(PromptSanitizer.class), properties
+        );
+        AgentContextService.AgentContext context = new AgentContextService.AgentContext(
+            "report", "java-backend", "skill", "query", "query", List.of(
+                new AgentSource("rag", "Redis", 0.9, "rag-1")
+            )
+        );
+
+        assertThat(planner.steps(
+            "ACTION=read_interview_report\n"
+                + "[parallel] ACTION=verify_skill_rag_sources\n"
+                + "ACTION=organize_agent_context\n"
+                + "ACTION=delete_resume",
+            context
+        )).containsExactly(
+            "读取面试报告",
+            "[parallel] 核对 Skill/RAG 来源",
+            "整理",
+            "整理"
+        );
+    }
+
+    @Test
+    void suppressesExplicitSourceSelectionWhenNoRagSourceExists() {
+        AgentRetryProperties properties = new AgentRetryProperties();
+        properties.setLoopMaxSteps(1);
+        AgentLoopPlanner planner = new AgentLoopPlanner(
+            mock(LlmProviderRegistry.class), mock(PromptSanitizer.class), properties
+        );
+        AgentContextService.AgentContext context = new AgentContextService.AgentContext(
+            "report", "java-backend", "skill", "暂无知识库检索上下文", "query", List.of(
+                new AgentSource("skill", "Java", null, "skill-reference")
+            )
+        );
+
+        assertThat(planner.steps("ACTION=verify_skill_rag_sources", context))
+            .containsExactly("整理");
+    }
+
+    @Test
     void doesNotAdvertiseRagActionWhenTheRunHasNoRagSource() {
         AgentRetryProperties properties = new AgentRetryProperties();
         properties.setLoopMaxSteps(3);

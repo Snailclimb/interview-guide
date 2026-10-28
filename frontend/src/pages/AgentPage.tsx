@@ -45,6 +45,7 @@ import { detectAgentActionIntent, type AgentActionIntent } from './agentIntent';
 import {
   getStoredAgentSessionId,
   getStoredAgentThreadId,
+  clearStoredAgentSession,
   rememberAgentSessionId,
   rememberAgentThreadId,
   resolveAgentSessionId,
@@ -518,7 +519,11 @@ export default function AgentPage() {
       .catch((error: unknown) => {
         if (!cancelled) {
           const message = getErrorMessage(error);
-          if (message === '面试会话不存在' || message === '禁止访问') {
+          const invalidInterviewContext = message === '面试会话不存在'
+            || message === '面试会话已过期'
+            || message === '禁止访问'
+            || message.includes('无权访问');
+          if (invalidInterviewContext) {
             // 地址栏可能来自 18083 或旧账号。此时不能让用户继续对着
             // 无效报告点击“新建 Agent 对话”，主动从当前登录环境恢复一份可用报告。
             void interviewApi.listSessions()
@@ -535,9 +540,15 @@ export default function AgentPage() {
                   setSearchParams({ sessionId: fallback.sessionId }, { replace: true });
                   return;
                 }
-                setContextError(fallback
-                  ? '当前面试记录暂时无法读取，请刷新后重试。'
-                  : '当前账号还没有可用的面试记录，请先完成一场文字面试。');
+                if (fallback) {
+                  setContextError('当前面试记录暂时无法读取，请刷新后重试。');
+                  return;
+                }
+                // 没有任何可用报告时继续停留在旧 sessionId 会让“新建 Agent 对话”
+                // 看起来可点击但永远不会发请求。清掉旧绑定并回到面试中心，
+                // 让用户可以选择已有记录或直接创建一场文字面试。
+                clearStoredAgentSession();
+                navigate('/interview-hub', { replace: true });
               })
               .catch(() => {
                 if (!cancelled) setContextError('这份面试记录不在当前环境或已失效，请从当前环境的面试中心重新选择。');
@@ -554,7 +565,7 @@ export default function AgentPage() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [navigate, sessionId, setSearchParams]);
 
   useEffect(() => {
     let cancelled = false;

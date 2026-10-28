@@ -20,6 +20,17 @@ export function rememberAgentSessionId(sessionId: string): void {
   }
 }
 
+/** 清掉已失效的报告绑定，避免 /agent 每次重新打开又恢复同一个旧链接。 */
+export function clearStoredAgentSession(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+    window.sessionStorage.removeItem(ACTIVE_AGENT_THREAD_STORAGE_KEY);
+  } catch {
+    // 当前 URL 仍然可以作为最终状态来源。
+  }
+}
+
 export function resolveAgentSessionId(
   routeSessionId: string | null,
   storedSessionId: string | null,

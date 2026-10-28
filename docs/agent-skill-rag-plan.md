@@ -195,7 +195,7 @@ pwsh -NoProfile -File .\scripts\agent-restart-acceptance.ps1 -BaseUrl http://loc
 
 后续按风险从低到高推进：
 
-1. 先增加只读工具的明确审计事件和耗时指标，再考虑让模型自主选择工具。
+1. 只读工具已经具备明确审计事件和耗时指标；当前继续开放受白名单约束的模型工具选择，非法工具标识自动降级为整理动作。
 2. 需要跨系统读取时，再把稳定的只读工具抽成 MCP；没有外部系统需求时不引入 MCP。
 3. 写入型工具（训练任务、计划）必须先增加权限、幂等键、审计和回滚，再开放给 Agent。
 4. 如需跨面试长期记忆，单独设计用户级记忆边界和删除策略，不复用当前会话表硬扩展。
@@ -214,6 +214,7 @@ pwsh -NoProfile -File .\scripts\agent-restart-acceptance.ps1 -BaseUrl http://loc
 - Agent 会话归属：所有 Agent API 在正式登录模式下使用服务端用户 ID，兼容模式下仍接受 `X-User-Id`；会话创建、读取、取消、重命名和归档均按 owner 校验；迁移前已有线程会从 `memory_key` 兼容迁移。普通面试、语音面试和面试日程也已接入同一账号隔离边界，语音 WebSocket 在握手阶段校验会话归属。
 - 多线程管理：同一份面试报告可创建、切换、重命名和归档多个 Agent 对话，归档只隐藏会话，不删除历史消息。
 - Agent Loop：规划结果会进入有限循环，逐步执行“动作 -> 观察”，将观察轨迹注入最终回答，并通过 SSE 暴露每一步；循环步骤受既有 `loopMaxSteps` 限制，不允许无限执行。
+- Agent Loop 规划器允许模型从 `read_interview_report`、`confirm_agent_goal`、`verify_skill_rag_sources`、`organize_agent_context` 四个只读工具中选择；工具标识采用白名单解析，非法选择降级为资料整理，前端仍展示稳定中文动作标签。
 - 知识库/RAG owner 隔离：新登录用户上传的知识库及 RAG 会话写入 `owner_id`，列表、详情、下载、查询、题目管理、开始知识库面试、重向量化和删除均按当前用户校验；迁移前 `owner_id IS NULL` 的知识库继续作为部署级共享资料可读可维护，保证旧数据和现有题库不受影响。
 - 浏览器验收：新增 Agent 会话隔离、页面刷新恢复、重命名和 Loop 事件的 Playwright 用例；本地和隔离候选环境均已通过 4/4，正式登录态由测试 fixture 覆盖。
 - 真实候选验收：正式登录下连续 2 轮真实模型请求通过；应用重启后任务接管、回答完成、消息不重复验收通过。
