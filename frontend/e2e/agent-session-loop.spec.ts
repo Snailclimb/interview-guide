@@ -301,6 +301,37 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(taskAction.getByText('待确认', { exact: true })).toBeVisible();
   });
 
+  test('快捷动作可以基于最近回答生成待确认训练任务', async ({ page }) => {
+    await page.route('**/api/agent/interview-sessions/interview-1/conversations/thread-a/actions/training-task-draft', async route => {
+      const payload = route.request().postDataJSON() as { content: string; idempotencyKey: string };
+      expect(payload.content).toBe('线程 A 的复盘内容');
+      expect(payload.idempotencyKey).toMatch(/^task:thread-a:\d+$/);
+      await route.fulfill({
+        contentType: 'application/json',
+        body: envelope({
+          actionId: 'quick-task-action-1',
+          interviewSessionId: 'interview-1',
+          agentSessionId: 'thread-a',
+          toolId: 'training.task.create',
+          riskLevel: 'BUSINESS_WRITE',
+          status: 'PROPOSED',
+          title: '创建训练任务',
+          previewText: '确认后加入训练任务列表',
+          draftContent: '重点练习 Redis 缓存穿透与击穿',
+          resultSummary: null,
+        }),
+      });
+    });
+
+    await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
+    const quickActions = page.getByLabel('Agent 快捷动作');
+    await quickActions.getByRole('button', { name: '创建训练任务' }).click();
+
+    const actionDraft = page.getByLabel('Agent 动作草稿');
+    await expect(actionDraft.getByText('创建训练任务', { exact: true })).toBeVisible();
+    await expect(actionDraft.getByText('待确认', { exact: true })).toBeVisible();
+  });
+
   test('确认的练习草稿可以带着 Agent 动作进入专项文字面试', async ({ page }) => {
     const actionId = 'practice-action-confirmed';
     await page.unroute('**/api/agent/interview-sessions/interview-1/actions*');

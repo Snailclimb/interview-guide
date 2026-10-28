@@ -309,6 +309,10 @@ export default function AgentPage() {
   const [trainingTaskBusyId, setTrainingTaskBusyId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([createWelcomeMessage()]);
   const [input, setInput] = useState('');
+  const latestAssistantMessage = useMemo(
+    () => [...messages].reverse().find((message) => message.role === 'assistant' && message.id !== 1 && message.content.trim()),
+    [messages],
+  );
   const abortRef = useRef<AbortController | null>(null);
   const reconciliationTimerRef = useRef<number | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1959,6 +1963,84 @@ export default function AgentPage() {
                   {prompt}
                 </button>
               ))}
+            </div>
+            <div className="mb-3 rounded-xl border border-primary-100 bg-primary-50/50 p-3 dark:border-primary-900/60 dark:bg-primary-900/10" aria-label="Agent 快捷动作">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold text-primary-800 dark:text-primary-200">快捷动作</p>
+                  <p className="mt-1 text-[11px] text-primary-700/80 dark:text-primary-300/80">
+                    作用于最近一条 Agent 回答，生成草稿后仍需你确认才会执行。
+                  </p>
+                </div>
+                {!latestAssistantMessage ? <span className="text-[11px] text-slate-400">完成一次回答后可用</span> : null}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => latestAssistantMessage && saveDraftAction(latestAssistantMessage, goal === 'practice' ? 'practice' : 'plan')}
+                  disabled={!latestAssistantMessage || runStatus === 'running' || !agentSessionId}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                >
+                  <ClipboardCheck className="h-3.5 w-3.5" />
+                  {goal === 'practice' ? '生成练习题草稿' : '生成训练计划草稿'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => latestAssistantMessage && saveTrainingTaskAction(latestAssistantMessage)}
+                  disabled={!latestAssistantMessage || runStatus === 'running' || !agentSessionId}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                >
+                  <Target className="h-3.5 w-3.5" />
+                  创建训练任务
+                </button>
+                <button
+                  type="button"
+                  onClick={() => latestAssistantMessage && saveMemoryAction(latestAssistantMessage)}
+                  disabled={!latestAssistantMessage || runStatus === 'running' || !agentSessionId}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  保存为长期记忆
+                </button>
+                <button
+                  type="button"
+                  onClick={() => latestAssistantMessage && saveTitleAction(latestAssistantMessage)}
+                  disabled={!latestAssistantMessage || runStatus === 'running' || !agentSessionId}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  修改面试名称
+                </button>
+                <button
+                  type="button"
+                  onClick={() => latestAssistantMessage && saveReportExportAction(latestAssistantMessage)}
+                  disabled={!latestAssistantMessage || runStatus === 'running' || !agentSessionId}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  导出面试报告
+                </button>
+                <button
+                  type="button"
+                  onClick={() => latestAssistantMessage && openScheduleDraft(latestAssistantMessage)}
+                  disabled={!latestAssistantMessage || runStatus === 'running' || !agentSessionId}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                >
+                  <Clock3 className="h-3.5 w-3.5" />
+                  安排复习日程
+                </button>
+                {interview?.resumeId ? (
+                  <button
+                    type="button"
+                    onClick={() => latestAssistantMessage && saveResumeEditAction(latestAssistantMessage)}
+                    disabled={!latestAssistantMessage || runStatus === 'running' || !agentSessionId}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-white/80 px-2.5 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    生成简历优化版
+                  </button>
+                ) : null}
+              </div>
             </div>
             <div className="relative">
               <textarea
