@@ -55,6 +55,7 @@ import type {
   AgentAuditEvent,
   AgentAction,
   AgentConversationResponse,
+  AgentConversationSummary,
   AgentHistoryMessage,
   AgentMemoryItem,
   AgentMemoryResponse,
@@ -1413,16 +1414,12 @@ export default function AgentPage() {
     setSearchParams({ sessionId });
   };
 
-  const createAgentConversation = () => {
+  const createAgentConversation = async (): Promise<AgentConversationSummary | void> => {
     if (!sessionId || runStatus === 'running') return;
-    void agentApi.createConversation(sessionId)
-      .then((conversation) => {
-        rememberAgentThreadId(conversation.agentSessionId);
-        setSearchParams({ sessionId, agentSessionId: conversation.agentSessionId });
-      })
-      .catch((error: unknown) => {
-        setRunError(getErrorMessage(error) || '新建 Agent 对话失败');
-      });
+    const conversation = await agentApi.createConversation(sessionId);
+    rememberAgentThreadId(conversation.agentSessionId);
+    setSearchParams({ sessionId, agentSessionId: conversation.agentSessionId });
+    return conversation;
   };
 
   useEffect(() => {

@@ -212,6 +212,15 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page.getByText('线程 B 的训练内容')).toBeVisible();
   });
 
+  test('新建 Agent 对话后立即选中并显示在列表中', async ({ page }) => {
+    await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
+    await page.getByRole('button', { name: '新建 Agent 对话' }).click();
+
+    await expect(page).toHaveURL(/agentSessionId=thread-new/);
+    await expect(page.getByText('新 Agent 对话', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '新建 Agent 对话' })).toBeEnabled();
+  });
+
   test('从其他页面返回 Agent 时恢复保存的面试报告和线程', async ({ page }) => {
     await page.addInitScript(() => {
       sessionStorage.setItem('agent-active-interview-session', 'interview-1');

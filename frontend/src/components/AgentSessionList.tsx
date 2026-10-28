@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Archive, FileText, Loader2, MessageSquare, Pencil, Plus, RefreshCw } from 'lucide-react';
 import { agentApi } from '../api/agent';
 import { interviewApi, type TextSessionMeta } from '../api/interview';
+import { getErrorMessage } from '../api/request';
 import type { AgentConversationSummary } from '../types/agent';
 
 interface AgentSessionListProps {
@@ -11,7 +12,7 @@ interface AgentSessionListProps {
   onCreate: () => void;
   selectedAgentSessionId?: string | null;
   onSelectAgentConversation?: (agentSessionId: string) => void;
-  onCreateAgentConversation?: () => void;
+  onCreateAgentConversation?: () => Promise<AgentConversationSummary | void>;
   onClearAgentConversation?: () => void;
 }
 
@@ -60,6 +61,9 @@ export default function AgentSessionList({
   const [error, setError] = useState('');
   const [conversations, setConversations] = useState<AgentConversationSummary[]>([]);
   const [conversationLoading, setConversationLoading] = useState(false);
+  const [conversationError, setConversationError] = useState('');
+  const [conversationReloadToken, setConversationReloadToken] = useState(0);
+  const [creatingConversation, setCreatingConversation] = useState(false);
 
   const loadSessions = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -85,16 +89,23 @@ export default function AgentSessionList({
   useEffect(() => {
     if (!selectedSessionId) {
       setConversations([]);
+      setConversationLoading(false);
+      setConversationError('');
       return;
     }
     let cancelled = false;
+    setConversations([]);
     setConversationLoading(true);
+    setConversationError('');
     agentApi.listConversations(selectedSessionId)
       .then((loaded) => {
         if (!cancelled) setConversations(loaded);
       })
-      .catch(() => {
-        if (!cancelled) setConversations([]);
+      .catch((loadError: unknown) => {
+        if (!cancelled) {
+          setConversations([]);
+          setConversationError(getErrorMessage(loadError) || 'Agent 对话加载失败');
+        }
       })
       .finally(() => {
         if (!cancelled) setConversationLoading(false);
@@ -102,7 +113,26 @@ export default function AgentSessionList({
     return () => {
       cancelled = true;
     };
-  }, [selectedAgentSessionId, selectedSessionId]);
+  }, [conversationReloadToken, selectedSessionId]);
+
+  const createAgentConversation = async () => {
+    if (!onCreateAgentConversation || creatingConversation) return;
+    setCreatingConversation(true);
+    setConversationError('');
+    try {
+      const created = await onCreateAgentConversation();
+      if (created) {
+        setConversations((current) => [
+          created,
+          ...current.filter((item) => item.agentSessionId !== created.agentSessionId),
+        ]);
+      }
+    } catch (createError: unknown) {
+      setConversationError(getErrorMessage(createError) || '新建 Agent 对话失败');
+    } finally {
+      setCreatingConversation(false);
+    }
+  };
 
   const renameConversation = async (conversation: AgentConversationSummary) => {
     const currentTitle = conversation.title?.trim() || '新 Agent 对话';
@@ -176,12 +206,12 @@ export default function AgentSessionList({
       {selectedSessionId && onCreateAgentConversation && (
         <button
           type="button"
-          onClick={onCreateAgentConversation}
-          disabled={disabled}
+          onClick={() => void createAgentConversation()}
+          disabled={disabled || creatingConversation}
           className="btn-secondary w-full mt-2 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-sm disabled:opacity-50"
         >
-          <MessageSquare className="w-4 h-4" />
-          新建 Agent 对话
+          {creatingConversation ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageSquare className="w-4 h-4" />}
+          {creatingConversation ? '创建中...' : '新建 Agent 对话'}
         </button>
       )}
 
@@ -253,6 +283,17 @@ export default function AgentSessionList({
                 <div className="flex items-center gap-2 px-2 py-3 text-xs dark-text-muted">
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-primary-500" />
                   正在加载对话...
+                </div>
+              ) : conversationError ? (
+                <div className="px-2 py-3 text-xs">
+                  <p className="text-rose-500 dark:text-rose-300">{conversationError}</p>
+                  <button
+                    type="button"
+                    onClick={() => setConversationReloadToken((current) => current + 1)}
+                    className="text-primary-600 dark:text-primary-300 hover:underline mt-1"
+                  >
+                    重新加载对话
+                  </button>
                 </div>
               ) : conversations.length === 0 ? (
                 <p className="px-2 py-3 text-xs dark-text-muted">还没有 Agent 对话，点击上方按钮新建。</p>
