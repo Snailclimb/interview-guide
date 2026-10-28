@@ -91,6 +91,15 @@ export default function AgentSessionList({
   }, [loadSessions]);
 
   useEffect(() => {
+    // 地址栏可能保留了上一套环境或已被当前账号隔离的 sessionId。
+    // 列表加载完成后自动切换到当前账号可见的第一份报告，避免页面停在
+    // “无法创建 Agent 对话”且用户没有明显恢复路径的状态。
+    if (loading || error || disabled || !selectedSessionId || sessions.length === 0) return;
+    if (sessions.some((session) => session.sessionId === selectedSessionId)) return;
+    onSelect(sessions[0].sessionId);
+  }, [disabled, error, loading, onSelect, selectedSessionId, sessions]);
+
+  useEffect(() => {
     if (!selectedSessionId || agentConversationDisabled) {
       setConversations([]);
       setConversationLoading(false);

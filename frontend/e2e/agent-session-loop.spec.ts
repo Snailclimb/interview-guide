@@ -243,7 +243,7 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page.getByRole('button', { name: '新建 Agent 对话' })).toBeEnabled();
   });
 
-  test('面试报告失效时不允许创建无归属的 Agent 对话', async ({ page }) => {
+  test('面试报告失效时自动恢复到当前环境的有效报告', async ({ page }) => {
     await page.route('**/api/interview/sessions/missing/details', async route => {
       await route.fulfill({
         contentType: 'application/json',
@@ -254,12 +254,7 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await page.goto('/agent?sessionId=missing');
 
     const createButton = page.getByRole('button', { name: '新建 Agent 对话' });
-    await expect(createButton).toBeDisabled();
-    await expect(page.getByText('这份面试记录不在当前环境或已失效，请从当前环境的面试中心重新选择。')).toBeVisible();
-
-    // 失效报告只应禁用当前 Agent 操作，仍然允许从左侧切换到当前环境的有效报告。
-    await page.getByRole('button', { name: /Java 后端高并发面试/ }).click();
-    await expect(page.getByText('面试上下文加载失败')).not.toBeVisible();
+    await expect(page).toHaveURL(/sessionId=interview-1/);
     await expect(createButton).toBeEnabled();
     await createButton.click();
     await expect(page).toHaveURL(/sessionId=interview-1.*agentSessionId=thread-new/);
