@@ -520,10 +520,11 @@ public class AgentActionService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问该 Agent 训练动作");
         }
         boolean supportedTool = PRACTICE_QUESTIONS_TOOL.equals(entity.getToolId())
-            || TRAINING_PLAN_TOOL.equals(entity.getToolId());
+            || TRAINING_PLAN_TOOL.equals(entity.getToolId())
+            || TRAINING_TASK_TOOL.equals(entity.getToolId());
         if (!supportedTool
             || entity.getStatus() != AgentActionStatus.SUCCEEDED) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "只有已确认的练习题或训练计划可以用于专项面试");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "只有已确认的练习题、训练计划或训练任务可以用于专项面试");
         }
         String content = normalizeContent(entity.getDraftContent());
         return content.substring(0, Math.min(MAX_INTERVIEW_FOCUS, content.length()));

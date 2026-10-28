@@ -1138,6 +1138,36 @@ export default function AgentPage() {
       .finally(() => setTrainingTaskBusyId(null));
   };
 
+  const startTrainingTask = (task: AgentTrainingTask) => {
+    if (!interview?.skillId || !task.sourceActionId || (task.status !== 'TODO' && task.status !== 'IN_PROGRESS')) return;
+    const openFocusedInterview = () => {
+      navigate(ROUTES.interviewCreate(createRequestId()), {
+        state: {
+          interviewConfig: {
+            skillId: interview.skillId,
+            difficulty: 'mid',
+            questionCount: 6,
+            llmProvider: providerId || undefined,
+            agentActionId: task.sourceActionId,
+          },
+        },
+      });
+    };
+    if (task.status === 'IN_PROGRESS') {
+      openFocusedInterview();
+      return;
+    }
+    if (trainingTaskBusyId) return;
+    setTrainingTaskBusyId(task.taskId);
+    void agentApi.updateTrainingTask(task.taskId, 'IN_PROGRESS')
+      .then((updated) => {
+        setTrainingTasks((current) => current.map((item) => item.taskId === updated.taskId ? updated : item));
+        openFocusedInterview();
+      })
+      .catch((error: unknown) => setActionNotice(getErrorMessage(error) || '训练任务启动失败，请稍后重试'))
+      .finally(() => setTrainingTaskBusyId(null));
+  };
+
   const cancelAgentAction = (actionId: string) => {
     if (actionBusyId) return;
     setActionBusyId(actionId);
@@ -2332,10 +2362,10 @@ export default function AgentPage() {
                           <button
                             type="button"
                             disabled={trainingTaskBusyId !== null}
-                            onClick={() => updateTrainingTask(task, 'IN_PROGRESS')}
+                            onClick={() => startTrainingTask(task)}
                             className="btn-primary rounded-lg px-2.5 py-1.5 text-xs disabled:opacity-50"
                           >
-                            开始训练
+                            {trainingTaskBusyId === task.taskId ? '准备中...' : '开始专项面试'}
                           </button>
                           <button
                             type="button"
@@ -2348,6 +2378,14 @@ export default function AgentPage() {
                         </div>
                       ) : task.status === 'IN_PROGRESS' ? (
                         <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            disabled={trainingTaskBusyId !== null}
+                            onClick={() => startTrainingTask(task)}
+                            className="btn-primary rounded-lg px-2.5 py-1.5 text-xs disabled:opacity-50"
+                          >
+                            继续专项面试
+                          </button>
                           <button
                             type="button"
                             disabled={trainingTaskBusyId !== null}

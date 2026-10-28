@@ -593,6 +593,21 @@ class AgentActionServiceTest {
     }
 
     @Test
+    @DisplayName("已确认的训练任务也可以作为专项面试重点")
+    void loadsConfirmedTrainingTaskFocus() {
+        AgentActionService service = new AgentActionService(repository, auditService);
+        AgentActionRequestEntity action = draft("task-action-1", "user-1");
+        action.setToolId("training.task.create");
+        action.setStatus(AgentActionStatus.SUCCEEDED);
+        action.setDraftContent("完成 Redis 缓存穿透与击穿专项练习，并记录防护方案");
+        when(repository.findByActionId("task-action-1")).thenReturn(Optional.of(action));
+
+        assertThat(service.loadConfirmedInterviewFocus("task-action-1", "user-1"))
+            .contains("Redis 缓存穿透")
+            .contains("防护方案");
+    }
+
+    @Test
     @DisplayName("记忆和名称草稿都遵守短内容边界")
     void rejectsOversizedMemoryAndTitleDrafts() {
         AgentActionService service = new AgentActionService(repository, auditService);

@@ -332,6 +332,75 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(actionDraft.getByText('待确认', { exact: true })).toBeVisible();
   });
 
+  test('已创建的训练任务可以进入专项面试并自动推进状态', async ({ page }) => {
+    const task = {
+      taskId: 'training-task-1',
+      sourceInterviewSessionId: 'interview-1',
+      sourceAgentSessionId: 'thread-a',
+      sourceActionId: 'training-task-action-1',
+      title: '补 Redis 缓存',
+      description: '完成 Redis 缓存穿透与击穿专项练习',
+      status: 'TODO',
+      createdAt: '2026-10-24T09:06:00',
+      updatedAt: '2026-10-24T09:06:00',
+      completedAt: null,
+    };
+    let updatedTask = task;
+    let taskUpdatePayload: Record<string, unknown> | null = null;
+    await page.route(/\/api\/agent\/training-tasks(?:\/.*)?(?:\?.*)?$/, async route => {
+      if (route.request().method() === 'PATCH') {
+        taskUpdatePayload = route.request().postDataJSON() as Record<string, unknown>;
+        updatedTask = { ...task, status: 'IN_PROGRESS', updatedAt: '2026-10-24T09:07:00' };
+        await route.fulfill({ contentType: 'application/json', body: envelope(updatedTask) });
+        return;
+      }
+      await route.fulfill({ contentType: 'application/json', body: envelope([updatedTask]) });
+    });
+
+    let createPayload: Record<string, unknown> | null = null;
+    await page.unroute('**/api/interview/sessions');
+    await page.route('**/api/interview/sessions', async route => {
+      if (route.request().method() !== 'POST') {
+        await route.fulfill({ contentType: 'application/json', body: envelope(sessions) });
+        return;
+      }
+      createPayload = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: envelope({
+          sessionId: 'focused-interview-task-1',
+          resumeText: '',
+          totalQuestions: 3,
+          currentQuestionIndex: 0,
+          questions: [{
+            questionIndex: 0,
+            question: 'Redis 缓存穿透如何处理？',
+            type: 'JAVA',
+            category: 'Redis',
+            userAnswer: null,
+            score: null,
+            feedback: null,
+          }],
+          status: 'CREATED',
+        }),
+      });
+    });
+
+    await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
+    const tasks = page.getByLabel('Agent 训练任务');
+    await expect(tasks.getByText('补 Redis 缓存', { exact: true })).toBeVisible();
+    const startTaskButton = tasks.getByRole('button', { name: '开始专项面试' });
+    await expect(startTaskButton).toBeEnabled();
+    await startTaskButton.click();
+    await expect.poll(() => taskUpdatePayload).toMatchObject({ status: 'IN_PROGRESS' });
+    await expect.poll(() => createPayload).toMatchObject({
+      agentActionId: 'training-task-action-1',
+      skillId: 'java-backend',
+      forceCreate: true,
+    });
+    await expect(page).toHaveURL(/\/interview\/session\/focused-interview-task-1$/);
+  });
+
   test('确认的练习草稿可以带着 Agent 动作进入专项文字面试', async ({ page }) => {
     const actionId = 'practice-action-confirmed';
     await page.unroute('**/api/agent/interview-sessions/interview-1/actions*');
