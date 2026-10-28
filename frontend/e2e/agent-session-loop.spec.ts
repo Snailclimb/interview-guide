@@ -137,6 +137,20 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
         },
       ]) });
     });
+    await page.route('**/api/agent/usage/summary', async route => {
+      await route.fulfill({ contentType: 'application/json', body: envelope({
+        runCount: 3,
+        completedRunCount: 2,
+        failedRunCount: 1,
+        cancelledRunCount: 0,
+        promptTokens: 1200,
+        completionTokens: 800,
+        totalTokens: 2000,
+        modelCalls: 4,
+        durationMillis: 12500,
+        costs: [{ provider: 'pixel', currency: 'USD', amount: '0.30' }],
+      }) });
+    });
     await page.route('**/api/agent/memory/items/*', async route => {
       const itemId = route.request().url().split('/').pop()!;
       if (route.request().method() === 'PATCH') {
@@ -203,6 +217,8 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
   test('切换页面、刷新和多线程都保持会话隔离', async ({ page }) => {
     await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
     await expect(page.getByText('线程 A 的复盘内容')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Agent 累计用量' })).toContainText('2,000');
+    await expect(page.getByRole('region', { name: 'Agent 累计用量' })).toContainText('pixel · USD 0.30');
 
     await page.getByText('第二轮训练', { exact: true }).click();
     await expect(page).toHaveURL(/agentSessionId=thread-b/);

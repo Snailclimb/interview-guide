@@ -18,6 +18,7 @@ import interview.guide.modules.agent.model.CreateAgentScheduleDraftRequest;
 import interview.guide.modules.agent.model.UpdateAgentActionDraftRequest;
 import interview.guide.modules.agent.model.AgentTrainingTaskResponse;
 import interview.guide.modules.agent.model.AgentTrainingTaskStatus;
+import interview.guide.modules.agent.model.AgentUsageSummaryResponse;
 import interview.guide.modules.agent.model.UpdateAgentTrainingTaskRequest;
 import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.AgentActionService;
@@ -25,6 +26,7 @@ import interview.guide.modules.agent.service.AgentMemoryService;
 import interview.guide.modules.agent.service.AgentAuditService;
 import interview.guide.modules.agent.service.InterviewAgentService;
 import interview.guide.modules.agent.service.AgentTrainingTaskService;
+import interview.guide.modules.agent.service.AgentUsageService;
 import interview.guide.modules.interview.service.InterviewHistoryService;
 import interview.guide.modules.auth.AuthIdentityService;
 import interview.guide.common.result.Result;
@@ -70,9 +72,19 @@ public class AgentController {
     private final AgentAuditService auditService;
     private final AgentActionService actionService;
     private final AgentTrainingTaskService trainingTaskService;
+    private final AgentUsageService usageService;
     private final InterviewHistoryService interviewHistoryService;
     private final AuthIdentityService authIdentityService;
     private final ObjectMapper objectMapper;
+
+    /** 查询当前登录用户跨 Agent 对话的累计 Token、耗时和费用。 */
+    @GetMapping("/api/agent/usage/summary")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
+    public Result<AgentUsageSummaryResponse> getUsageSummary(
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey
+    ) {
+        return Result.success(usageService.summarize(authIdentityService.requireIdentity(ownerKey)));
+    }
 
     @GetMapping("/api/agent/interview-sessions/{sessionId}/conversation")
     @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)

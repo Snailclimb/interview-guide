@@ -46,6 +46,25 @@ export interface AgentRunUsage {
   model?: string | null;
 }
 
+export interface AgentUsageCostSummary {
+  provider?: string | null;
+  currency?: string | null;
+  amount: number | string;
+}
+
+export interface AgentUsageSummary {
+  runCount: number;
+  completedRunCount: number;
+  failedRunCount: number;
+  cancelledRunCount: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  modelCalls: number;
+  durationMillis: number;
+  costs: AgentUsageCostSummary[];
+}
+
 export interface AgentAuditEvent {
   interviewSessionId?: string | null;
   agentSessionId?: string | null;

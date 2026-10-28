@@ -10,6 +10,7 @@ import type {
   AgentMemoryResponse,
   AgentMessageRequest,
   AgentStreamEvent,
+  AgentUsageSummary,
 } from '../types/agent.ts';
 import { getAgentMemoryKey } from '../utils/clientIdentity.ts';
 
@@ -24,6 +25,12 @@ interface AgentStreamHandlers {
 }
 
 export const agentApi = {
+  getUsageSummary(): Promise<AgentUsageSummary> {
+    return request.get<AgentUsageSummary>('/api/agent/usage/summary', {
+      headers: agentHeaders(),
+    });
+  },
+
   getAuditEvents(limit = 20): Promise<AgentAuditEvent[]> {
     return request.get<AgentAuditEvent[]>(
       `/api/agent/audit/events?limit=${Math.max(1, Math.min(100, limit))}`,

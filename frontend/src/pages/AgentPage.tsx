@@ -62,6 +62,7 @@ import type {
   AgentTrainingTask,
   AgentTrainingTaskStatus,
   AgentRunUsage,
+  AgentUsageSummary,
   AgentSource,
   AgentStreamEvent,
 } from '../types/agent';
@@ -126,6 +127,14 @@ function formatDate(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDurationMillis(value: number) {
+  const totalSeconds = Math.max(0, Math.round(value / 1000));
+  if (totalSeconds < 60) return `${totalSeconds} 秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`;
 }
 
 function formatAuditAction(action: string) {
@@ -290,6 +299,9 @@ export default function AgentPage() {
   const [loopPlan, setLoopPlan] = useState('');
   const [runNotice, setRunNotice] = useState('');
   const [runUsage, setRunUsage] = useState<AgentRunUsage | null>(null);
+  const [usageSummary, setUsageSummary] = useState<AgentUsageSummary | null>(null);
+  const [usageSummaryLoading, setUsageSummaryLoading] = useState(true);
+  const [usageSummaryNotice, setUsageSummaryNotice] = useState('');
   const [memoryNotice, setMemoryNotice] = useState('');
   const [memory, setMemory] = useState<AgentMemoryResponse | null>(null);
   const [memoryLoading, setMemoryLoading] = useState(true);
@@ -758,6 +770,7 @@ export default function AgentPage() {
           setRunStatus((current) => current === 'running' ? 'completed' : current);
           void loadLongTermMemory();
           void loadAuditEvents();
+          void loadUsageSummary();
           void agentApi.getConversation(sessionId, agentSessionId)
             .then((conversation) => {
               restoreRunProgress(conversation);
@@ -836,6 +849,19 @@ export default function AgentPage() {
       .finally(() => setAuditLoading(false));
   }, []);
 
+  const loadUsageSummary = useCallback(() => {
+    setUsageSummaryLoading(true);
+    setUsageSummaryNotice('');
+    return agentApi.getUsageSummary()
+      .then((value) => setUsageSummary(value))
+      .catch((error: unknown) => {
+        setUsageSummaryNotice(getErrorMessage(error) === '请先登录'
+          ? '登录状态已失效，请重新登录后查看累计用量'
+          : '累计用量读取失败，请稍后重试');
+      })
+      .finally(() => setUsageSummaryLoading(false));
+  }, []);
+
   const loadAgentActions = useCallback(() => {
     if (!sessionId || !interview) {
       setActions([]);
@@ -863,6 +889,10 @@ export default function AgentPage() {
   useEffect(() => {
     void loadAuditEvents();
   }, [loadAuditEvents]);
+
+  useEffect(() => {
+    void loadUsageSummary();
+  }, [loadUsageSummary]);
 
   useEffect(() => {
     void loadAgentActions();
@@ -1623,6 +1653,69 @@ export default function AgentPage() {
         ) : (
           <p className="text-xs dark-text-muted mt-3">暂无长期记忆，完成一次 Agent 复盘后会自动积累。</p>
         )}
+      </section>
+
+      <section className="dark-card px-5 py-4" aria-label="Agent 累计用量">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold dark-text">累计用量</h2>
+              <span className="text-[11px] rounded-full bg-slate-100 px-2 py-0.5 text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+                当前账号
+              </span>
+            </div>
+            <p className="text-xs dark-text-muted mt-1">统计已记录的 Agent 运行，覆盖当前账号下的多个面试和对话。</p>
+          </div>
+          <button
+            onClick={() => void loadUsageSummary()}
+            disabled={usageSummaryLoading}
+            className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs disabled:opacity-50"
+            aria-label="刷新 Agent 累计用量"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${usageSummaryLoading ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
+        </div>
+        {usageSummaryNotice ? (
+          <p className="text-xs text-rose-500 dark:text-rose-300 mt-3">{usageSummaryNotice}</p>
+        ) : usageSummaryLoading && !usageSummary ? (
+          <p className="text-xs dark-text-muted mt-3">正在读取累计用量...</p>
+        ) : usageSummary ? (
+          <>
+            <div className="mt-4 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/70 p-3">
+                <span className="dark-text-muted">运行次数</span>
+                <p className="mt-1 text-lg font-semibold dark-text">{usageSummary.runCount.toLocaleString()}</p>
+                <p className="text-[11px] dark-text-muted mt-1">完成 {usageSummary.completedRunCount} 次</p>
+              </div>
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/70 p-3">
+                <span className="dark-text-muted">累计 Token</span>
+                <p className="mt-1 text-lg font-semibold dark-text">{usageSummary.totalTokens.toLocaleString()}</p>
+                <p className="text-[11px] dark-text-muted mt-1">输入 {usageSummary.promptTokens.toLocaleString()} · 输出 {usageSummary.completionTokens.toLocaleString()}</p>
+              </div>
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/70 p-3">
+                <span className="dark-text-muted">模型调用</span>
+                <p className="mt-1 text-lg font-semibold dark-text">{usageSummary.modelCalls.toLocaleString()} 次</p>
+                <p className="text-[11px] dark-text-muted mt-1">包含重试与降级调用</p>
+              </div>
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/70 p-3">
+                <span className="dark-text-muted">累计耗时</span>
+                <p className="mt-1 text-lg font-semibold dark-text">{formatDurationMillis(usageSummary.durationMillis)}</p>
+                <p className="text-[11px] dark-text-muted mt-1">失败 {usageSummary.failedRunCount} · 取消 {usageSummary.cancelledRunCount}</p>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] dark-text-muted">
+              <span>累计费用：</span>
+              {usageSummary.costs.length === 0 ? (
+                <span>未配置单价</span>
+              ) : usageSummary.costs.map((cost) => (
+                <span key={`${cost.provider || 'unknown'}-${cost.currency || 'unknown'}`}>
+                  {[cost.provider, cost.currency].filter(Boolean).join(' · ') || '未知价格组'} {cost.amount}
+                </span>
+              ))}
+            </div>
+          </>
+        ) : null}
       </section>
 
       <section className="dark-card px-5 py-4" aria-label="Agent 最近活动">

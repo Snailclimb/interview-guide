@@ -9,10 +9,12 @@ import interview.guide.modules.agent.model.CreateAgentDraftActionRequest;
 import interview.guide.modules.agent.model.CreateAgentMemoryDraftRequest;
 import interview.guide.modules.agent.model.CreateAgentTitleDraftRequest;
 import interview.guide.modules.agent.model.UpdateAgentMemoryItemRequest;
+import interview.guide.modules.agent.model.AgentUsageSummaryResponse;
 import interview.guide.modules.agent.service.AgentActionService;
 import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.AgentMemoryService;
 import interview.guide.modules.agent.service.InterviewAgentService;
+import interview.guide.modules.agent.service.AgentUsageService;
 import interview.guide.modules.auth.AuthIdentityService;
 import interview.guide.modules.interview.service.InterviewHistoryService;
 import java.time.LocalDateTime;
@@ -38,6 +40,7 @@ class AgentControllerTest {
     @Mock private AgentMemoryService memoryService;
     @Mock private AgentActionService actionService;
     @Mock private InterviewHistoryService interviewHistoryService;
+    @Mock private AgentUsageService usageService;
     @Mock private AuthIdentityService authIdentityService;
     @Mock private ObjectMapper objectMapper;
     @InjectMocks private AgentController controller;
@@ -57,6 +60,22 @@ class AgentControllerTest {
         assertThat(result.getData().lastSkillId()).isEqualTo("java-backend");
         assertThat(result.getData().weaknesses()).containsExactly("Redis");
         assertThat(result.getData().toString()).doesNotContain("internal-key");
+    }
+
+    @Test
+    @DisplayName("累计用量接口按当前登录身份查询")
+    void returnsUsageSummaryForCurrentIdentity() {
+        when(authIdentityService.requireIdentity("user-1")).thenReturn("user-1");
+        AgentUsageSummaryResponse summary = new AgentUsageSummaryResponse(
+            2, 1, 1, 0, 120, 80, 200, 3, 4_000, List.of()
+        );
+        when(usageService.summarize("user-1")).thenReturn(summary);
+
+        Result<AgentUsageSummaryResponse> result = controller.getUsageSummary("user-1");
+
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getData().runCount()).isEqualTo(2);
+        verify(usageService).summarize("user-1");
     }
 
     @Test

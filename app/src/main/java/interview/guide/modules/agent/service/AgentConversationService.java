@@ -50,6 +50,7 @@ public class AgentConversationService {
     private final ObjectMapper objectMapper;
     private final InterviewPersistenceService interviewPersistenceService;
     private final AgentAuditService auditService;
+    private final AgentUsageService usageService;
 
     /** 兼容无 Spring 容器的旧测试和内部调用方。 */
     public AgentConversationService(
@@ -58,7 +59,7 @@ public class AgentConversationService {
         ObjectMapper objectMapper,
         InterviewPersistenceService interviewPersistenceService
     ) {
-        this(sessionRepository, messageRepository, objectMapper, interviewPersistenceService, null);
+        this(sessionRepository, messageRepository, objectMapper, interviewPersistenceService, null, null);
     }
 
     @Autowired
@@ -67,13 +68,15 @@ public class AgentConversationService {
         AgentChatMessageRepository messageRepository,
         ObjectMapper objectMapper,
         InterviewPersistenceService interviewPersistenceService,
-        AgentAuditService auditService
+        AgentAuditService auditService,
+        AgentUsageService usageService
     ) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.objectMapper = objectMapper;
         this.interviewPersistenceService = interviewPersistenceService;
         this.auditService = auditService;
+        this.usageService = usageService;
     }
 
     @Transactional
@@ -474,8 +477,17 @@ public class AgentConversationService {
             log.info("忽略已失效 Agent 用量事件: messageId={}", messageId);
             return;
         }
-        applyRunUsage(session, usage);
+        AgentRunUsage safe = usage == null ? AgentRunUsage.empty() : usage;
+        applyRunUsage(session, safe);
         sessionRepository.save(session);
+        if (usageService != null && isTerminalRun(session.getRunStatus())) {
+            try {
+                usageService.record(session, safe);
+            } catch (Throwable error) {
+                // 累计用量是附加观测能力，不能影响最近一次用量或回答终态落库。
+                log.warn("Agent 累计用量持久化失败: messageId={}", messageId, error);
+            }
+        }
     }
 
     /**
@@ -929,6 +941,12 @@ public class AgentConversationService {
         session.setRunCurrency(safe.currency());
         session.setRunProvider(safe.provider());
         session.setRunModel(safe.model());
+    }
+
+    private boolean isTerminalRun(AgentRunStatus status) {
+        return status == AgentRunStatus.COMPLETED
+            || status == AgentRunStatus.FAILED
+            || status == AgentRunStatus.CANCELLED;
     }
 
     private AgentRunUsage readRunUsage(AgentChatSessionEntity session) {
