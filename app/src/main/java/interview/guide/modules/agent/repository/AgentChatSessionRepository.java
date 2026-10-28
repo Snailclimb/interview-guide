@@ -36,7 +36,13 @@ public interface AgentChatSessionRepository extends JpaRepository<AgentChatSessi
         AgentRunStatus runStatus, LocalDateTime runStartedAt
     );
 
-    /** 串行化同一面试 Agent 会话的消息序号分配。 */
+    /** 无线程 ID 的写入请求只锁最早创建的默认线程。 */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    List<AgentChatSessionEntity> findTop1ByInterviewSessionIdOrderByCreatedAtAsc(
+        String interviewSessionId
+    );
+
+    /** 旧测试替身和迁移期调用方的兼容入口。 */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM AgentChatSessionEntity s WHERE s.interviewSessionId = :interviewSessionId ORDER BY s.createdAt ASC")
     Optional<AgentChatSessionEntity> findByInterviewSessionIdForUpdate(

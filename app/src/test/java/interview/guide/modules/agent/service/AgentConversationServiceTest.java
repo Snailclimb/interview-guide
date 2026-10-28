@@ -91,6 +91,39 @@ class AgentConversationServiceTest {
     }
 
     @Test
+    @DisplayName("未指定线程时只锁最早默认线程，不因同一报告有多个线程而报非唯一结果")
+    void prepareMessageUsesOldestThreadWhenMultipleThreadsExist() {
+        AgentChatSessionEntity oldest = AgentChatSessionEntity.builder()
+            .id(12L)
+            .interviewSessionId("interview-1")
+            .agentSessionId("oldest-thread")
+            .title("最早线程")
+            .runStatus(AgentRunStatus.IDLE)
+            .build();
+        when(sessionRepository.findTop1ByInterviewSessionIdOrderByCreatedAtAsc("interview-1"))
+            .thenReturn(List.of(oldest));
+        when(messageRepository.findTopBySessionIdOrderBySequenceNumDesc(12L))
+            .thenReturn(Optional.empty());
+        when(sessionRepository.save(any(AgentChatSessionEntity.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+        when(messageRepository.save(any(AgentChatMessageEntity.class)))
+            .thenAnswer(invocation -> {
+                AgentChatMessageEntity message = invocation.getArgument(0);
+                if (message.getRole() == AgentChatMessageEntity.MessageRole.ASSISTANT) {
+                    message.setId(23L);
+                }
+                return message;
+            });
+
+        AgentConversationService.PreparedMessage prepared = service.prepareMessage(
+            "interview-1", "review", null, "继续复盘"
+        );
+
+        assertThat(prepared.agentSessionId()).isEqualTo("oldest-thread");
+        verify(sessionRepository, never()).findByInterviewSessionIdForUpdate("interview-1");
+    }
+
+    @Test
     @DisplayName("恢复会话时只返回已完成且有内容的消息")
     void getConversationFiltersIncompleteMessages() {
         AgentChatSessionEntity session = AgentChatSessionEntity.builder()

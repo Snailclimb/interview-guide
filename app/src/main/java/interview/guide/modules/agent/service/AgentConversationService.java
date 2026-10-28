@@ -852,7 +852,16 @@ public class AgentConversationService {
             return sessionRepository.findByAgentSessionIdForUpdate(agentSessionId)
                 .filter(session -> interviewSessionId.equals(session.getInterviewSessionId()));
         }
-        return sessionRepository.findByInterviewSessionIdForUpdate(interviewSessionId);
+        List<AgentChatSessionEntity> oldest = sessionRepository
+            .findTop1ByInterviewSessionIdOrderByCreatedAtAsc(interviewSessionId);
+        if (oldest != null && !oldest.isEmpty()) {
+            return Optional.of(oldest.getFirst());
+        }
+        // 兼容旧测试替身和未实现派生锁查询的调用方；生产 Repository 使用上面的
+        // FirstBy 查询，确保多线程场景只锁最早线程而不是触发非唯一结果异常。
+        Optional<AgentChatSessionEntity> legacy = sessionRepository
+            .findByInterviewSessionIdForUpdate(interviewSessionId);
+        return legacy == null ? Optional.empty() : legacy;
     }
 
     private void ensureSessionIdentity(AgentChatSessionEntity session, String interviewSessionId) {
@@ -1025,7 +1034,7 @@ public class AgentConversationService {
         if (session.getAgentSessionId() != null && !session.getAgentSessionId().isBlank()) {
             return sessionRepository.findByAgentSessionIdForUpdate(session.getAgentSessionId());
         }
-        return sessionRepository.findByInterviewSessionIdForUpdate(session.getInterviewSessionId());
+        return findSessionForUpdate(session.getInterviewSessionId(), session.getAgentSessionId());
     }
 
     private void updateTerminalMessage(
