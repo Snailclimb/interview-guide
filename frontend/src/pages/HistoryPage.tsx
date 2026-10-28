@@ -45,12 +45,14 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
   const navigate = useNavigate();
   const [resumes, setResumes] = useState<ResumeListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; filename: string } | null>(null);
 
   const loadResumes = useCallback(async (isPolling = false) => {
     if (!isPolling) setLoading(true);
+    if (!isPolling) setLoadError('');
     try {
       const data = await historyApi.getResumes();
       setResumes(prev => {
@@ -59,6 +61,9 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
       });
     } catch (err) {
       console.error('加载历史记录失败', err);
+      if (!isPolling) {
+        setLoadError(err instanceof Error && err.message ? err.message : '简历列表加载失败，请刷新后重试');
+      }
     } finally {
       if (!isPolling) setLoading(false);
     }
@@ -164,8 +169,23 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
         </div>
       )}
 
+      {!loading && loadError && (
+        <div className="text-center py-20 bg-white dark:bg-slate-800 rounded-2xl">
+          <AlertCircle className="w-12 h-12 text-rose-400 mx-auto mb-4" />
+          <p className="text-slate-600 dark:text-slate-300 mb-4">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => void loadResumes()}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors"
+          >
+            <RefreshCw className="w-4 h-4" />
+            重新加载
+          </button>
+        </div>
+      )}
+
       {/* 空状态 */}
-      {!loading && filteredResumes.length === 0 && (
+      {!loading && !loadError && filteredResumes.length === 0 && (
         <motion.div
           className="text-center py-20 bg-white dark:bg-slate-800 rounded-2xl"
           initial={{opacity: 0, scale: 0.95}}
@@ -178,7 +198,7 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
       )}
 
       {/* 表格 */}
-      {!loading && filteredResumes.length > 0 && (
+      {!loading && !loadError && filteredResumes.length > 0 && (
         <motion.div
           className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm overflow-hidden"
           initial={{opacity: 0, y: 20}}
