@@ -70,6 +70,7 @@ public class InterviewAgentService {
     private final AgentProgressWriter agentProgressWriter;
     private final AgentRetryProperties retryProperties;
     private final AgentLoopPlanner agentLoopPlanner;
+    private final AgentAuditService agentAuditService;
     private final Set<String> activeSessions = ConcurrentHashMap.newKeySet();
     private final Map<String, Sinks.One<Void>> cancellationSignals = new ConcurrentHashMap<>();
     private final Map<String, AgentTaskHandle> activeTasks = new ConcurrentHashMap<>();
@@ -90,7 +91,6 @@ public class InterviewAgentService {
         );
     }
 
-    @Autowired
     public InterviewAgentService(
         AgentContextService agentContextService,
         AgentConversationService agentConversationService,
@@ -102,6 +102,25 @@ public class InterviewAgentService {
         AgentRetryProperties retryProperties,
         AgentLoopPlanner agentLoopPlanner
     ) throws IOException {
+        this(
+            agentContextService, agentConversationService, llmProviderRegistry, promptSanitizer,
+            resourceLoader, agentMetrics, agentProgressWriter, retryProperties, agentLoopPlanner, null
+        );
+    }
+
+    @Autowired
+    public InterviewAgentService(
+        AgentContextService agentContextService,
+        AgentConversationService agentConversationService,
+        LlmProviderRegistry llmProviderRegistry,
+        PromptSanitizer promptSanitizer,
+        ResourceLoader resourceLoader,
+        AgentMetrics agentMetrics,
+        AgentProgressWriter agentProgressWriter,
+        AgentRetryProperties retryProperties,
+        AgentLoopPlanner agentLoopPlanner,
+        AgentAuditService agentAuditService
+    ) throws IOException {
         this.agentContextService = agentContextService;
         this.agentConversationService = agentConversationService;
         this.llmProviderRegistry = llmProviderRegistry;
@@ -110,6 +129,7 @@ public class InterviewAgentService {
         this.agentProgressWriter = agentProgressWriter;
         this.retryProperties = retryProperties;
         this.agentLoopPlanner = agentLoopPlanner;
+        this.agentAuditService = agentAuditService;
         this.systemPromptTemplate = new PromptTemplate(resourceLoader
             .getResource("classpath:prompts/agent-interview-coach-system.st")
             .getContentAsString(StandardCharsets.UTF_8));
@@ -365,6 +385,9 @@ public class InterviewAgentService {
                         retryProperties.getLoopTotalTimeoutMillis(),
                         retryProperties.getLoopMaxParallelSteps()
                     );
+                    AgentLoopEngine.StepExecutor loopToolExecutor = new AgentLoopToolExecutor(
+                        agentMetrics, agentAuditService, runTracker
+                    );
                     int resumeIndex = resumeState == null
                         ? 0 : Math.max(0, resumeState.nextStepIndex());
                     java.util.Set<Integer> completedStepIndices = new java.util.TreeSet<>(
@@ -401,11 +424,11 @@ public class InterviewAgentService {
                             ),
                             resumeState.completedStepIndices(),
                             loopPolicy,
-                            null,
+                            loopToolExecutor,
                             checkpointListener
                         )
                         : loopEngine.execute(
-                            context, loopSteps, loopPolicy, null, checkpointListener
+                            context, loopSteps, loopPolicy, loopToolExecutor, checkpointListener
                         );
                     loopResult.iterations().forEach(iteration -> agentMetrics.recordLoopStep(
                         iteration.status(), Duration.ofMillis(iteration.durationMillis())

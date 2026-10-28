@@ -127,8 +127,11 @@ done
 ```
 
 步骤是可观察的编排状态。Loop 有明确边界：规划器最多输出约 1,200 字符，最多规整为
-`APP_AI_AGENT_LOOP_MAX_STEPS`（默认 3）个步骤；最终生成阶段复用已有的
-`SkillsTool + ToolCallingAdvisor`，工具调用由 Spring AI 在当前请求内完成，不会再叠加一套无限自主循环。
+`APP_AI_AGENT_LOOP_MAX_STEPS`（默认 3）个步骤；每个步骤先进入内置的只读工具执行器，
+统一经过单次运行工具预算、超时、重试、指标和低敏审计。当前工具只观察面试报告、确认
+当前目标、核对 Skill/RAG 来源或整理资料边界，不修改面试、简历、记忆和知识库。
+最终生成阶段复用已有的 `SkillsTool + ToolCallingAdvisor`，工具调用由 Spring AI 在当前请求内完成，
+不会再叠加一套无限自主循环。
 模型失败时仍走现有 Provider 重试、上下文压缩和输出护栏；不开放写入型工具。
 
 ## 6. 长期记忆与应用重启恢复
@@ -159,8 +162,9 @@ done
    同一份面试报告下的多个 Agent 对话通过 `agent_session_id` 隔离，旧的只传面试报告 ID 的链接继续指向最早线程。
 3. Provider 失败重试、备用 Provider、SSE 心跳、取消、超时回收和重复任务保护。
 4. 前端 Markdown 展示、断线恢复、失败重试、Loop 步骤和当前运行来源展示。
-5. Agent 只读 Skill 工具调用的成功/失败与耗时指标（不记录参数和返回内容）。
-6. 有边界的 Agent Loop、浏览器级长期记忆和应用重启任务恢复。
+5. Agent Loop 内置只读工具和最终回答阶段 Skill 工具调用的成功/失败与耗时指标
+   （不记录参数和返回内容）。
+6. 有边界的 Agent Loop、步骤工具预算、低敏工具审计、浏览器级长期记忆和应用重启任务恢复。
 7. 默认 Provider 固化与候选凭证过滤：恢复任务沿用启动时的首选 Provider；没有有效 API Key 的聊天 Provider 不进入备用候选链路。
 
 关键 Agent 指标：
