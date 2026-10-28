@@ -66,6 +66,7 @@ import type {
   AgentRunUsage,
   AgentUsageSummary,
   AgentSource,
+  AgentLoopTraceItem,
   AgentStreamEvent,
 } from '../types/agent';
 import type { ProviderItem } from '../types/llmProvider';
@@ -299,6 +300,7 @@ export default function AgentPage() {
   const [steps, setSteps] = useState<AgentStep[]>(createInitialSteps);
   const [sources, setSources] = useState<AgentSource[]>([]);
   const [loopPlan, setLoopPlan] = useState('');
+  const [loopTrace, setLoopTrace] = useState<AgentLoopTraceItem[]>([]);
   const [runNotice, setRunNotice] = useState('');
   const [runUsage, setRunUsage] = useState<AgentRunUsage | null>(null);
   const [usageSummary, setUsageSummary] = useState<AgentUsageSummary | null>(null);
@@ -390,6 +392,8 @@ export default function AgentPage() {
 
   const restoreRunProgress = useCallback((conversation: AgentConversationResponse) => {
     setSources(conversation.runSources ?? []);
+    setLoopPlan(conversation.loopPlan ?? '');
+    setLoopTrace(conversation.loopTrace ?? []);
     setRunNotice(conversation.runNotice ?? '');
     setRunUsage(conversation.runUsage ?? null);
     if (!conversation.runStep) return;
@@ -485,6 +489,7 @@ export default function AgentPage() {
     setRunNotice('');
     setSources([]);
     setLoopPlan('');
+    setLoopTrace([]);
     setRunUsage(null);
     setActions([]);
     setActionNotice('');
@@ -697,9 +702,28 @@ export default function AgentPage() {
       setLoopPlan(event.content ?? '');
       return;
     }
-    if (event.type === 'loop' && event.status !== 'running' && event.message) {
-      const prefix = event.status === 'completed' ? '执行观察' : '执行异常';
-      setLoopPlan((current) => `${current}${current ? '\n\n' : ''}${prefix}：${event.message}`);
+    if (event.type === 'loop') {
+      const iteration = Number.parseInt((event.step ?? '').replace('loop-', ''), 10);
+      if (Number.isFinite(iteration) && iteration > 0) {
+        setLoopTrace((current) => {
+          const previous = current.find((item) => item.iteration === iteration);
+          const next: AgentLoopTraceItem = {
+            iteration,
+            action: event.content ?? previous?.action ?? '',
+            status: event.status ?? 'unknown',
+            observation: event.status === 'running' ? previous?.observation ?? '' : event.message ?? '',
+            attempts: event.attempts ?? previous?.attempts ?? 0,
+            durationMillis: event.durationMillis ?? previous?.durationMillis ?? 0,
+            failureReason: event.failureReason ?? previous?.failureReason ?? null,
+          };
+          return [...current.filter((item) => item.iteration !== iteration), next]
+            .sort((left, right) => left.iteration - right.iteration);
+        });
+      }
+      if (event.status !== 'running' && event.message) {
+        const prefix = event.status === 'completed' ? '执行观察' : '执行异常';
+        setLoopPlan((current) => `${current}${current ? '\n\n' : ''}${prefix}：${event.message}`);
+      }
       return;
     }
     if (event.type !== 'step' || !event.step || !event.status) return;
@@ -753,6 +777,7 @@ export default function AgentPage() {
     setRunNotice('');
     setSources([]);
     setLoopPlan('');
+    setLoopTrace([]);
     setRunStatus('running');
     setSteps(createInitialSteps().map((step, index) => ({
       ...step,
@@ -1966,6 +1991,35 @@ export default function AgentPage() {
               <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50/70 px-4 py-3 dark:border-primary-900/50 dark:bg-primary-900/20">
                 <p className="text-xs font-semibold text-primary-600 dark:text-primary-300">本次执行计划</p>
                 <p className="mt-2 whitespace-pre-line text-xs leading-6 text-slate-600 dark:text-slate-300">{loopPlan}</p>
+              </div>
+            )}
+            {loopTrace.length > 0 && (
+              <div role="region" className="mt-4 rounded-xl border border-slate-200 bg-white/70 px-4 py-3 dark:border-slate-700 dark:bg-slate-900/30" aria-label="Agent Loop 轨迹">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold dark-text">Loop 轨迹</p>
+                  <span className="text-[11px] dark-text-muted">已记录 {loopTrace.length} 步</span>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {loopTrace.map((item) => (
+                    <div key={item.iteration} className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/70">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="font-semibold dark-text">第 {item.iteration} 步</span>
+                        <span className={item.status === 'completed'
+                          ? 'text-emerald-600 dark:text-emerald-300'
+                          : item.status === 'running'
+                            ? 'text-primary-600 dark:text-primary-300'
+                            : 'text-rose-600 dark:text-rose-300'}>
+                          {item.status === 'completed' ? '已完成' : item.status === 'running' ? '执行中' : '异常'}
+                        </span>
+                        {item.attempts > 0 ? <span className="dark-text-muted">尝试 {item.attempts} 次</span> : null}
+                        {item.durationMillis > 0 ? <span className="dark-text-muted">耗时 {formatDurationMillis(item.durationMillis)}</span> : null}
+                      </div>
+                      {item.action ? <p className="mt-1 text-xs dark-text-muted break-words">动作：{item.action}</p> : null}
+                      {item.observation ? <p className="mt-1 text-xs leading-5 dark-text-muted break-words">观察：{item.observation}</p> : null}
+                      {item.failureReason ? <p className="mt-1 text-xs text-rose-600 dark:text-rose-300 break-words">原因：{item.failureReason}</p> : null}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             <div className="flex flex-wrap items-center gap-3 pt-2">

@@ -28,4 +28,19 @@ class AgentStreamEventTest {
         assertThat(error.type()).isEqualTo("error");
         assertThat(error.message()).isEqualTo("模型暂时不可用");
     }
+
+    @Test
+    void shouldExposeStructuredLoopMetadata() {
+        AgentStreamEvent event = AgentStreamEvent.loop(
+            2, "failed", "工具超时", "读取面试报告", 2, 1500, "timeout"
+        );
+
+        assertThat(event.type()).isEqualTo("loop");
+        assertThat(event.iteration()).isEqualTo(2);
+        assertThat(event.content()).isEqualTo("读取面试报告");
+        assertThat(event.message()).isEqualTo("工具超时");
+        assertThat(event.attempts()).isEqualTo(2);
+        assertThat(event.durationMillis()).isEqualTo(1500L);
+        assertThat(event.failureReason()).isEqualTo("timeout");
+    }
 }

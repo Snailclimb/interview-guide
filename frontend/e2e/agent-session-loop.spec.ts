@@ -55,6 +55,18 @@ function conversation(agentSessionId: string, title: string, text: string) {
     runNotice: null,
     runPartialAnswer: null,
     runSources: [],
+    loopPlan: '1. 读取面试报告\n2. 核对训练依据',
+    loopNextStep: 2,
+    loopCompletedStepIndices: [0, 1],
+    loopTrace: [{
+      iteration: 1,
+      action: '读取面试报告',
+      status: 'completed',
+      observation: '已读取面试报告；识别到 1 个待关注项。',
+      attempts: 1,
+      durationMillis: 120,
+      failureReason: null,
+    }],
     messages: [
       { role: 'user', content: '请复盘这场面试' },
       { role: 'assistant', content: text },
@@ -217,6 +229,7 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
   test('切换页面、刷新和多线程都保持会话隔离', async ({ page }) => {
     await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
     await expect(page.getByText('线程 A 的复盘内容')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Agent Loop 轨迹' })).toContainText('已读取面试报告');
     await expect(page.getByRole('region', { name: 'Agent 累计用量' })).toContainText('2,000');
     await expect(page.getByRole('region', { name: 'Agent 累计用量' })).toContainText('pixel · USD 0.30');
 
@@ -347,7 +360,7 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page.getByRole('button', { name: '开始执行' })).toBeEnabled();
     await page.getByRole('button', { name: '开始执行' }).click();
     await expect(page.getByText('Loop 已完成，建议优先补充故障定位案例。')).toBeVisible();
-    await expect(page.getByText('执行观察：已读取面试报告；识别到 1 个待关注项。')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Agent Loop 轨迹' })).toContainText('已读取面试报告；识别到 1 个待关注项。');
   });
 
   test('自然语言安排复习时自动打开日程草稿并等待确认', async ({ page }) => {

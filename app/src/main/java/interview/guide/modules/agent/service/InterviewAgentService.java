@@ -8,6 +8,7 @@ import interview.guide.modules.auth.AuthUserContext;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
 import interview.guide.modules.agent.model.AgentMessageRequest;
 import interview.guide.modules.agent.model.AgentStreamEvent;
+import interview.guide.modules.agent.model.AgentLoopTraceItem;
 import interview.guide.modules.agent.metrics.AgentMetrics;
 import interview.guide.modules.agent.metrics.AgentRunBudgetExceededException;
 import lombok.extern.slf4j.Slf4j;
@@ -326,7 +327,8 @@ public class InterviewAgentService {
                     new LoopResumeState(
                         recoveredRun.loopPlan(),
                         recoveredRun.loopNextStep(),
-                        recoveredRun.loopCompletedStepIndices()
+                        recoveredRun.loopCompletedStepIndices(),
+                        recoveredRun.loopTrace()
                     )
                 );
                 taskHandle.subscription = workflow.subscribe(
@@ -393,9 +395,12 @@ public class InterviewAgentService {
                     java.util.Set<Integer> completedStepIndices = new java.util.TreeSet<>(
                         resumeState == null ? List.of() : resumeState.completedStepIndices()
                     );
+                    List<AgentLoopTraceItem> loopTraceItems = new ArrayList<>(
+                        resumeState == null ? List.of() : resumeState.trace()
+                    );
                     persistLoopCheckpoint(
                         preparedMessage.assistantMessageId(), preparedMessage.runId(), plan,
-                        resumeIndex, completedStepIndices
+                        resumeIndex, completedStepIndices, loopTraceItems
                     );
                     java.util.function.Consumer<AgentLoopEngine.LoopIteration> checkpointListener =
                         iteration -> {
@@ -405,13 +410,21 @@ public class InterviewAgentService {
                             } else {
                                 completedStepIndices.remove(index);
                             }
+                            AgentLoopTraceItem traceItem = new AgentLoopTraceItem(
+                                iteration.iteration(), iteration.action(), iteration.status(),
+                                iteration.observation(), iteration.attempts(),
+                                iteration.durationMillis(), iteration.failureReason()
+                            );
+                            loopTraceItems.removeIf(item -> item.iteration() == traceItem.iteration());
+                            loopTraceItems.add(traceItem);
                             persistLoopCheckpoint(
                                 preparedMessage.assistantMessageId(),
                                 preparedMessage.runId(),
                                 plan,
                                 "completed".equals(iteration.status())
                                     ? iteration.iteration() : index,
-                                completedStepIndices
+                                completedStepIndices,
+                                loopTraceItems
                             );
                         };
                     AgentLoopEngine.LoopResult loopResult = resumeState != null
@@ -435,7 +448,7 @@ public class InterviewAgentService {
                     ));
                     persistLoopCheckpoint(
                         preparedMessage.assistantMessageId(), preparedMessage.runId(),
-                        plan, loopResult.nextStepIndex(), completedStepIndices
+                        plan, loopResult.nextStepIndex(), completedStepIndices, loopTraceItems
                     );
                     String loopTrace = loopResult.trace()
                         + "\nLoop 终态：" + loopResult.termination();
@@ -515,11 +528,13 @@ public class InterviewAgentService {
                         ),
                         Flux.fromIterable(loopResult.iterations())
                             .concatMap(iteration -> Flux.just(
-                                AgentStreamEvent.loop(iteration.iteration(), "running", iteration.action()),
+                                AgentStreamEvent.loop(iteration.iteration(), "running", iteration.action(),
+                                    iteration.action(), iteration.attempts(), 0, null),
                                 AgentStreamEvent.loop(
                                     iteration.iteration(),
                                     "completed".equals(iteration.status()) ? "completed" : "failed",
-                                    iteration.observation()
+                                    iteration.observation(), iteration.action(), iteration.attempts(),
+                                    iteration.durationMillis(), iteration.failureReason()
                                 )
                             )),
                         Flux.just(
@@ -692,7 +707,8 @@ public class InterviewAgentService {
         String runId,
         String plan,
         int nextStepIndex,
-        java.util.Set<Integer> completedStepIndices
+        java.util.Set<Integer> completedStepIndices,
+        List<AgentLoopTraceItem> loopTrace
     ) {
         agentProgressWriter.recordLoopState(
             assistantMessageId, runId, plan, nextStepIndex,
@@ -700,6 +716,16 @@ public class InterviewAgentService {
         );
         // Loop 步骤之间可能发生进程退出，检查点必须在步骤边界立即落库。
         agentProgressWriter.flush(assistantMessageId);
+        try {
+            agentConversationService.updateLoopTrace(
+                assistantMessageId,
+                loopTrace == null ? List.of() : List.copyOf(loopTrace),
+                runId
+            );
+        } catch (Throwable error) {
+            // 轨迹是恢复展示能力，不能因为附加写入失败中断 Agent 主流程。
+            log.warn("Agent Loop 轨迹持久化失败: messageId={}", assistantMessageId, error);
+        }
     }
 
     private Flux<Boolean> monitorRemoteCancellation(String sessionId, String agentSessionId, String runId) {
@@ -1308,11 +1334,15 @@ public class InterviewAgentService {
     }
 
     private record LoopResumeState(
-        String plan, int nextStepIndex, List<Integer> completedStepIndices
+        String plan,
+        int nextStepIndex,
+        List<Integer> completedStepIndices,
+        List<AgentLoopTraceItem> trace
     ) {
         private LoopResumeState {
             completedStepIndices = completedStepIndices == null
                 ? List.of() : List.copyOf(completedStepIndices);
+            trace = trace == null ? List.of() : List.copyOf(trace);
         }
 
         private boolean hasPlan() {

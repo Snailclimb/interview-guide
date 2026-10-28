@@ -32,6 +32,20 @@ export interface AgentConversationResponse {
   runSources?: AgentSource[];
   messages: AgentHistoryMessage[];
   runUsage?: AgentRunUsage | null;
+  loopPlan?: string | null;
+  loopNextStep?: number;
+  loopCompletedStepIndices?: number[];
+  loopTrace?: AgentLoopTraceItem[];
+}
+
+export interface AgentLoopTraceItem {
+  iteration: number;
+  action: string;
+  status: string;
+  observation: string;
+  attempts: number;
+  durationMillis: number;
+  failureReason?: string | null;
 }
 
 export interface AgentRunUsage {
@@ -173,4 +187,8 @@ export interface AgentStreamEvent {
   content?: string;
   message?: string;
   sources?: AgentSource[];
+  iteration?: number;
+  attempts?: number;
+  durationMillis?: number;
+  failureReason?: string | null;
 }

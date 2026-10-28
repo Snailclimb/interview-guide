@@ -104,6 +104,10 @@ public class AgentChatSessionEntity {
     @Column(name = "loop_completed_steps", columnDefinition = "TEXT")
     private String loopCompletedSteps;
 
+    /** 结构化 Loop 轨迹 JSON；不保存模型隐藏推理或原始上下文。 */
+    @Column(name = "loop_trace", columnDefinition = "TEXT")
+    private String loopTraceJson;
+
     @Column(name = "run_prompt_tokens")
     private Integer runPromptTokens;
 

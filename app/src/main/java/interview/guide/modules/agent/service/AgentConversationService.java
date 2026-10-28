@@ -5,6 +5,7 @@ import interview.guide.modules.agent.model.AgentChatSessionEntity;
 import interview.guide.modules.agent.model.AgentConversationResponse;
 import interview.guide.modules.agent.model.AgentConversationSummary;
 import interview.guide.modules.agent.model.AgentHistoryMessage;
+import interview.guide.modules.agent.model.AgentLoopTraceItem;
 import interview.guide.modules.agent.model.AgentRunUsage;
 import interview.guide.modules.agent.model.AgentSource;
 import interview.guide.modules.agent.model.AgentRunStatus;
@@ -45,6 +46,8 @@ public class AgentConversationService {
     private static final int MAX_PERSISTED_HISTORY_MESSAGES = 64;
     private static final int STALE_RUN_MINUTES = 15;
     private static final int MAX_RUN_SOURCES_JSON_CHARS = 12_000;
+    private static final int MAX_LOOP_TRACE_JSON_CHARS = 24_000;
+    private static final int MAX_LOOP_TRACE_ITEMS = 128;
     private static final int MAX_OWNER_KEY_LENGTH = 64;
 
     private final AgentChatSessionRepository sessionRepository;
@@ -157,6 +160,7 @@ public class AgentConversationService {
         session.setLoopPlan(null);
         session.setLoopNextStep(0);
         session.setLoopCompletedSteps(null);
+        session.setLoopTraceJson(null);
         clearRunUsage(session);
         session = sessionRepository.save(session);
 
@@ -497,6 +501,20 @@ public class AgentConversationService {
         sessionRepository.save(session);
     }
 
+    /** 持久化结构化 Loop 轨迹，供刷新、断线和应用重启后恢复展示。 */
+    @Transactional
+    public void updateLoopTrace(
+        Long messageId, List<AgentLoopTraceItem> trace, String expectedRunId
+    ) {
+        AgentChatSessionEntity session = lockActiveSession(messageId, expectedRunId);
+        if (session == null) {
+            log.info("忽略已失效 Agent Loop 轨迹事件: messageId={}", messageId);
+            return;
+        }
+        session.setLoopTraceJson(serializeLoopTrace(trace));
+        sessionRepository.save(session);
+    }
+
     /** 持久化最近一次模型运行的聚合用量，供刷新页面和验收查看。 */
     @Transactional
     public void updateRunUsage(Long messageId, AgentRunUsage usage) {
@@ -606,7 +624,8 @@ public class AgentConversationService {
             session.getRunId(),
             session.getLoopPlan(),
             session.getLoopNextStep(),
-            parseLoopCompletedSteps(session.getLoopCompletedSteps())
+            parseLoopCompletedSteps(session.getLoopCompletedSteps()),
+            parseLoopTrace(session.getLoopTraceJson())
         );
     }
 
@@ -676,7 +695,11 @@ public class AgentConversationService {
             partialAnswer,
             parseSources(session.getRunSourcesJson()),
             normalized,
-            readRunUsage(session)
+            readRunUsage(session),
+            session.getLoopPlan(),
+            session.getLoopNextStep(),
+            parseLoopCompletedSteps(session.getLoopCompletedSteps()),
+            parseLoopTrace(session.getLoopTraceJson())
         );
     }
 
@@ -787,6 +810,46 @@ public class AgentConversationService {
             .sorted()
             .limit(128)
             .toList();
+    }
+
+    private String serializeLoopTrace(List<AgentLoopTraceItem> trace) {
+        if (trace == null || trace.isEmpty()) {
+            return null;
+        }
+        try {
+            List<AgentLoopTraceItem> safeTrace = trace.stream()
+                .filter(item -> item != null)
+                .limit(MAX_LOOP_TRACE_ITEMS)
+                .toList();
+            for (int count = safeTrace.size(); count >= 0; count--) {
+                String serialized = objectMapper.writeValueAsString(safeTrace.subList(0, count));
+                if (serialized.length() <= MAX_LOOP_TRACE_JSON_CHARS) {
+                    return serialized;
+                }
+            }
+        } catch (RuntimeException error) {
+            log.warn("Agent Loop 轨迹持久化失败", error);
+        }
+        return "[]";
+    }
+
+    private List<AgentLoopTraceItem> parseLoopTrace(String serialized) {
+        if (serialized == null || serialized.isBlank()) {
+            return List.of();
+        }
+        try {
+            List<AgentLoopTraceItem> trace = objectMapper.readValue(
+                serialized,
+                new TypeReference<List<AgentLoopTraceItem>>() {}
+            );
+            return trace == null ? List.of() : trace.stream()
+                .filter(item -> item != null)
+                .limit(MAX_LOOP_TRACE_ITEMS)
+                .toList();
+        } catch (RuntimeException error) {
+            log.warn("Agent Loop 轨迹恢复失败", error);
+            return List.of();
+        }
     }
 
     private Optional<AgentChatSessionEntity> findSession(
@@ -945,9 +1008,8 @@ public class AgentConversationService {
         session.setRunStepStatus(status == AgentRunStatus.COMPLETED ? "completed"
             : status == AgentRunStatus.CANCELLED ? "cancelled" : "failed");
         session.setRunNotice(null);
-        session.setLoopPlan(null);
-        session.setLoopNextStep(0);
-        session.setLoopCompletedSteps(null);
+        // 保留本次 Loop 的计划、检查点和轨迹，供历史查看与失败后的恢复诊断；
+        // 下一次 prepareMessage 会在新运行开始前清理这些运行态字段。
         sessionRepository.save(session);
         audit(session, "RUN_" + status.name(), "agent-run", session.getRunId(), status.name());
     }
@@ -1145,7 +1207,8 @@ public class AgentConversationService {
         String runId,
         String loopPlan,
         int loopNextStep,
-        List<Integer> loopCompletedStepIndices
+        List<Integer> loopCompletedStepIndices,
+        List<AgentLoopTraceItem> loopTrace
     ) {
         public RecoveredRun(
             String interviewSessionId,
@@ -1157,7 +1220,7 @@ public class AgentConversationService {
             String runId
         ) {
             this(interviewSessionId, null, goal, providerId, null, memoryKey,
-                userContent, assistantMessageId, runId, null, 0, List.of());
+                userContent, assistantMessageId, runId, null, 0, List.of(), List.of());
         }
 
         public RecoveredRun(
@@ -1171,12 +1234,13 @@ public class AgentConversationService {
             String runId
         ) {
             this(interviewSessionId, agentSessionId, goal, providerId, null, memoryKey,
-                userContent, assistantMessageId, runId, null, 0, List.of());
+                userContent, assistantMessageId, runId, null, 0, List.of(), List.of());
         }
 
         public RecoveredRun {
             loopCompletedStepIndices = loopCompletedStepIndices == null
                 ? List.of() : List.copyOf(loopCompletedStepIndices);
+            loopTrace = loopTrace == null ? List.of() : List.copyOf(loopTrace);
         }
     }
 }

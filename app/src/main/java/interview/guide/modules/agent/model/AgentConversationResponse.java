@@ -20,7 +20,11 @@ public record AgentConversationResponse(
     String runPartialAnswer,
     List<AgentSource> runSources,
     List<AgentHistoryMessage> messages,
-    AgentRunUsage runUsage
+    AgentRunUsage runUsage,
+    String loopPlan,
+    int loopNextStep,
+    List<Integer> loopCompletedStepIndices,
+    List<AgentLoopTraceItem> loopTrace
 ) {
     /** 兼容未携带运行用量的旧调用方。 */
     public AgentConversationResponse(
@@ -43,7 +47,7 @@ public record AgentConversationResponse(
     ) {
         this(interviewSessionId, agentSessionId, title, goal, providerId, runId, runStatus,
             runStartedAt, runFinishedAt, runError, runStep, runStepStatus, runNotice,
-            runPartialAnswer, runSources, messages, null);
+            runPartialAnswer, runSources, messages, null, null, 0, List.of(), List.of());
     }
 
     /** 兼容已有服务和测试调用方。 */
@@ -65,11 +69,15 @@ public record AgentConversationResponse(
     ) {
         this(interviewSessionId, null, null, goal, providerId, runId, runStatus,
             runStartedAt, runFinishedAt, runError, runStep, runStepStatus, runNotice,
-            runPartialAnswer, runSources, messages, null);
+            runPartialAnswer, runSources, messages, null, null, 0, List.of(), List.of());
     }
 
     public AgentConversationResponse {
         runSources = runSources == null ? List.of() : List.copyOf(runSources);
         messages = messages == null ? List.of() : List.copyOf(messages);
+        loopNextStep = Math.max(0, loopNextStep);
+        loopCompletedStepIndices = loopCompletedStepIndices == null
+            ? List.of() : List.copyOf(loopCompletedStepIndices);
+        loopTrace = loopTrace == null ? List.of() : List.copyOf(loopTrace);
     }
 }
