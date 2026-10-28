@@ -10,6 +10,24 @@
 - 正式环境：`http://101.126.33.248:18083`，验收期间不得操作或重启
 - 数据库仅用于故障排查，不作为页面功能验收的替代
 
+### 候选环境路由约束
+
+候选前端与正式前端运行在同一台宿主机时，不能直接复用正式环境的 Nginx
+配置。候选前端容器内的所有 `/api/`、`/ws/` 和 Agent SSE 请求必须转发到候选网络中的
+`candidate-app:8080`；正式前端才转发到 `app:8080`。两套环境的页面可以都返回 HTTP 200，
+但如果目标服务写错，业务响应会来自另一套数据库，表现为登录状态、活动记录、长期记忆和
+会话列表互相不一致。
+
+部署后至少检查：
+
+```powershell
+docker exec interview-guide-agent-candidate-frontend nginx -t
+docker exec interview-guide-agent-candidate-frontend nginx -T | Select-String 'proxy_pass'
+```
+
+候选配置应只出现 `candidate-app:8080`，并在登录后通过页面或接口确认 Agent 活动记录、
+长期记忆、训练任务和会话列表均来自候选环境。`18083` 不应停止、重启或替换。
+
 ## 主流程验收
 
 ### 1. 生成并确认训练任务
