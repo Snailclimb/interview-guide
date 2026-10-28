@@ -308,6 +308,34 @@ public class InterviewPersistenceService {
     }
 
     /**
+     * Agent 访问旧的登录前面试记录时，允许将明确未归属的记录一次性认领给当前账号。
+     * 已归属给其他账号的记录不会被放宽访问，避免通过旧链接越权读取数据。
+     */
+    @Transactional
+    public Optional<InterviewSessionEntity> findBySessionIdForOwnerOrClaimLegacy(
+        String sessionId, String ownerId
+    ) {
+        if (sessionId == null || sessionId.isBlank() || ownerId == null || ownerId.isBlank()) {
+            return Optional.empty();
+        }
+        Optional<InterviewSessionEntity> session = sessionRepository.findBySessionIdForUpdate(sessionId);
+        if (session.isEmpty()) {
+            return Optional.empty();
+        }
+        InterviewSessionEntity entity = session.get();
+        if (ownerId.equals(entity.getOwnerId())) {
+            return session;
+        }
+        if (entity.getOwnerId() != null && !entity.getOwnerId().isBlank()) {
+            return Optional.empty();
+        }
+        entity.setOwnerId(ownerId);
+        sessionRepository.save(entity);
+        log.info("已将未归属的历史面试记录认领给当前账号: sessionId={}, ownerId={}", sessionId, ownerId);
+        return Optional.of(entity);
+    }
+
+    /**
      * 修改面试记录名称。
      */
     @Transactional(rollbackFor = Exception.class)

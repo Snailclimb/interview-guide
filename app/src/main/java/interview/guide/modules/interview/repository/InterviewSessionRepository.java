@@ -4,9 +4,11 @@ import interview.guide.modules.interview.model.InterviewSessionEntity;
 import interview.guide.modules.interview.model.InterviewSessionEntity.SessionStatus;
 import interview.guide.modules.resume.model.ResumeEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import jakarta.persistence.LockModeType;
 
 import java.util.List;
 import java.util.Optional;
@@ -51,6 +53,11 @@ public interface InterviewSessionRepository extends JpaRepository<InterviewSessi
      * 根据会话ID查找
      */
     Optional<InterviewSessionEntity> findBySessionId(String sessionId);
+
+    /** Agent 首次接管未归属的登录前历史记录时锁定行，避免两个账号同时认领。 */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM InterviewSessionEntity s WHERE s.sessionId = :sessionId")
+    Optional<InterviewSessionEntity> findBySessionIdForUpdate(@Param("sessionId") String sessionId);
 
     Optional<InterviewSessionEntity> findByRequestId(String requestId);
 

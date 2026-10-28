@@ -837,7 +837,7 @@ public class AgentConversationService {
     private void assertInterviewAccess(String interviewSessionId, String ownerKey) {
         if (ownerKey != null && AuthUserContext.currentUserId().isPresent()
             && interviewPersistenceService != null) {
-            Optional<?> ownedSession = interviewPersistenceService.findBySessionIdForOwner(
+            Optional<?> ownedSession = interviewPersistenceService.findBySessionIdForOwnerOrClaimLegacy(
                 interviewSessionId, ownerKey);
             if (ownedSession != null && ownedSession.isEmpty()) {
                 throw accessDenied();

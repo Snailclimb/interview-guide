@@ -31,7 +31,7 @@ class AgentInterviewOwnershipTest {
     @Test
     void formalUserCannotUseAnotherUsersInterviewAsAgentContext() {
         AuthUserContext.set("user-b");
-        when(interviews.findBySessionIdForOwner("interview-a", "user-b"))
+        when(interviews.findBySessionIdForOwnerOrClaimLegacy("interview-a", "user-b"))
             .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.assertAccess("interview-a", null, "user-b"))

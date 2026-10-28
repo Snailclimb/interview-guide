@@ -17,6 +17,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -66,6 +67,40 @@ class InterviewPersistenceServiceTest {
     assertThat(saved.getInterviewCategory()).isNull();
     assertThat(saved.getSourceType()).isEqualTo("NORMAL");
     assertThat(saved.getKnowledgeBaseId()).isNull();
+  }
+
+  @Test
+  @DisplayName("Agent 访问未归属的登录前记录时只认领一次")
+  void shouldClaimUnownedLegacySessionForAgentOwner() {
+    InterviewPersistenceService service = newService();
+    InterviewSessionEntity session = new InterviewSessionEntity();
+    session.setSessionId("legacy-session");
+    when(sessionRepository.findBySessionIdForUpdate("legacy-session"))
+        .thenReturn(java.util.Optional.of(session));
+    when(sessionRepository.save(any(InterviewSessionEntity.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var result = service.findBySessionIdForOwnerOrClaimLegacy("legacy-session", "user-1");
+
+    assertThat(result).containsSame(session);
+    assertThat(session.getOwnerId()).isEqualTo("user-1");
+    verify(sessionRepository).save(session);
+  }
+
+  @Test
+  @DisplayName("Agent 不会认领已经属于其他账号的记录")
+  void shouldNotClaimOwnedSessionForAnotherAgentOwner() {
+    InterviewPersistenceService service = newService();
+    InterviewSessionEntity session = new InterviewSessionEntity();
+    session.setSessionId("owned-session");
+    session.setOwnerId("user-1");
+    when(sessionRepository.findBySessionIdForUpdate("owned-session"))
+        .thenReturn(java.util.Optional.of(session));
+
+    var result = service.findBySessionIdForOwnerOrClaimLegacy("owned-session", "user-2");
+
+    assertThat(result).isEmpty();
+    verify(sessionRepository, never()).save(any(InterviewSessionEntity.class));
   }
 
   private InterviewPersistenceService newService() {

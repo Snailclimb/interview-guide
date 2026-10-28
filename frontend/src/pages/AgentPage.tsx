@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { agentApi } from '../api/agent';
 import { historyApi, type InterviewDetail } from '../api/history';
+import { interviewApi } from '../api/interview';
 import { llmProviderApi } from '../api/llmProvider';
 import { getErrorMessage } from '../api/request';
 import { StreamHttpError } from '../api/stream';
@@ -517,9 +518,33 @@ export default function AgentPage() {
       .catch((error: unknown) => {
         if (!cancelled) {
           const message = getErrorMessage(error);
-          setContextError(message === '面试会话不存在' || message === '禁止访问'
-            ? '这份面试记录不在当前环境或已失效，请从当前环境的面试中心重新选择。'
-            : message || '无法加载面试上下文');
+          if (message === '面试会话不存在' || message === '禁止访问') {
+            // 地址栏可能来自 18083 或旧账号。此时不能让用户继续对着
+            // 无效报告点击“新建 Agent 对话”，主动从当前登录环境恢复一份可用报告。
+            void interviewApi.listSessions()
+              .then((availableSessions) => {
+                if (cancelled) return;
+                const sorted = [...availableSessions].sort(
+                  (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+                );
+                const fallback = sorted[0];
+                if (fallback && fallback.sessionId !== sessionId) {
+                  rememberAgentSessionId(fallback.sessionId);
+                  rememberAgentThreadId(null);
+                  setContextError('当前链接来自其他环境或已失效，已切换到当前账号最近的面试记录。');
+                  setSearchParams({ sessionId: fallback.sessionId }, { replace: true });
+                  return;
+                }
+                setContextError(fallback
+                  ? '当前面试记录暂时无法读取，请刷新后重试。'
+                  : '当前账号还没有可用的面试记录，请先完成一场文字面试。');
+              })
+              .catch(() => {
+                if (!cancelled) setContextError('这份面试记录不在当前环境或已失效，请从当前环境的面试中心重新选择。');
+              });
+            return;
+          }
+          setContextError(message || '无法加载面试上下文');
         }
       })
       .finally(() => {
