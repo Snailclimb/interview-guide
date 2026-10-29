@@ -31,6 +31,20 @@ public interface AgentChatSessionRepository extends JpaRepository<AgentChatSessi
 
     List<AgentChatSessionEntity> findByInterviewSessionIdOrderByUpdatedAtDesc(String interviewSessionId);
 
+    /** 已登录列表只读取当前用户最近的未归档线程，避免加载其他用户和历史大字段。 */
+    List<AgentConversationSummaryProjection> findTop50ByOwnerKeyAndInterviewSessionIdAndArchivedFalseOrderByUpdatedAtDesc(
+        String ownerKey, String interviewSessionId
+    );
+
+    interface AgentConversationSummaryProjection {
+        String getAgentSessionId();
+        String getInterviewSessionId();
+        String getTitle();
+        AgentRunStatus getRunStatus();
+        LocalDateTime getCreatedAt();
+        LocalDateTime getUpdatedAt();
+    }
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM AgentChatSessionEntity s WHERE s.agentSessionId = :agentSessionId")
     Optional<AgentChatSessionEntity> findByAgentSessionIdForUpdate(
