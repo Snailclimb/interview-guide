@@ -443,6 +443,19 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page.getByText('线程 A 的复盘内容')).not.toBeVisible();
   });
 
+  test('直接打开 Agent 时自动选中最近面试报告并显示新建入口', async ({ page }) => {
+    await page.addInitScript(() => {
+      sessionStorage.removeItem('agent-active-interview-session');
+      sessionStorage.removeItem('agent-active-thread-session');
+    });
+
+    await page.goto('/agent');
+
+    await expect(page).toHaveURL(/sessionId=interview-1/);
+    await expect(page.getByText('线程 A 的复盘内容')).toBeVisible();
+    await expect(page.getByRole('button', { name: '新建 Agent 对话' })).toBeEnabled();
+  });
+
   test('执行任务时展示 Loop 事件并保留最终回答', async ({ page }) => {
     await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
     await expect(page.getByRole('button', { name: '开始执行' })).toBeEnabled();
