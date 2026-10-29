@@ -216,7 +216,9 @@ pwsh -NoProfile -File .\scripts\agent-restart-acceptance.ps1 -BaseUrl http://loc
 - Agent Loop：规划结果会进入有限循环，逐步执行“动作 -> 观察”，将观察轨迹注入最终回答，并通过 SSE 暴露每一步；循环步骤受既有 `loopMaxSteps` 限制，不允许无限执行。
 - Agent Loop 规划器允许模型从 `read_interview_report`、`confirm_agent_goal`、`verify_skill_rag_sources`、`organize_agent_context` 四个只读工具中选择；工具标识采用白名单解析，非法选择降级为资料整理，前端仍展示稳定中文动作标签。
 - 知识库/RAG owner 隔离：新登录用户上传的知识库及 RAG 会话写入 `owner_id`，列表、详情、下载、查询、题目管理、开始知识库面试、重向量化和删除均按当前用户校验；迁移前 `owner_id IS NULL` 的知识库继续作为部署级共享资料可读可维护，保证旧数据和现有题库不受影响。
-- 浏览器验收：新增 Agent 会话隔离、页面刷新恢复、重命名和 Loop 事件的 Playwright 用例；本地和隔离候选环境均已通过 4/4，正式登录态由测试 fixture 覆盖。
+- 浏览器验收：Agent 会话隔离、页面刷新恢复、重命名、Loop 事件、失败重试和入口恢复的
+  Playwright 用例本地通过 19/19，正式登录态由测试 fixture 覆盖；候选环境已手工复核新建
+  会话生成独立 `agentSessionId` 且接口返回 200。
 - 真实候选验收：正式登录下连续 2 轮真实模型请求通过；应用重启后任务接管、回答完成、消息不重复验收通过。
 
 > 当前已建立用户主体表、Redis 服务端会话和前端登录入口，Agent 的 `owner_key` 已切换为正式登录主体 ID；简历、面试会话、知识库和 RAG 会话已增加 `owner_id` 隔离。知识库通过 NULL owner 兼容迁移前的部署级共享资料；个人知识库的细粒度共享、协作成员和管理员治理仍不在本次范围内。
