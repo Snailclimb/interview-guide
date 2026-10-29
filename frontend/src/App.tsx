@@ -252,7 +252,10 @@ function App() {
             <Route path="interview-hub" element={<InterviewHubPage />} />
 
             {/* AI 面试教练 */}
-            <Route path="agent" element={<AgentPage />} />
+            <Route path="agent/memory" element={<AgentPage view="memory" />} />
+            <Route path="agent/actions" element={<AgentPage view="actions" />} />
+            <Route path="agent/usage" element={<AgentPage view="usage" />} />
+            <Route path="agent" element={<AgentPage view="workspace" />} />
 
             {/* 面试记录列表 */}
             <Route path="interviews" element={<InterviewHistoryWrapper />} />

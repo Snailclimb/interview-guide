@@ -230,8 +230,10 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
     await expect(page.getByText('线程 A 的复盘内容')).toBeVisible();
     await expect(page.getByRole('region', { name: 'Agent Loop 轨迹' })).toContainText('已读取面试报告');
+    await page.getByRole('link', { name: '用量与活动' }).click();
     await expect(page.getByRole('region', { name: 'Agent 累计用量' })).toContainText('2,000');
     await expect(page.getByRole('region', { name: 'Agent 累计用量' })).toContainText('pixel · USD 0.30');
+    await page.getByRole('link', { name: '对话工作台' }).click();
 
     await page.getByText('第二轮训练', { exact: true }).click();
     await expect(page).toHaveURL(/agentSessionId=thread-b/);
@@ -245,6 +247,28 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await page.reload();
     await expect(page).toHaveURL(/agentSessionId=thread-b/);
     await expect(page.getByText('线程 B 的训练内容')).toBeVisible();
+  });
+
+  test('Agent 管理页按职责拆分且切换时保留当前报告和线程', async ({ page }) => {
+    await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
+
+    await page.getByRole('link', { name: '记忆管理' }).click();
+    await expect(page).toHaveURL(/\/agent\/memory\?sessionId=interview-1&agentSessionId=thread-a/);
+    await expect(page.getByRole('heading', { name: '记忆管理' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Agent 长期记忆' })).toContainText('Redis 缓存');
+    await expect(page.getByPlaceholder('问问你的面试教练...')).not.toBeVisible();
+
+    await page.getByRole('link', { name: '动作与训练' }).click();
+    await expect(page).toHaveURL(/\/agent\/actions\?sessionId=interview-1&agentSessionId=thread-a/);
+    await expect(page.getByRole('heading', { name: '动作与训练', exact: true })).toBeVisible();
+    await expect(page.getByLabel('Agent 动作草稿')).toBeVisible();
+    await expect(page.getByRole('link', { name: '对话工作台' })).toHaveAttribute('href', /\/agent\?sessionId=interview-1&agentSessionId=thread-a/);
+
+    await page.getByRole('link', { name: '用量与活动' }).click();
+    await expect(page).toHaveURL(/\/agent\/usage\?sessionId=interview-1&agentSessionId=thread-a/);
+    await expect(page.getByRole('heading', { name: '用量与活动' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Agent 累计用量' })).toContainText('2,000');
+    await expect(page.getByRole('region', { name: 'Agent 最近活动' })).toContainText('运行完成');
   });
 
   test('新建 Agent 对话后立即选中并显示在列表中', async ({ page }) => {
@@ -729,8 +753,7 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
   });
 
   test('可以编辑和删除单条长期记忆', async ({ page }) => {
-    await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
-    await expect(page.getByRole('region', { name: 'Agent 最近活动' })).toContainText('运行完成');
+    await page.goto('/agent/memory?sessionId=interview-1&agentSessionId=thread-a');
     await expect(page.getByLabel('编辑记忆：Redis 缓存')).toBeVisible();
     await expect(page.getByText('过期', { exact: false })).toBeVisible();
 

@@ -71,6 +71,7 @@ import type {
 } from '../types/agent';
 import type { ProviderItem } from '../types/llmProvider';
 import AgentSessionList from '../components/AgentSessionList';
+import AgentNavigation from '../components/AgentNavigation';
 import { ROUTES } from '../constants/routes';
 import { createRequestId } from '../utils/requestId';
 type RunStatus = 'idle' | 'running' | 'completed' | 'error' | 'cancelled';
@@ -274,7 +275,21 @@ function AgentMarkdown({ content }: { content: string }) {
   );
 }
 
-export default function AgentPage() {
+export type AgentView = 'workspace' | 'memory' | 'actions' | 'usage';
+
+interface AgentPageProps {
+  view?: AgentView;
+}
+
+export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
+  const isWorkspaceView = view === 'workspace';
+  const viewTitle = view === 'memory'
+    ? '记忆管理'
+    : view === 'actions'
+      ? '动作与训练'
+      : view === 'usage'
+        ? '用量与活动'
+        : 'AI 面试教练';
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const routeSessionId = searchParams.get('sessionId');
@@ -511,11 +526,11 @@ export default function AgentPage() {
     // 面试上下文属于报告，不属于 Agent 线程；同一份报告切换线程时必须保留它。
     setInterview(null);
     setContextError('');
-    setLoadingContext(Boolean(sessionId));
-  }, [sessionId]);
+    setLoadingContext(isWorkspaceView && Boolean(sessionId));
+  }, [isWorkspaceView, sessionId]);
 
   useEffect(() => {
-    if (!sessionId) {
+    if (!isWorkspaceView || !sessionId) {
       setLoadingContext(false);
       return;
     }
@@ -576,9 +591,10 @@ export default function AgentPage() {
     return () => {
       cancelled = true;
     };
-  }, [navigate, sessionId, setSearchParams]);
+  }, [isWorkspaceView, navigate, sessionId, setSearchParams]);
 
   useEffect(() => {
+    if (!isWorkspaceView) return;
     let cancelled = false;
     Promise.all([llmProviderApi.list(), llmProviderApi.getDefaultProvider()])
       .then(([providerList, defaultProvider]) => {
@@ -598,10 +614,10 @@ export default function AgentPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isWorkspaceView]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!isWorkspaceView || !sessionId) return;
 
     // 只有面试报告确认加载成功后，才允许读取/创建其下的 Agent 对话。
     // 否则旧环境或已失效的 sessionId 会让页面显示可操作按钮，随后所有创建请求
@@ -668,10 +684,10 @@ export default function AgentPage() {
       cancelled = true;
       clearReconciliationTimer();
     };
-  }, [agentSessionId, interview, reconcileConversation, rememberRetryableRequest, restoreConversationMessages, restoreRunProgress, routeAgentSessionId, sessionId, setSearchParams]);
+  }, [agentSessionId, interview, isWorkspaceView, reconcileConversation, rememberRetryableRequest, restoreConversationMessages, restoreRunProgress, routeAgentSessionId, sessionId, setSearchParams]);
 
   useEffect(() => {
-    if (!sessionId || !agentSessionId || runStatus !== 'running') return;
+    if (!isWorkspaceView || !sessionId || !agentSessionId || runStatus !== 'running') return;
 
     const reconcileWhenActive = () => {
       if (document.visibilityState === 'hidden') return;
@@ -691,7 +707,7 @@ export default function AgentPage() {
       window.removeEventListener('online', reconcileWhenActive);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [agentSessionId, reconcileConversation, runStatus, sessionId]);
+  }, [agentSessionId, isWorkspaceView, reconcileConversation, runStatus, sessionId]);
 
   useEffect(() => () => {
     abortRef.current?.abort();
@@ -702,6 +718,10 @@ export default function AgentPage() {
     () => goalOptions.find((option) => option.id === goal) ?? goalOptions[0],
     [goal],
   );
+  const showActionManagement = view === 'actions'
+    || actions.length > 0
+    || trainingTasks.length > 0
+    || scheduleDraftForm !== null;
 
   const updateStep = (event: AgentStreamEvent) => {
     if (event.type === 'plan') {
@@ -958,7 +978,7 @@ export default function AgentPage() {
   }, []);
 
   const loadAgentActions = useCallback(() => {
-    if (!sessionId || !interview) {
+    if (!sessionId || (isWorkspaceView && !interview)) {
       setActions([]);
       return Promise.resolve();
     }
@@ -967,7 +987,7 @@ export default function AgentPage() {
       .then((value) => setActions(value))
       .catch(() => setActionNotice('待确认动作读取失败，请稍后重试'))
       .finally(() => setActionsLoading(false));
-  }, [agentSessionId, interview, sessionId]);
+  }, [agentSessionId, interview, isWorkspaceView, sessionId]);
 
   const loadTrainingTasks = useCallback(() => {
     setTrainingTasksLoading(true);
@@ -978,24 +998,29 @@ export default function AgentPage() {
   }, []);
 
   useEffect(() => {
+    if (view !== 'memory') return;
     void loadLongTermMemory();
-  }, [loadLongTermMemory]);
+  }, [loadLongTermMemory, view]);
 
   useEffect(() => {
+    if (view !== 'usage') return;
     void loadAuditEvents();
-  }, [loadAuditEvents]);
+  }, [loadAuditEvents, view]);
 
   useEffect(() => {
+    if (view !== 'usage') return;
     void loadUsageSummary();
-  }, [loadUsageSummary]);
+  }, [loadUsageSummary, view]);
 
   useEffect(() => {
+    if (!isWorkspaceView && view !== 'actions') return;
     void loadAgentActions();
-  }, [loadAgentActions]);
+  }, [isWorkspaceView, loadAgentActions, view]);
 
   useEffect(() => {
+    if (!isWorkspaceView && view !== 'actions') return;
     void loadTrainingTasks();
-  }, [loadTrainingTasks]);
+  }, [isWorkspaceView, loadTrainingTasks, view]);
 
   const saveDraftAction = (message: AgentMessage, kind: 'plan' | 'practice') => {
     if (!sessionId || !agentSessionId || message.role !== 'assistant' || !message.content.trim()) {
@@ -1609,7 +1634,7 @@ export default function AgentPage() {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">AI 面试教练</h1>
+              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{viewTitle}</h1>
               <span className="status-badge bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-300 border-primary-100 dark:border-primary-800/50">
                 Agent 已接入
               </span>
@@ -1618,7 +1643,7 @@ export default function AgentPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
+          {isWorkspaceView ? <label className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
             <span className="text-xs dark-text-muted whitespace-nowrap">首选模型</span>
             <span className="relative inline-flex min-w-0 items-center">
               <select
@@ -1637,23 +1662,26 @@ export default function AgentPage() {
               </select>
               <ChevronDown className="pointer-events-none absolute right-2.5 h-4 w-4 text-slate-400" />
             </span>
-          </label>
+          </label> : null}
           <button onClick={() => navigate('/settings')} className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm">
             <Settings2 className="w-4 h-4" />
             模型设置
           </button>
-          <button
-            onClick={clearLongTermMemory}
-            disabled={runStatus === 'running'}
-            className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm disabled:opacity-50"
-          >
-            <RotateCcw className="w-4 h-4" />
-            清除记忆
-          </button>
+          {isWorkspaceView || view === 'memory' ? (
+            <button
+              onClick={clearLongTermMemory}
+              disabled={runStatus === 'running'}
+              className="btn-secondary inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm disabled:opacity-50"
+            >
+              <RotateCcw className="w-4 h-4" />
+              清除记忆
+            </button>
+          ) : null}
         </div>
       </div>
+      <AgentNavigation />
       {memoryNotice ? <p className="text-xs text-slate-500 dark:text-slate-400 text-right">{memoryNotice}</p> : null}
-      <section className="dark-card px-5 py-4" aria-label="Agent 长期记忆">
+      {view === 'memory' ? <section className="dark-card px-5 py-4" aria-label="Agent 长期记忆">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
@@ -1758,9 +1786,9 @@ export default function AgentPage() {
         ) : (
           <p className="text-xs dark-text-muted mt-3">暂无长期记忆，完成一次 Agent 复盘后会自动积累。</p>
         )}
-      </section>
+      </section> : null}
 
-      <section className="dark-card px-5 py-4" aria-label="Agent 累计用量">
+      {view === 'usage' ? <section className="dark-card px-5 py-4" aria-label="Agent 累计用量">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
@@ -1821,9 +1849,9 @@ export default function AgentPage() {
             </div>
           </>
         ) : null}
-      </section>
+      </section> : null}
 
-      <section className="dark-card px-5 py-4" aria-label="Agent 最近活动">
+      {view === 'usage' ? <section className="dark-card px-5 py-4" aria-label="Agent 最近活动">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Activity className="w-4 h-4 text-primary-500" />
@@ -1862,10 +1890,10 @@ export default function AgentPage() {
             ))}
           </div>
         )}
-      </section>
+      </section> : null}
 
-      <div className="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-6 items-start">
-        <AgentSessionList
+      {view === 'workspace' || view === 'actions' ? <div className={`grid grid-cols-1 ${isWorkspaceView ? 'xl:grid-cols-[260px_minmax(0,1fr)]' : ''} gap-6 items-start`}>
+        {isWorkspaceView ? <AgentSessionList
           selectedSessionId={sessionId}
           onSelect={selectAgentSession}
           onCreate={() => navigate('/interviews')}
@@ -1875,10 +1903,10 @@ export default function AgentPage() {
           onClearAgentConversation={clearAgentConversation}
           // 当前线程执行时仍禁止重复提交，但不阻塞创建/切换其他线程。
           agentConversationDisabled={!interview}
-        />
+        /> : null}
 
-        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)] gap-6 items-start min-w-0">
-        <div className="space-y-6 min-w-0">
+        <div className={`grid grid-cols-1 ${isWorkspaceView ? 'xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)]' : ''} gap-6 items-start min-w-0`}>
+        {isWorkspaceView ? <div className="space-y-6 min-w-0">
           <section className="dark-card p-6">
             <div className="flex items-start justify-between gap-4 mb-5">
               <div>
@@ -2115,9 +2143,10 @@ export default function AgentPage() {
               </div>
             )}
           </section>
-        </div>
+        </div> : null}
 
         <section className="dark-card overflow-hidden xl:sticky xl:top-10 min-w-0">
+          {isWorkspaceView ? <>
           <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-primary-100 dark:bg-primary-900/40 text-primary-600 dark:text-primary-300 flex items-center justify-center">
@@ -2241,8 +2270,22 @@ export default function AgentPage() {
               ))}
             </AnimatePresence>
           </div>
+          </> : (
+            <div className="border-b border-slate-100 px-6 py-5 dark:border-slate-700">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-100 text-primary-600 dark:bg-primary-900/40 dark:text-primary-300">
+                  <ClipboardCheck className="h-4 w-4" />
+                </div>
+                <div>
+                  <h2 className="font-semibold dark-text">动作与训练管理</h2>
+                  <p className="mt-0.5 text-xs dark-text-muted">集中处理 Agent 提议的动作和训练任务，确认后才会写入业务数据。</p>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="px-6 pb-6">
+            {isWorkspaceView ? <>
             <div className="flex flex-wrap gap-2 mb-3">
               {['我最该先补什么？', '帮我追问这一题', '给我一个练习计划'].map((prompt) => (
                 <button key={prompt} onClick={() => setInput(prompt)} className="text-xs px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300 hover:border-primary-300 hover:text-primary-600 dark:hover:text-primary-300 transition-colors">
@@ -2350,6 +2393,8 @@ export default function AgentPage() {
             <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-2">
               Enter 发送，Shift + Enter 换行 · 单条最多 {MAX_AGENT_MESSAGE_CHARS} 字符 · 已输入 {input.length}/{MAX_AGENT_MESSAGE_CHARS}
             </p>
+            </> : null}
+            {showActionManagement ? <>
             <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50/60 p-3 dark:border-primary-900/60 dark:bg-primary-900/15" aria-label="Agent 动作草稿">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -2657,10 +2702,11 @@ export default function AgentPage() {
                 </div>
               ) : null}
             </div>
+            </> : null}
           </div>
         </section>
         </div>
-      </div>
+      </div> : null}
     </div>
   );
 }
