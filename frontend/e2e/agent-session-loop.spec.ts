@@ -313,6 +313,51 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     expect(createRequestBody?.idempotencyKey).toBeTruthy();
   });
 
+  test('首次打开报告不偷偷创建线程，开始执行时自动建立线程', async ({ page }) => {
+    let createRequests = 0;
+    await page.unroute('**/api/agent/interview-sessions/interview-1/conversations');
+    await page.unroute('**/api/agent/interview-sessions/interview-1/conversation*');
+    await page.route('**/api/agent/interview-sessions/interview-1/conversations', async route => {
+      if (route.request().method() === 'POST') {
+        createRequests += 1;
+        const created = {
+          agentSessionId: 'thread-auto', interviewSessionId: 'interview-1',
+          title: '新 Agent 对话', runStatus: 'IDLE',
+          createdAt: '2026-10-24T09:05:00', updatedAt: '2026-10-24T09:05:00',
+        };
+        await route.fulfill({ contentType: 'application/json', body: envelope(created) });
+        return;
+      }
+      await route.fulfill({ contentType: 'application/json', body: envelope([]) });
+    });
+    await page.route('**/api/agent/interview-sessions/interview-1/conversation*', async route => {
+      const url = new URL(route.request().url());
+      if (url.pathname.endsWith('/conversations')) {
+        await route.fallback();
+        return;
+      }
+      const id = url.searchParams.get('agentSessionId');
+      await route.fulfill({
+        contentType: 'application/json',
+        body: envelope(id === 'thread-auto'
+          ? conversation('thread-auto', '新 Agent 对话', '自动建立线程后的回答')
+          : {
+            ...conversation('', '', ''), agentSessionId: null, title: null, messages: [],
+          }),
+      });
+    });
+
+    await page.goto('/agent?sessionId=interview-1');
+    await expect(page.getByRole('button', { name: '新建 Agent 对话' })).toBeVisible();
+    await expect(page.getByText('还没有 Agent 对话，点击上方按钮新建。')).toBeVisible();
+    expect(createRequests).toBe(0);
+
+    await page.getByRole('button', { name: '开始执行' }).click();
+    await expect(page).toHaveURL(/agentSessionId=thread-auto/);
+    await expect(page.getByText('自动建立线程后的回答')).toBeVisible();
+    expect(createRequests).toBe(1);
+  });
+
   test('新建请求超时后重试复用同一个幂等键', async ({ page }) => {
     let createRequests = 0;
     const idempotencyKeys: string[] = [];

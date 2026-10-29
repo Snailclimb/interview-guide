@@ -610,11 +610,15 @@ export default function AgentPage() {
     void (async () => {
       try {
         let conversation = await agentApi.getConversation(sessionId, agentSessionId);
-        // 首次打开某份面试报告时建立一个默认线程，确保第一条消息也能绑定稳定的线程 ID。
+        // 没有线程时保持空状态，不在仅打开报告时偷偷创建“默认线程”。
+        // 用户点击“新建 Agent 对话”或真正开始执行任务时再创建，避免首次
+        // 打开后再点击新建出现两条空会话。
         if (!conversation.agentSessionId) {
           const existing = await agentApi.listConversations(sessionId);
-          const target = existing[0] ?? await agentApi.createConversation(sessionId, undefined, createRequestId());
-          conversation = await agentApi.getConversation(sessionId, target.agentSessionId);
+          const target = existing[0];
+          if (target) {
+            conversation = await agentApi.getConversation(sessionId, target.agentSessionId);
+          }
         }
         if (cancelled) return;
 
@@ -739,13 +743,28 @@ export default function AgentPage() {
     });
   };
 
-  const streamAgentMessage = (
+  const streamAgentMessage = async (
     content: string,
     options?: { goal?: AgentGoal; providerId?: string; retrying?: boolean; actionIntent?: AgentActionIntent | null },
-  ) => {
+  ): Promise<void> => {
     if (!sessionId || !interview || !content || runStatus === 'running') {
       if (!sessionId || !interview) setRunError('请先从面试详情页进入，并加载一份面试报告');
       return;
+    }
+
+    let targetAgentSessionId = agentSessionId;
+    if (!targetAgentSessionId) {
+      try {
+        const created = await createAgentConversation();
+        targetAgentSessionId = created?.agentSessionId || null;
+      } catch (error: unknown) {
+        setRunError(getErrorMessage(error) || '新建 Agent 对话失败，请稍后重试');
+        return;
+      }
+      if (!targetAgentSessionId) {
+        setRunError('新建 Agent 对话失败，请稍后重试');
+        return;
+      }
     }
 
     const runGoal = options?.goal ?? goal;
@@ -757,7 +776,7 @@ export default function AgentPage() {
       goal: runGoal,
       message: content,
       providerId: runProviderId || undefined,
-      agentSessionId: agentSessionId || undefined,
+      agentSessionId: targetAgentSessionId,
     };
     const historyMessages = options?.retrying
       ? removeLastRunMessages(messages, runRequest, lastRunMessageIdsRef.current)
@@ -795,7 +814,7 @@ export default function AgentPage() {
 
     void agentApi.streamMessage(
       sessionId,
-       { goal: runGoal, message: content, history, providerId: runProviderId || undefined, agentSessionId: agentSessionId || undefined },
+       { goal: runGoal, message: content, history, providerId: runProviderId || undefined, agentSessionId: targetAgentSessionId },
       {
         onEvent: (event) => {
           updateStep(event);
@@ -836,7 +855,7 @@ export default function AgentPage() {
           void loadLongTermMemory();
           void loadAuditEvents();
           void loadUsageSummary();
-          void agentApi.getConversation(sessionId, agentSessionId)
+          void agentApi.getConversation(sessionId, targetAgentSessionId)
             .then((conversation) => {
               restoreRunProgress(conversation);
               // 明确的自然语言动作优先，避免“创建训练任务”同时被当前下拉目标再次生成训练计划草稿。
