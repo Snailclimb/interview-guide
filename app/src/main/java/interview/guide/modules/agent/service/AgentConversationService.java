@@ -523,7 +523,11 @@ public class AgentConversationService {
 
     @Transactional
     public void updateRunUsage(Long messageId, AgentRunUsage usage, String expectedRunId) {
-        AgentChatSessionEntity session = lockActiveSession(messageId, expectedRunId);
+        // 用量快照在 completeMessage/failMessage/cancelMessage 之后由 doFinally 写入，
+        // 此时会话已经进入终态且 activeMessageId 已清空，不能继续使用只允许 RUNNING
+        // 且绑定 activeMessageId 的进度锁，否则最近一次用量虽写不到累计表，累计统计
+        // 会永久显示为 0。
+        AgentChatSessionEntity session = lockUsageSession(messageId, expectedRunId);
         if (session == null) {
             log.info("忽略已失效 Agent 用量事件: messageId={}", messageId);
             return;
@@ -539,6 +543,18 @@ public class AgentConversationService {
                 log.warn("Agent 累计用量持久化失败: messageId={}", messageId, error);
             }
         }
+    }
+
+    private AgentChatSessionEntity lockUsageSession(Long messageId, String expectedRunId) {
+        if (messageId == null) {
+            return null;
+        }
+        return messageRepository.findById(messageId)
+            .map(AgentChatMessageEntity::getSession)
+            .flatMap(this::findSessionForUpdateByIdentity)
+            .filter(session -> expectedRunId == null
+                || expectedRunId.equals(session.getRunId()))
+            .orElse(null);
     }
 
     /**

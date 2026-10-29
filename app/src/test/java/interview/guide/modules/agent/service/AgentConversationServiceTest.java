@@ -50,6 +50,9 @@ class AgentConversationServiceTest {
     private AgentAuditService auditService;
 
     @Mock
+    private AgentUsageService usageService;
+
+    @Mock
     private AgentConversationCreationRequestRepository creationRequestRepository;
 
     @InjectMocks
@@ -439,6 +442,38 @@ class AgentConversationServiceTest {
         assertThat(session.getRunStep()).isEqualTo("loop");
         assertThat(session.getRunNotice()).isEqualTo("新任务正在执行");
         verify(sessionRepository, never()).save(session);
+    }
+
+    @Test
+    @DisplayName("终态后的用量快照仍能写入累计用量")
+    void persistsUsageAfterRunFinished() {
+        AgentChatSessionEntity session = AgentChatSessionEntity.builder()
+            .id(11L)
+            .interviewSessionId("interview-1")
+            .runId("run-1")
+            .runStatus(AgentRunStatus.COMPLETED)
+            .activeMessageId(null)
+            .build();
+        AgentChatMessageEntity message = AgentChatMessageEntity.builder()
+            .id(22L)
+            .session(session)
+            .role(AgentChatMessageEntity.MessageRole.ASSISTANT)
+            .content("最终回答")
+            .sequenceNum(1)
+            .completed(true)
+            .build();
+        AgentRunUsage usage = new AgentRunUsage(
+            120, 80, 200, 1, 8_000, null, null, "pixel", "gpt-5.6-luna"
+        );
+        when(messageRepository.findById(22L)).thenReturn(Optional.of(message));
+        when(sessionRepository.findByInterviewSessionIdForUpdate("interview-1"))
+            .thenReturn(Optional.of(session));
+
+        service.updateRunUsage(22L, usage, "run-1");
+
+        assertThat(session.getRunTotalTokens()).isEqualTo(200);
+        verify(sessionRepository).save(session);
+        verify(usageService).record(session, usage);
     }
 
     @Test
