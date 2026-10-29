@@ -11,6 +11,7 @@ import type {
   AgentMessageRequest,
   AgentStreamEvent,
   AgentUsageSummary,
+  AgentUsageRun,
 } from '../types/agent.ts';
 import { getAgentMemoryKey } from '../utils/clientIdentity.ts';
 
@@ -29,6 +30,13 @@ export const agentApi = {
     return request.get<AgentUsageSummary>('/api/agent/usage/summary', {
       headers: agentHeaders(),
     });
+  },
+
+  getUsageRuns(limit = 20): Promise<AgentUsageRun[]> {
+    return request.get<AgentUsageRun[]>(
+      `/api/agent/usage/runs?limit=${Math.max(1, Math.min(100, limit))}`,
+      { headers: agentHeaders() },
+    );
   },
 
   getAuditEvents(limit = 20): Promise<AgentAuditEvent[]> {

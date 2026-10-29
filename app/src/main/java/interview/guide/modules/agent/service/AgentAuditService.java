@@ -2,10 +2,18 @@ package interview.guide.modules.agent.service;
 
 import interview.guide.modules.agent.model.AgentAuditEventEntity;
 import interview.guide.modules.agent.model.AgentAuditEventResponse;
+import interview.guide.modules.agent.model.AgentChatSessionEntity;
 import interview.guide.modules.agent.repository.AgentAuditEventRepository;
+import interview.guide.modules.agent.repository.AgentChatSessionRepository;
+import interview.guide.modules.interview.model.InterviewSessionEntity;
+import interview.guide.modules.interview.repository.InterviewSessionRepository;
 import jakarta.transaction.Transactional;
 import java.time.LocalDateTime;
+import java.util.Map;
+import java.util.Set;
 import java.util.List;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -33,19 +41,25 @@ public class AgentAuditService {
     private static final int MAX_QUERY_LIMIT = 100;
 
     private final AgentAuditEventRepository repository;
+    private final InterviewSessionRepository interviewSessionRepository;
+    private final AgentChatSessionRepository agentChatSessionRepository;
     private final TransactionTemplate auditTransactionTemplate;
 
     /** 保留无 Spring 容器调用方式，便于单元测试和兼容旧调用方。 */
     public AgentAuditService(AgentAuditEventRepository repository) {
-        this(repository, null);
+        this(repository, null, null, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
     public AgentAuditService(
         AgentAuditEventRepository repository,
-        PlatformTransactionManager transactionManager
+        PlatformTransactionManager transactionManager,
+        InterviewSessionRepository interviewSessionRepository,
+        AgentChatSessionRepository agentChatSessionRepository
     ) {
         this.repository = repository;
+        this.interviewSessionRepository = interviewSessionRepository;
+        this.agentChatSessionRepository = agentChatSessionRepository;
         if (transactionManager == null) {
             this.auditTransactionTemplate = null;
         } else {
@@ -61,10 +75,47 @@ public class AgentAuditService {
             return List.of();
         }
         int safeLimit = Math.max(1, Math.min(MAX_QUERY_LIMIT, limit));
-        return repository.findTop100ByOwnerKeyOrderByCreatedAtDesc(ownerKey.trim()).stream()
+        List<AgentAuditEventResponse> events = repository.findTop100ByOwnerKeyOrderByCreatedAtDesc(ownerKey.trim()).stream()
             .limit(safeLimit)
             .map(AgentAuditEventResponse::from)
             .toList();
+        if (events.isEmpty() || interviewSessionRepository == null || agentChatSessionRepository == null) {
+            return events;
+        }
+
+        Set<String> interviewIds = events.stream()
+            .map(AgentAuditEventResponse::interviewSessionId)
+            .filter(value -> value != null && !value.isBlank())
+            .collect(Collectors.toSet());
+        Set<String> agentSessionIds = events.stream()
+            .map(AgentAuditEventResponse::agentSessionId)
+            .filter(value -> value != null && !value.isBlank())
+            .collect(Collectors.toSet());
+        Map<String, InterviewSessionEntity> interviews = interviewIds.isEmpty()
+            ? Map.of()
+            : interviewSessionRepository.findAllBySessionIdInAndOwnerId(interviewIds, ownerKey.trim()).stream()
+                .collect(Collectors.toMap(InterviewSessionEntity::getSessionId, Function.identity(), (left, right) -> left));
+        Map<String, AgentChatSessionEntity> agentSessions = agentSessionIds.isEmpty()
+            ? Map.of()
+            : agentChatSessionRepository.findAllByAgentSessionIdInAndOwnerKey(agentSessionIds, ownerKey.trim()).stream()
+                .collect(Collectors.toMap(AgentChatSessionEntity::getAgentSessionId, Function.identity(), (left, right) -> left));
+        return events.stream()
+            .map(event -> event.withSourceNames(
+                titleOf(interviews.get(event.interviewSessionId())),
+                titleOf(agentSessions.get(event.agentSessionId()))
+            ))
+            .toList();
+    }
+
+    private String titleOf(InterviewSessionEntity session) {
+        if (session == null) return null;
+        if (session.getTitle() != null && !session.getTitle().isBlank()) return session.getTitle();
+        return session.getSkillId();
+    }
+
+    private String titleOf(AgentChatSessionEntity session) {
+        if (session == null || session.getTitle() == null || session.getTitle().isBlank()) return null;
+        return session.getTitle();
     }
 
     public void recordQuietly(

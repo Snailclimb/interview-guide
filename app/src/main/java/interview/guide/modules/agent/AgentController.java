@@ -19,6 +19,7 @@ import interview.guide.modules.agent.model.UpdateAgentActionDraftRequest;
 import interview.guide.modules.agent.model.AgentTrainingTaskResponse;
 import interview.guide.modules.agent.model.AgentTrainingTaskStatus;
 import interview.guide.modules.agent.model.AgentUsageSummaryResponse;
+import interview.guide.modules.agent.model.AgentUsageRunResponse;
 import interview.guide.modules.agent.model.UpdateAgentTrainingTaskRequest;
 import interview.guide.modules.agent.service.AgentConversationService;
 import interview.guide.modules.agent.service.AgentActionService;
@@ -84,6 +85,18 @@ public class AgentController {
         @RequestHeader(value = "X-User-Id", required = false) String ownerKey
     ) {
         return Result.success(usageService.summarize(authIdentityService.requireIdentity(ownerKey)));
+    }
+
+    /** 查询当前账号最近的 Agent 运行明细，包含来源面试和 Agent 会话名称。 */
+    @GetMapping("/api/agent/usage/runs")
+    @RateLimit(dimension = RateLimit.Dimension.GLOBAL, count = 30)
+    public Result<List<AgentUsageRunResponse>> getUsageRuns(
+        @RequestHeader(value = "X-User-Id", required = false) String ownerKey,
+        @RequestParam(value = "limit", defaultValue = "20") int limit
+    ) {
+        return Result.success(usageService.listRuns(
+            authIdentityService.requireIdentity(ownerKey), limit
+        ));
     }
 
     @GetMapping("/api/agent/interview-sessions/{sessionId}/conversation")

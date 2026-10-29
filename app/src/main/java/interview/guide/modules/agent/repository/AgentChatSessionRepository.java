@@ -1,6 +1,7 @@
 package interview.guide.modules.agent.repository;
 
 import interview.guide.modules.agent.model.AgentChatSessionEntity;
+import java.util.Collection;
 import java.util.Optional;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -23,6 +24,10 @@ public interface AgentChatSessionRepository extends JpaRepository<AgentChatSessi
     );
 
     Optional<AgentChatSessionEntity> findByAgentSessionId(String agentSessionId);
+
+    List<AgentChatSessionEntity> findAllByAgentSessionIdInAndOwnerKey(
+        Collection<String> agentSessionIds, String ownerKey
+    );
 
     List<AgentChatSessionEntity> findByInterviewSessionIdOrderByUpdatedAtDesc(String interviewSessionId);
 

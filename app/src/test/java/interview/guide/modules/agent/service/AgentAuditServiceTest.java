@@ -1,9 +1,14 @@
 package interview.guide.modules.agent.service;
 
 import interview.guide.modules.agent.model.AgentAuditEventEntity;
+import interview.guide.modules.agent.model.AgentChatSessionEntity;
 import interview.guide.modules.agent.repository.AgentAuditEventRepository;
+import interview.guide.modules.agent.repository.AgentChatSessionRepository;
+import interview.guide.modules.interview.model.InterviewSessionEntity;
+import interview.guide.modules.interview.repository.InterviewSessionRepository;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -101,5 +106,42 @@ class AgentAuditServiceTest {
         assertThat(events).hasSize(1);
         assertThat(events.getFirst().action()).isEqualTo("RUN_COMPLETED");
         verify(repository).findTop100ByOwnerKeyOrderByCreatedAtDesc("user-1");
+    }
+
+    @Test
+    void enrichesEventsWithInterviewAndAgentSessionNames() {
+        AgentAuditEventRepository repository = mock(AgentAuditEventRepository.class);
+        InterviewSessionRepository interviewRepository = mock(InterviewSessionRepository.class);
+        AgentChatSessionRepository agentRepository = mock(AgentChatSessionRepository.class);
+        AgentAuditEventEntity event = AgentAuditEventEntity.builder()
+            .interviewSessionId("interview-1")
+            .agentSessionId("agent-1")
+            .action("RUN_COMPLETED")
+            .resourceType("agent-run")
+            .result("success")
+            .createdAt(LocalDateTime.now())
+            .build();
+        when(repository.findTop100ByOwnerKeyOrderByCreatedAtDesc("user-1"))
+            .thenReturn(List.of(event));
+        InterviewSessionEntity interview = new InterviewSessionEntity();
+        interview.setSessionId("interview-1");
+        interview.setTitle("Java 后端高并发面试");
+        when(interviewRepository.findAllBySessionIdInAndOwnerId(Set.of("interview-1"), "user-1"))
+            .thenReturn(List.of(interview));
+        AgentChatSessionEntity agentSession = AgentChatSessionEntity.builder()
+            .agentSessionId("agent-1")
+            .ownerKey("user-1")
+            .title("第一轮复盘")
+            .build();
+        when(agentRepository.findAllByAgentSessionIdInAndOwnerKey(Set.of("agent-1"), "user-1"))
+            .thenReturn(List.of(agentSession));
+
+        var events = new AgentAuditService(repository, null, interviewRepository, agentRepository)
+            .listForOwner("user-1", 20);
+
+        assertThat(events).singleElement().satisfies(item -> {
+            assertThat(item.interviewTitle()).isEqualTo("Java 后端高并发面试");
+            assertThat(item.agentSessionTitle()).isEqualTo("第一轮复盘");
+        });
     }
 }

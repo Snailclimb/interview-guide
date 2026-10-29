@@ -6,6 +6,9 @@ export const ROUTES = {
   resumeHistory: '/history',
   knowledgebaseUpload: '/knowledgebase/upload',
   agent: '/agent',
+  agentMemory: '/agent/memory',
+  agentActions: '/agent/actions',
+  agentUsage: '/agent/usage',
 } as const;
 
 export const ROUTE_PATTERNS = {
