@@ -355,7 +355,11 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
   const lastRunRequestRef = useRef<AgentRunRequest | null>(null);
   const lastRunMessageIdsRef = useRef<AgentRunMessageIds | null>(null);
   const lastRunActionIntentRef = useRef<AgentActionIntent | null>(null);
-  const createConversationRequestRef = useRef<{ sessionId: string; key: string } | null>(null);
+  const createConversationRequestRef = useRef<{
+    sessionId: string;
+    key: string;
+    promise?: Promise<AgentConversationSummary>;
+  } | null>(null);
   const activeAgentSessionIdRef = useRef<string | null>(agentSessionId);
 
   useEffect(() => {
@@ -1597,20 +1601,33 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
 
   const createAgentConversation = async (): Promise<AgentConversationSummary | void> => {
     if (!sessionId || !interview) return;
-    const pending = createConversationRequestRef.current?.sessionId === sessionId
-      ? createConversationRequestRef.current
+    const current = createConversationRequestRef.current;
+    if (current?.sessionId === sessionId && current.promise) return current.promise;
+
+    const pending = current?.sessionId === sessionId
+      ? { sessionId: current.sessionId, key: current.key }
       : { sessionId, key: createRequestId() };
-    createConversationRequestRef.current = pending;
-    try {
-      const conversation = await agentApi.createConversation(sessionId, undefined, pending.key);
-      createConversationRequestRef.current = null;
-      rememberAgentThreadId(conversation.agentSessionId);
-      setSearchParams({ sessionId, agentSessionId: conversation.agentSessionId });
-      return conversation;
-    } catch (error) {
-      // 保留同一个键，让按钮重试时可以复用服务端可能已经提交成功的创建请求。
-      throw error;
-    }
+    const request = agentApi.createConversation(sessionId, undefined, pending.key);
+    let handledRequest: Promise<AgentConversationSummary>;
+    handledRequest = request
+      .then((conversation) => {
+        if (createConversationRequestRef.current?.key === pending.key) {
+          createConversationRequestRef.current = null;
+        }
+        rememberAgentThreadId(conversation.agentSessionId);
+        setSearchParams({ sessionId, agentSessionId: conversation.agentSessionId });
+        return conversation;
+      })
+      .catch((error: unknown) => {
+        // 保留同一个键，让按钮重试时可以复用服务端可能已经提交成功的创建请求，
+        // 但清掉 promise，避免失败后的重试永远复用已 rejected 的 Promise。
+        if (createConversationRequestRef.current?.key === pending.key) {
+          createConversationRequestRef.current = pending;
+        }
+        throw error;
+      });
+    createConversationRequestRef.current = { ...pending, promise: handledRequest };
+    return handledRequest;
   };
 
   useEffect(() => {
