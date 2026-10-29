@@ -3,6 +3,7 @@ import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
 declare module 'axios' {
   interface AxiosRequestConfig {
     skipResultTransform?: boolean;
+    skipCsrfBootstrap?: boolean;
   }
 }
 
@@ -17,6 +18,31 @@ export interface Result<T = unknown> {
 
 const SUCCESS_CODE = 200;
 const RESULT_BLOB_PARSE_LIMIT = 64 * 1024;
+export const AUTH_SESSION_EXPIRED_EVENT = 'interview-auth-session-expired';
+
+function notifyAuthSessionExpired(url?: string): void {
+  if (typeof window === 'undefined' || !url || url.includes('/api/auth/')) return;
+  window.dispatchEvent(new CustomEvent(AUTH_SESSION_EXPIRED_EVENT));
+}
+
+export function readCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${encodeURIComponent(name)}=`;
+  const entry = document.cookie.split('; ').find(value => value.startsWith(prefix));
+  return entry ? decodeURIComponent(entry.slice(prefix.length)) : null;
+}
+
+/** 确保首次写请求前已经拿到可供 SPA 读取的 CSRF Cookie。 */
+export async function ensureCsrfCookie(): Promise<string | null> {
+  const existing = readCookie('XSRF-TOKEN');
+  if (existing) return existing;
+  try {
+    await instance.get('/api/auth/me', { skipCsrfBootstrap: true });
+  } catch {
+    // 认证失败由原始业务请求继续处理，不能把 CSRF 预热异常吞成业务成功。
+  }
+  return readCookie('XSRF-TOKEN');
+}
 
 // Vite 会提供 import.meta.env；Node 下的纯函数测试环境可能没有该对象。
 export const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL ?? '';
@@ -27,6 +53,19 @@ const instance: AxiosInstance = axios.create({
   withCredentials: true,
   xsrfCookieName: 'XSRF-TOKEN',
   xsrfHeaderName: 'X-XSRF-TOKEN',
+});
+
+// Axios 在不同浏览器适配器和并发请求时不一定会自动注入 XSRF 头。
+// 统一在请求层显式补齐，避免 Agent 长连接进行期间创建会话被 CSRF 拦截。
+instance.interceptors.request.use(async (config) => {
+  const isAuthRequest = config.url?.includes('/api/auth/');
+  const csrfToken = !config.skipCsrfBootstrap && !isAuthRequest
+    ? await ensureCsrfCookie()
+    : readCookie('XSRF-TOKEN');
+  if (csrfToken && !config.headers?.['X-XSRF-TOKEN']) {
+    config.headers.set('X-XSRF-TOKEN', csrfToken);
+  }
+  return config;
 });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -140,6 +179,9 @@ instance.interceptors.response.use(
     // 有响应的情况：后端返回了结果（即使是错误）
     if (error.response) {
       const { data, status } = error.response;
+      if (status === 401) {
+        notifyAuthSessionExpired(error.config?.url);
+      }
       // 尝试解析 Result 格式
       const responseError = await getErrorFromResponseData(data);
       if (responseError) {

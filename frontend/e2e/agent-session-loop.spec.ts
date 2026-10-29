@@ -256,6 +256,49 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page.getByRole('button', { name: '新建 Agent 对话' })).toBeEnabled();
   });
 
+  test('当前线程执行时仍可新建其他 Agent 对话', async ({ page }) => {
+    await page.route('**/api/agent/interview-sessions/interview-1/conversation*', async route => {
+      const url = new URL(route.request().url());
+      if (url.pathname.endsWith('/conversations')) {
+        await route.fallback();
+        return;
+      }
+      const agentSessionId = url.searchParams.get('agentSessionId') || 'thread-a';
+      const current = agentSessionId === 'thread-a'
+        ? { ...conversation('thread-a', '第一轮复盘', '线程 A 正在执行'), runStatus: 'RUNNING', runId: 'run-a' }
+        : conversation(agentSessionId, '新 Agent 对话', '');
+      await route.fulfill({ contentType: 'application/json', body: envelope(current) });
+    });
+
+    await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
+    const createButton = page.getByRole('button', { name: '新建 Agent 对话' });
+    await expect(createButton).toBeEnabled();
+    await createButton.click();
+
+    await expect(page).toHaveURL(/agentSessionId=thread-new/);
+    await expect(page.getByText('新 Agent 对话', { exact: true })).toBeVisible();
+  });
+
+  test('登录会话失效时不继续显示假登录态', async ({ page }) => {
+    await page.route('**/api/agent/interview-sessions/interview-1/conversations', async route => {
+      if (route.request().method() === 'POST') {
+        await route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({ code: 401, message: '请先登录', data: null }),
+        });
+        return;
+      }
+      await route.fallback();
+    });
+
+    await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
+    await page.getByRole('button', { name: '新建 Agent 对话' }).click();
+
+    await expect(page).toHaveURL(/\/login\?redirect=/);
+    await expect(page.getByRole('heading', { name: 'AI Interview' })).toBeVisible();
+  });
+
   test('面试报告失效时自动恢复到当前环境的有效报告', async ({ page }) => {
     await page.route('**/api/interview/sessions/missing/details', async route => {
       await route.fulfill({

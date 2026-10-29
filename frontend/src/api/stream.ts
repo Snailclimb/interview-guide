@@ -1,4 +1,11 @@
-import { API_BASE_URL, getErrorMessage, getResultError, parseResultPayload } from './request.ts';
+import {
+  API_BASE_URL,
+  AUTH_SESSION_EXPIRED_EVENT,
+  ensureCsrfCookie,
+  getErrorMessage,
+  getResultError,
+  parseResultPayload,
+} from './request.ts';
 
 type SseParseMode = 'line' | 'event';
 
@@ -32,13 +39,6 @@ function toApiUrl(url: string): string {
     return url;
   }
   return `${API_BASE_URL}${url}`;
-}
-
-function readCookie(name: string): string | null {
-  if (typeof document === 'undefined') return null;
-  const prefix = `${encodeURIComponent(name)}=`;
-  const entry = document.cookie.split('; ').find(value => value.startsWith(prefix));
-  return entry ? decodeURIComponent(entry.slice(prefix.length)) : null;
 }
 
 function isJsonContentType(contentType: string): boolean {
@@ -302,7 +302,7 @@ async function readStream(response: Response, options: StreamSseOptions): Promis
 export async function streamSse(options: StreamSseOptions): Promise<void> {
   try {
     const headers = new Headers(options.init.headers);
-    const csrfToken = readCookie('XSRF-TOKEN');
+    const csrfToken = await ensureCsrfCookie();
     if (csrfToken && !headers.has('X-XSRF-TOKEN')) {
       headers.set('X-XSRF-TOKEN', csrfToken);
     }
@@ -311,6 +311,9 @@ export async function streamSse(options: StreamSseOptions): Promise<void> {
       credentials: options.init.credentials ?? 'include',
       headers,
     });
+    if (response.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(AUTH_SESSION_EXPIRED_EVENT));
+    }
     await assertStreamResponse(response);
     await readStream(response, options);
     options.onComplete();

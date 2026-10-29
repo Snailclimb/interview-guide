@@ -340,6 +340,7 @@ export default function AgentPage() {
   const lastRunMessageIdsRef = useRef<AgentRunMessageIds | null>(null);
   const lastRunActionIntentRef = useRef<AgentActionIntent | null>(null);
   const createConversationRequestRef = useRef<{ sessionId: string; key: string } | null>(null);
+  const activeAgentSessionIdRef = useRef<string | null>(agentSessionId);
 
   useEffect(() => {
     if (routeSessionId) {
@@ -479,6 +480,7 @@ export default function AgentPage() {
 
   useEffect(() => {
     // 同一个页面内切换会话时，先清掉上一份报告的本地状态，避免旧消息和步骤闪现到新会话。
+    activeAgentSessionIdRef.current = agentSessionId;
     abortRef.current?.abort();
     abortRef.current = null;
     clearReconciliationTimer();
@@ -766,6 +768,7 @@ export default function AgentPage() {
         return;
       }
     }
+    activeAgentSessionIdRef.current = targetAgentSessionId;
 
     const runGoal = options?.goal ?? goal;
     const runProviderId = options?.providerId ?? providerId;
@@ -817,6 +820,9 @@ export default function AgentPage() {
        { goal: runGoal, message: content, history, providerId: runProviderId || undefined, agentSessionId: targetAgentSessionId },
       {
         onEvent: (event) => {
+          // 切换到其他 Agent 会话后，旧会话的 SSE 可能仍在后台完成；
+          // 只允许当前会话更新页面，避免并行会话的回答串到一起。
+          if (activeAgentSessionIdRef.current !== targetAgentSessionId) return;
           updateStep(event);
           if (event.type === 'step' && event.status === 'waiting') {
             setRunNotice(event.message || '模型服务繁忙，正在等待资源后重试...');
@@ -851,10 +857,14 @@ export default function AgentPage() {
           }
         },
         onComplete: () => {
-          setRunStatus((current) => current === 'running' ? 'completed' : current);
+          const isCurrentAgentSession = activeAgentSessionIdRef.current === targetAgentSessionId;
+          if (isCurrentAgentSession) {
+            setRunStatus((current) => current === 'running' ? 'completed' : current);
+          }
           void loadLongTermMemory();
           void loadAuditEvents();
           void loadUsageSummary();
+          if (!isCurrentAgentSession) return;
           void agentApi.getConversation(sessionId, targetAgentSessionId)
             .then((conversation) => {
               restoreRunProgress(conversation);
@@ -878,6 +888,7 @@ export default function AgentPage() {
         },
         onError: (error) => {
           if (controller.signal.aborted) return;
+          if (activeAgentSessionIdRef.current !== targetAgentSessionId) return;
           const message = getErrorMessage(error) || '连接暂时中断';
           if (error instanceof StreamHttpError && error.status < 500) {
             setRunNotice('本次请求没有提交到后台任务，请根据错误提示调整后重试。');
@@ -1559,7 +1570,7 @@ export default function AgentPage() {
   };
 
   const createAgentConversation = async (): Promise<AgentConversationSummary | void> => {
-    if (!sessionId || !interview || runStatus === 'running') return;
+    if (!sessionId || !interview) return;
     const pending = createConversationRequestRef.current?.sessionId === sessionId
       ? createConversationRequestRef.current
       : { sessionId, key: createRequestId() };
@@ -1862,8 +1873,8 @@ export default function AgentPage() {
           onSelectAgentConversation={selectAgentConversation}
           onCreateAgentConversation={createAgentConversation}
           onClearAgentConversation={clearAgentConversation}
-          disabled={runStatus === 'running'}
-          agentConversationDisabled={runStatus === 'running' || !interview}
+          // 当前线程执行时仍禁止重复提交，但不阻塞创建/切换其他线程。
+          agentConversationDisabled={!interview}
         />
 
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)] gap-6 items-start min-w-0">

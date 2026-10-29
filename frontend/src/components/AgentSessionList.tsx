@@ -222,7 +222,8 @@ export default function AgentSessionList({
         <button
           type="button"
           onClick={() => void createAgentConversation()}
-          disabled={conversationDisabled || creatingConversation}
+          // 新建线程不属于当前线程的执行操作；当前线程运行时也必须允许用户创建并切换其他线程。
+          disabled={agentConversationDisabled || creatingConversation}
           className="btn-secondary w-full mt-2 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-sm disabled:opacity-50"
           title={agentConversationDisabled && !disabled ? '请先选择一份有效的面试报告' : undefined}
         >

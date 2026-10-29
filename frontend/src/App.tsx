@@ -8,6 +8,7 @@ import { Loader2, Sparkles } from 'lucide-react';
 import { ROUTE_PATTERNS, ROUTES } from './constants/routes';
 import { createRequestId } from './utils/requestId';
 import { authApi } from './api/auth';
+import { AUTH_SESSION_EXPIRED_EVENT } from './api/request';
 import type { AuthState } from './types/auth';
 
 // Lazy load components
@@ -56,6 +57,14 @@ function AuthGate({ children }: { children: React.ReactNode }) {
         if (active) setState({ required: false, authenticated: false, user: null });
       });
     return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    const handleExpiredSession = () => {
+      setState({ required: true, authenticated: false, user: null });
+    };
+    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleExpiredSession);
+    return () => window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleExpiredSession);
   }, []);
 
   useEffect(() => {
