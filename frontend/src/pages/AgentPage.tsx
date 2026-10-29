@@ -72,6 +72,7 @@ import type {
 import type { ProviderItem } from '../types/llmProvider';
 import AgentSessionList from '../components/AgentSessionList';
 import AgentNavigation from '../components/AgentNavigation';
+import AgentManagementOverview from '../components/AgentManagementOverview';
 import { ROUTES } from '../constants/routes';
 import { createRequestId } from '../utils/requestId';
 type RunStatus = 'idle' | 'running' | 'completed' | 'error' | 'cancelled';
@@ -1680,6 +1681,7 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
         </div>
       </div>
       <AgentNavigation />
+      {isWorkspaceView ? <AgentManagementOverview /> : null}
       {memoryNotice ? <p className="text-xs text-slate-500 dark:text-slate-400 text-right">{memoryNotice}</p> : null}
       {view === 'memory' ? <section className="dark-card px-5 py-4" aria-label="Agent 长期记忆">
         <div className="flex flex-wrap items-center justify-between gap-3">
