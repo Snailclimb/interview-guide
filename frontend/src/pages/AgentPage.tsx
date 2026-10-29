@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -284,6 +284,7 @@ interface AgentPageProps {
 
 export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
   const isWorkspaceView = view === 'workspace';
+  const needsInterviewContext = isWorkspaceView || view === 'actions';
   const viewTitle = view === 'memory'
     ? '记忆管理'
     : view === 'actions'
@@ -309,7 +310,7 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
   const [providerId, setProviderId] = useState('');
   const [providers, setProviders] = useState<ProviderItem[]>([]);
   const [interview, setInterview] = useState<InterviewDetail | null>(null);
-  const [loadingContext, setLoadingContext] = useState(Boolean(sessionId));
+  const [loadingContext, setLoadingContext] = useState(needsInterviewContext && Boolean(sessionId));
   const [contextError, setContextError] = useState('');
   const [runStatus, setRunStatus] = useState<RunStatus>('idle');
   const [runError, setRunError] = useState('');
@@ -531,11 +532,11 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
     // 面试上下文属于报告，不属于 Agent 线程；同一份报告切换线程时必须保留它。
     setInterview(null);
     setContextError('');
-    setLoadingContext(isWorkspaceView && Boolean(sessionId));
-  }, [isWorkspaceView, sessionId]);
+    setLoadingContext(needsInterviewContext && Boolean(sessionId));
+  }, [needsInterviewContext, sessionId]);
 
   useEffect(() => {
-    if (!isWorkspaceView || !sessionId) {
+    if (!needsInterviewContext || !sessionId) {
       setLoadingContext(false);
       return;
     }
@@ -596,7 +597,7 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [isWorkspaceView, navigate, sessionId, setSearchParams]);
+  }, [navigate, needsInterviewContext, sessionId, setSearchParams]);
 
   useEffect(() => {
     if (!isWorkspaceView) return;
@@ -723,10 +724,15 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
     () => goalOptions.find((option) => option.id === goal) ?? goalOptions[0],
     [goal],
   );
-  const showActionManagement = view === 'actions'
-    || actions.length > 0
-    || trainingTasks.length > 0
-    || scheduleDraftForm !== null;
+  const showActionManagement = view === 'actions' || (isWorkspaceView && scheduleDraftForm !== null);
+  const managementSearch = searchParams.toString() ? `?${searchParams.toString()}` : '';
+  const viewSubtitle = view === 'memory'
+    ? '沉淀跨面试的训练重点，支持后续复用和维护'
+    : view === 'actions'
+      ? '集中确认 Agent 草稿，推进专项训练任务'
+      : view === 'usage'
+        ? '查看 Token、模型调用、耗时、费用和活动轨迹'
+        : '把面试报告转成可执行的复盘和训练动作';
 
   const updateStep = (event: AgentStreamEvent) => {
     if (event.type === 'plan') {
@@ -1657,7 +1663,7 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
                 Agent 已接入
               </span>
             </div>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">把面试报告转成可执行的复盘和训练动作</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{viewSubtitle}</p>
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -1699,6 +1705,22 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
       </div>
       <AgentNavigation />
       {isWorkspaceView ? <AgentManagementOverview /> : null}
+      {isWorkspaceView && (actions.length > 0 || actionNotice) ? (
+        <section aria-label="Agent 动作提示" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary-100 bg-primary-50/60 px-4 py-3 dark:border-primary-900/60 dark:bg-primary-900/15">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-primary-800 dark:text-primary-200">动作已移到“动作与训练”页集中处理</p>
+            <p className="mt-1 text-xs text-primary-700/80 dark:text-primary-300/80">
+              {actionNotice || `当前有 ${actions.length} 个待处理动作，确认后才会写入业务数据。`}
+            </p>
+          </div>
+          <Link
+            to={`${ROUTES.agentActions}${managementSearch}`}
+            className="inline-flex shrink-0 items-center rounded-lg border border-primary-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-400 hover:bg-primary-50 dark:border-primary-700 dark:bg-slate-800/70 dark:text-primary-300 dark:hover:bg-primary-900/30"
+          >
+            去处理动作
+          </Link>
+        </section>
+      ) : null}
       {memoryNotice ? <p className="text-xs text-slate-500 dark:text-slate-400 text-right">{memoryNotice}</p> : null}
       {view === 'memory' ? <section className="dark-card px-5 py-4" aria-label="Agent 长期记忆">
         <div className="flex flex-wrap items-center justify-between gap-3">
