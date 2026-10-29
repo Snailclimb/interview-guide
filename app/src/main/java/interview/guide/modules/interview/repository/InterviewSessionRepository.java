@@ -12,6 +12,7 @@ import jakarta.persistence.LockModeType;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Collection;
 
 /**
  * 面试会话Repository
@@ -53,6 +54,10 @@ public interface InterviewSessionRepository extends JpaRepository<InterviewSessi
      * 根据会话ID查找
      */
     Optional<InterviewSessionEntity> findBySessionId(String sessionId);
+
+    List<InterviewSessionEntity> findAllBySessionIdInAndOwnerId(
+        Collection<String> sessionIds, String ownerId
+    );
 
     /** Agent 首次接管未归属的登录前历史记录时锁定行，避免两个账号同时认领。 */
     @Lock(LockModeType.PESSIMISTIC_WRITE)

@@ -14,6 +14,8 @@ public interface AgentRunUsageRepository extends JpaRepository<AgentRunUsageEnti
 
     Optional<AgentRunUsageEntity> findByRunId(String runId);
 
+    List<AgentRunUsageEntity> findTop100ByOwnerKeyOrderByCreatedAtDesc(String ownerKey);
+
     long countByOwnerKey(String ownerKey);
 
     long countByOwnerKeyAndRunStatus(String ownerKey, AgentRunStatus runStatus);

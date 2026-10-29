@@ -79,6 +79,28 @@ export interface AgentUsageSummary {
   costs: AgentUsageCostSummary[];
 }
 
+export interface AgentUsageRun {
+  runId: string;
+  interviewSessionId: string;
+  interviewTitle?: string | null;
+  skillId?: string | null;
+  agentSessionId: string;
+  agentSessionTitle?: string | null;
+  runStatus?: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  modelCalls: number;
+  durationMillis: number;
+  cost?: number | string | null;
+  currency?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  runStartedAt?: string | null;
+  runFinishedAt?: string | null;
+  createdAt: string;
+}
+
 export interface AgentAuditEvent {
   interviewSessionId?: string | null;
   agentSessionId?: string | null;
@@ -87,6 +109,8 @@ export interface AgentAuditEvent {
   resourceId?: string | null;
   result?: string | null;
   createdAt: string;
+  interviewTitle?: string | null;
+  agentSessionTitle?: string | null;
 }
 
 export type AgentActionStatus = 'PROPOSED' | 'CONFIRMED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';

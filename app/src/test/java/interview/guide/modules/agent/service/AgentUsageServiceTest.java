@@ -10,13 +10,18 @@ import interview.guide.modules.agent.model.AgentRunStatus;
 import interview.guide.modules.agent.model.AgentRunUsage;
 import interview.guide.modules.agent.model.AgentRunUsageEntity;
 import interview.guide.modules.agent.model.AgentUsageSummaryResponse;
+import interview.guide.modules.agent.model.AgentUsageRunResponse;
+import interview.guide.modules.agent.repository.AgentChatSessionRepository;
 import interview.guide.modules.agent.repository.AgentRunUsageRepository;
 import interview.guide.modules.agent.repository.AgentRunUsageRepository.AgentUsageCostProjection;
 import interview.guide.modules.agent.repository.AgentRunUsageRepository.AgentUsageTotalsProjection;
+import interview.guide.modules.interview.model.InterviewSessionEntity;
+import interview.guide.modules.interview.repository.InterviewSessionRepository;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -29,6 +34,12 @@ class AgentUsageServiceTest {
 
     @Mock
     private AgentRunUsageRepository usageRepository;
+
+    @Mock
+    private InterviewSessionRepository interviewSessionRepository;
+
+    @Mock
+    private AgentChatSessionRepository agentChatSessionRepository;
 
     @InjectMocks
     private AgentUsageService service;
@@ -113,5 +124,47 @@ class AgentUsageServiceTest {
         service.record(running, AgentRunUsage.empty());
         assertThat(service.summarize(" ").runCount()).isZero();
         org.mockito.Mockito.verifyNoInteractions(usageRepository);
+    }
+
+    @Test
+    void listsRecentRunsWithInterviewAndAgentSessionNames() {
+        AgentRunUsageEntity run = AgentRunUsageEntity.builder()
+            .ownerKey("user-1")
+            .interviewSessionId("interview-1")
+            .agentSessionId("agent-1")
+            .runId("run-1")
+            .runStatus(AgentRunStatus.COMPLETED)
+            .promptTokens(120)
+            .completionTokens(80)
+            .totalTokens(200)
+            .modelCalls(2)
+            .durationMillis(8_000)
+            .provider("pixel")
+            .model("gpt-5.6-luna")
+            .build();
+        InterviewSessionEntity interview = new InterviewSessionEntity();
+        interview.setSessionId("interview-1");
+        interview.setTitle("Java 后端高并发面试");
+        interview.setSkillId("java-backend");
+        AgentChatSessionEntity agentSession = AgentChatSessionEntity.builder()
+            .agentSessionId("agent-1")
+            .title("第一轮复盘")
+            .ownerKey("user-1")
+            .build();
+        when(usageRepository.findTop100ByOwnerKeyOrderByCreatedAtDesc("user-1"))
+            .thenReturn(List.of(run));
+        when(interviewSessionRepository.findAllBySessionIdInAndOwnerId(Set.of("interview-1"), "user-1"))
+            .thenReturn(List.of(interview));
+        when(agentChatSessionRepository.findAllByAgentSessionIdInAndOwnerKey(Set.of("agent-1"), "user-1"))
+            .thenReturn(List.of(agentSession));
+
+        List<AgentUsageRunResponse> runs = service.listRuns(" user-1 ", 20);
+
+        assertThat(runs).singleElement().satisfies(item -> {
+            assertThat(item.interviewTitle()).isEqualTo("Java 后端高并发面试");
+            assertThat(item.agentSessionTitle()).isEqualTo("第一轮复盘");
+            assertThat(item.totalTokens()).isEqualTo(200);
+            assertThat(item.model()).isEqualTo("gpt-5.6-luna");
+        });
     }
 }

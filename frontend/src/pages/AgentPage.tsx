@@ -65,6 +65,7 @@ import type {
   AgentTrainingTaskStatus,
   AgentRunUsage,
   AgentUsageSummary,
+  AgentUsageRun,
   AgentSource,
   AgentLoopTraceItem,
   AgentStreamEvent,
@@ -140,6 +141,28 @@ function formatDurationMillis(value: number) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`;
+}
+
+function formatRunStatus(status?: string | null) {
+  const labels: Record<string, string> = {
+    COMPLETED: '已完成',
+    FAILED: '失败',
+    CANCELLED: '已取消',
+  };
+  return labels[status || ''] || status || '未知状态';
+}
+
+function runStatusClass(status?: string | null) {
+  if (status === 'FAILED') return 'text-rose-600 dark:text-rose-300';
+  if (status === 'CANCELLED') return 'text-slate-500 dark:text-slate-400';
+  return 'text-emerald-600 dark:text-emerald-300';
+}
+
+function agentSessionHref(interviewSessionId?: string | null, agentSessionId?: string | null) {
+  if (!interviewSessionId) return null;
+  const params = new URLSearchParams({ sessionId: interviewSessionId });
+  if (agentSessionId) params.set('agentSessionId', agentSessionId);
+  return `${ROUTES.agent}?${params.toString()}`;
 }
 
 function formatAuditAction(action: string) {
@@ -284,7 +307,7 @@ interface AgentPageProps {
 
 export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
   const isWorkspaceView = view === 'workspace';
-  const needsInterviewContext = isWorkspaceView || view === 'actions';
+  const needsInterviewContext = isWorkspaceView || view === 'actions' || view === 'memory';
   const viewTitle = view === 'memory'
     ? '记忆管理'
     : view === 'actions'
@@ -323,6 +346,9 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
   const [usageSummary, setUsageSummary] = useState<AgentUsageSummary | null>(null);
   const [usageSummaryLoading, setUsageSummaryLoading] = useState(true);
   const [usageSummaryNotice, setUsageSummaryNotice] = useState('');
+  const [usageRuns, setUsageRuns] = useState<AgentUsageRun[]>([]);
+  const [usageRunsLoading, setUsageRunsLoading] = useState(true);
+  const [usageRunsNotice, setUsageRunsNotice] = useState('');
   const [memoryNotice, setMemoryNotice] = useState('');
   const [memory, setMemory] = useState<AgentMemoryResponse | null>(null);
   const [memoryLoading, setMemoryLoading] = useState(true);
@@ -733,6 +759,18 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
       : view === 'usage'
         ? '查看 Token、模型调用、耗时、费用和活动轨迹'
         : '把面试报告转成可执行的复盘和训练动作';
+  const currentMemoryScope = interview?.skillId?.trim().toLowerCase() || '';
+  const applicableMemoryItems = memory?.items.filter((item) => {
+    const itemScope = item.jobScope?.trim().toLowerCase() || '';
+    return !itemScope || !currentMemoryScope || itemScope === currentMemoryScope;
+  }) || [];
+  const hasLegacyMemory = Boolean(memory && memory.items.length === 0
+    && (memory.weaknesses.length > 0 || memory.recentGoals.length > 0));
+  const effectiveMemoryCount = applicableMemoryItems.length
+    || (hasLegacyMemory ? memory?.weaknesses.length || 0 : 0);
+  const scopedOutMemoryCount = memory && memory.items.length > applicableMemoryItems.length
+    ? memory.items.length - applicableMemoryItems.length
+    : 0;
 
   const updateStep = (event: AgentStreamEvent) => {
     if (event.type === 'plan') {
@@ -988,6 +1026,19 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
       .finally(() => setUsageSummaryLoading(false));
   }, []);
 
+  const loadUsageRuns = useCallback(() => {
+    setUsageRunsLoading(true);
+    setUsageRunsNotice('');
+    return agentApi.getUsageRuns(20)
+      .then((value) => setUsageRuns(value))
+      .catch((error: unknown) => {
+        setUsageRunsNotice(getErrorMessage(error) === '请先登录'
+          ? '登录状态已失效，请重新登录后再查看运行明细'
+          : '运行明细读取失败，请稍后重试');
+      })
+      .finally(() => setUsageRunsLoading(false));
+  }, []);
+
   const loadAgentActions = useCallback(() => {
     if (!sessionId || (isWorkspaceView && !interview)) {
       setActions([]);
@@ -1026,6 +1077,11 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
     if (view !== 'usage') return;
     void loadUsageSummary();
   }, [loadUsageSummary, view]);
+
+  useEffect(() => {
+    if (view !== 'usage') return;
+    void loadUsageRuns();
+  }, [loadUsageRuns, view]);
 
   useEffect(() => {
     if (!isWorkspaceView && view !== 'actions') return;
@@ -1749,7 +1805,7 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
         </div>
         {memoryLoading ? (
           <p className="text-xs dark-text-muted mt-3">正在读取记忆...</p>
-        ) : memory && (memory.lastSkillId || memory.weaknesses.length || memory.recentGoals.length || memory.items?.length) ? (
+        ) : memory ? (
           <div className="space-y-4 mt-4 text-xs">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="rounded-xl bg-slate-50 dark:bg-slate-800/70 p-3">
@@ -1764,6 +1820,51 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
               <p className="font-semibold dark-text mb-1">最近训练目标</p>
               <p className="dark-text-muted line-clamp-3">{memory.recentGoals.join('；') || '暂无'}</p>
             </div>
+            </div>
+            <div role="region" className="rounded-xl border border-primary-100 bg-primary-50/60 p-4 dark:border-primary-900/60 dark:bg-primary-900/15" aria-label="本场记忆应用预览">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-primary-800 dark:text-primary-200">本场面试会怎么使用记忆</p>
+                  <p className="mt-1 text-xs leading-5 text-primary-700/80 dark:text-primary-300/80">
+                    下一次在当前报告上运行 Agent 时，记忆会作为参考上下文注入；当前面试报告始终优先，不会修改原始报告。
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-full bg-white/80 px-2.5 py-1 text-xs font-medium text-primary-700 dark:bg-slate-800/70 dark:text-primary-300">
+                  {interview ? `当前方向：${interview.skillId || '未指定'}` : '未选择面试'}
+                </span>
+              </div>
+              {interview ? (
+                <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+                  <div className="rounded-lg bg-white/70 p-3 dark:bg-slate-800/60">
+                    <p className="font-semibold text-primary-800 dark:text-primary-200">本场生效</p>
+                    <p className="mt-1 text-primary-700/80 dark:text-primary-300/80">{effectiveMemoryCount} 条记忆会参与参考</p>
+                  </div>
+                  <div className="rounded-lg bg-white/70 p-3 dark:bg-slate-800/60">
+                    <p className="font-semibold text-primary-800 dark:text-primary-200">作用</p>
+                    <p className="mt-1 text-primary-700/80 dark:text-primary-300/80">提醒反复薄弱点和训练目标</p>
+                  </div>
+                  <div className="rounded-lg bg-white/70 p-3 dark:bg-slate-800/60">
+                    <p className="font-semibold text-primary-800 dark:text-primary-200">不会发生</p>
+                    <p className="mt-1 text-primary-700/80 dark:text-primary-300/80">不会覆盖本场报告或简历</p>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-3 text-xs text-primary-700/80 dark:text-primary-300/80">从对话工作台选择一份面试报告后，这里会显示本场实际生效的记忆。</p>
+              )}
+              {interview && applicableMemoryItems.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {applicableMemoryItems.slice(0, 8).map((item) => (
+                    <span key={item.id} className="rounded-full bg-white/80 px-2.5 py-1 text-[11px] text-primary-700 dark:bg-slate-800/70 dark:text-primary-300">
+                      {item.category === 'goal' ? '目标' : '薄弱点'}：{item.content}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              {interview && scopedOutMemoryCount > 0 ? (
+                <p className="mt-3 text-[11px] text-amber-700/80 dark:text-amber-300/80">
+                  另有 {scopedOutMemoryCount} 条记忆的适用方向与本场不一致，本次不会注入。
+                </p>
+              ) : null}
             </div>
             {memory.items?.length ? (
               <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
@@ -1809,7 +1910,7 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
                               来源：{item.source || 'Agent'}
                               {item.confidence != null ? ` · 置信度 ${Math.round(item.confidence * 100)}%` : ''}
                               {item.updatedAt ? ` · 更新于 ${formatDate(item.updatedAt)}` : ''}
-                              {item.expiresAt ? ` · ${formatDate(item.expiresAt)} 过期` : ''}
+                              {item.expiresAt ? ` · 有效至 ${formatDate(item.expiresAt)}` : ' · 长期有效'}
                             </p>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
@@ -1896,13 +1997,78 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
         ) : null}
       </section> : null}
 
+      {view === 'usage' ? <section className="dark-card px-5 py-4" aria-label="Agent 运行明细">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold dark-text">按运行明细</h2>
+              <span className="text-[11px] rounded-full bg-primary-50 px-2 py-0.5 text-primary-600 dark:bg-primary-900/30 dark:text-primary-300">
+                可定位到面试和 Agent 会话
+              </span>
+            </div>
+            <p className="text-xs dark-text-muted mt-1">每一行对应一次 Agent 执行，不把重试和其他面试的消耗混在一起。</p>
+          </div>
+          <button
+            onClick={() => void loadUsageRuns()}
+            disabled={usageRunsLoading}
+            className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs disabled:opacity-50"
+            aria-label="刷新 Agent 运行明细"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${usageRunsLoading ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
+        </div>
+        {usageRunsNotice ? (
+          <p className="text-xs text-rose-500 dark:text-rose-300 mt-3">{usageRunsNotice}</p>
+        ) : usageRunsLoading ? (
+          <p className="text-xs dark-text-muted mt-3">正在读取运行明细...</p>
+        ) : usageRuns.length === 0 ? (
+          <p className="text-xs dark-text-muted mt-3">还没有可展示的 Agent 运行。完成一次复盘后，这里会显示它具体属于哪场面试。</p>
+        ) : (
+          <div className="mt-3 space-y-2">
+            {usageRuns.map((run) => {
+              const href = agentSessionHref(run.interviewSessionId, run.agentSessionId);
+              return (
+                <div key={run.runId} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/60">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {href ? (
+                          <Link to={href} className="truncate text-sm font-semibold text-primary-700 hover:underline dark:text-primary-300">
+                            {run.interviewTitle || run.interviewSessionId}
+                          </Link>
+                        ) : <span className="text-sm font-semibold dark-text">{run.interviewTitle || '未关联面试'}</span>}
+                        <span className={`text-xs font-medium ${runStatusClass(run.runStatus)}`}>{formatRunStatus(run.runStatus)}</span>
+                      </div>
+                      <p className="mt-1 text-xs dark-text-muted">
+                        Agent 会话：{run.agentSessionTitle || run.agentSessionId || '未命名会话'}
+                        {run.skillId ? ` · 方向：${run.skillId}` : ''}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-[11px] text-slate-400">{formatDate(run.runFinishedAt || run.createdAt)}</span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
+                    <div><span className="dark-text-muted">Token</span><p className="mt-1 font-semibold dark-text">{run.totalTokens.toLocaleString()}</p><p className="text-[11px] dark-text-muted">入 {run.promptTokens.toLocaleString()} · 出 {run.completionTokens.toLocaleString()}</p></div>
+                    <div><span className="dark-text-muted">模型调用</span><p className="mt-1 font-semibold dark-text">{run.modelCalls} 次</p></div>
+                    <div><span className="dark-text-muted">耗时</span><p className="mt-1 font-semibold dark-text">{formatDurationMillis(run.durationMillis)}</p></div>
+                    <div><span className="dark-text-muted">模型</span><p className="mt-1 truncate font-semibold dark-text" title={run.model || undefined}>{run.model || run.provider || '默认模型'}</p></div>
+                    <div><span className="dark-text-muted">费用</span><p className="mt-1 font-semibold dark-text">{run.cost == null ? '未计价' : `${run.currency || ''} ${run.cost}`.trim()}</p></div>
+                  </div>
+                  {href ? <Link to={href} className="mt-3 inline-flex text-xs font-medium text-primary-600 hover:underline dark:text-primary-300">打开这场 Agent 对话</Link> : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section> : null}
+
       {view === 'usage' ? <section className="dark-card px-5 py-4" aria-label="Agent 最近活动">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Activity className="w-4 h-4 text-primary-500" />
-            <h2 className="text-sm font-semibold dark-text">最近活动</h2>
+            <h2 className="text-sm font-semibold dark-text">活动轨迹</h2>
             <span className="text-[11px] rounded-full bg-slate-100 px-2 py-0.5 text-slate-500 dark:bg-slate-700 dark:text-slate-300">
-              低敏记录
+              可定位来源
             </span>
           </div>
           <button
@@ -1923,16 +2089,29 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
           <p className="text-xs dark-text-muted mt-3">暂无活动记录。</p>
         ) : (
           <div className="mt-3 divide-y divide-slate-200 dark:divide-slate-700">
-            {auditEvents.slice(0, 8).map((event, index) => (
-              <div key={`${event.createdAt}-${event.action}-${index}`} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary-400 shrink-0" />
-                  <span className="font-medium dark-text">{formatAuditAction(event.action)}</span>
-                  <span className="dark-text-muted truncate">{event.resourceType}</span>
+            {auditEvents.slice(0, 8).map((event, index) => {
+              const href = agentSessionHref(event.interviewSessionId, event.agentSessionId);
+              return (
+                <div key={`${event.createdAt}-${event.action}-${index}`} className="flex flex-wrap items-center justify-between gap-3 py-3 text-xs">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary-400 shrink-0" />
+                      <span className="font-medium dark-text">{formatAuditAction(event.action)}</span>
+                      <span className="dark-text-muted">{event.resourceType}</span>
+                      {event.result ? <span className={event.result === 'success' ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'}>{event.result === 'success' ? '成功' : event.result}</span> : null}
+                    </div>
+                    <p className="mt-1 truncate dark-text-muted">
+                      面试：{event.interviewTitle || event.interviewSessionId || '未关联面试'}
+                      {' · '}Agent 会话：{event.agentSessionTitle || event.agentSessionId || '未关联会话'}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <span className="text-[11px] text-slate-400">{formatDate(event.createdAt)}</span>
+                    {href ? <Link to={href} className="font-medium text-primary-600 hover:underline dark:text-primary-300">打开</Link> : null}
+                  </div>
                 </div>
-                <span className="text-[11px] text-slate-400 shrink-0">{formatDate(event.createdAt)}</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section> : null}

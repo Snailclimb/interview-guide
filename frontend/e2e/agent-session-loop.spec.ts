@@ -145,7 +145,8 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
         {
           interviewSessionId: 'interview-1', agentSessionId: 'thread-a',
           action: 'RUN_COMPLETED', resourceType: 'agent-run', resourceId: 'run-1',
-          result: 'COMPLETED', createdAt: '2026-10-24T09:06:00',
+          result: 'success', createdAt: '2026-10-24T09:06:00',
+          interviewTitle: 'Java 后端高并发面试', agentSessionTitle: '第一轮复盘',
         },
       ]) });
     });
@@ -162,6 +163,29 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
         durationMillis: 12500,
         costs: [{ provider: 'pixel', currency: 'USD', amount: '0.30' }],
       }) });
+    });
+    await page.route('**/api/agent/usage/runs*', async route => {
+      await route.fulfill({ contentType: 'application/json', body: envelope([{
+        runId: 'run-1',
+        interviewSessionId: 'interview-1',
+        interviewTitle: 'Java 后端高并发面试',
+        skillId: 'java-backend',
+        agentSessionId: 'thread-a',
+        agentSessionTitle: '第一轮复盘',
+        runStatus: 'COMPLETED',
+        promptTokens: 1200,
+        completionTokens: 800,
+        totalTokens: 2000,
+        modelCalls: 4,
+        durationMillis: 12500,
+        cost: '0.30',
+        currency: 'USD',
+        provider: 'pixel',
+        model: 'gpt-5.6-luna',
+        runStartedAt: '2026-10-24T09:05:00',
+        runFinishedAt: '2026-10-24T09:06:00',
+        createdAt: '2026-10-24T09:06:00',
+      }]) });
     });
     await page.route('**/api/agent/memory/items/*', async route => {
       const itemId = route.request().url().split('/').pop()!;
@@ -243,6 +267,8 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await agentNavigation.getByRole('link', { name: '用量与活动', exact: true }).click();
     await expect(page.getByRole('region', { name: 'Agent 累计用量' })).toContainText('2,000');
     await expect(page.getByRole('region', { name: 'Agent 累计用量' })).toContainText('pixel · USD 0.30');
+    await expect(page.getByRole('region', { name: 'Agent 运行明细' })).toContainText('Java 后端高并发面试');
+    await expect(page.getByRole('region', { name: 'Agent 运行明细' })).toContainText('第一轮复盘');
     await agentNavigation.getByRole('link', { name: '对话工作台', exact: true }).click();
     expect(trainingTaskRequests).toHaveLength(0);
 
@@ -272,6 +298,8 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page).toHaveURL(/\/agent\/memory\?sessionId=interview-1&agentSessionId=thread-a/);
     await expect(page.getByRole('heading', { name: '记忆管理' })).toBeVisible();
     await expect(page.getByRole('region', { name: 'Agent 长期记忆' })).toContainText('Redis 缓存');
+    await expect(page.getByRole('region', { name: '本场记忆应用预览' })).toContainText('本场生效');
+    await expect(page.getByRole('region', { name: '本场记忆应用预览' })).toContainText('java-backend');
     await expect(page.getByPlaceholder('问问你的面试教练...')).not.toBeVisible();
 
     await agentNavigation.getByRole('link', { name: '动作与训练', exact: true }).click();
@@ -286,6 +314,7 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page.getByRole('heading', { name: '用量与活动' })).toBeVisible();
     await expect(page.getByRole('region', { name: 'Agent 累计用量' })).toContainText('2,000');
     await expect(page.getByRole('region', { name: 'Agent 最近活动' })).toContainText('运行完成');
+    await expect(page.getByRole('region', { name: 'Agent 最近活动' })).toContainText('Java 后端高并发面试');
   });
 
   test('新建 Agent 对话后立即选中并显示在列表中', async ({ page }) => {
@@ -829,7 +858,7 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
   test('可以编辑和删除单条长期记忆', async ({ page }) => {
     await page.goto('/agent/memory?sessionId=interview-1&agentSessionId=thread-a');
     await expect(page.getByLabel('编辑记忆：Redis 缓存')).toBeVisible();
-    await expect(page.getByText('过期', { exact: false })).toBeVisible();
+    await expect(page.getByText('有效至', { exact: false })).toBeVisible();
 
     await page.getByLabel('编辑记忆：Redis 缓存').click();
     await page.getByLabel('编辑记忆内容').fill('Redis 缓存穿透与击穿');
