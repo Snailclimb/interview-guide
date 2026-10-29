@@ -227,9 +227,14 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
   });
 
   test('切换页面、刷新和多线程都保持会话隔离', async ({ page }) => {
+    const trainingTaskRequests: string[] = [];
+    page.on('request', request => {
+      if (request.url().includes('/api/agent/training-tasks')) trainingTaskRequests.push(request.url());
+    });
     await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
     await expect(page.getByText('线程 A 的复盘内容')).toBeVisible();
     await expect(page.getByLabel('Agent 动作草稿')).not.toBeVisible();
+    expect(trainingTaskRequests).toHaveLength(0);
     await expect(page.getByRole('region', { name: 'Agent Loop 轨迹' })).toContainText('已读取面试报告');
     const managementOverview = page.getByRole('region', { name: 'Agent 管理入口' });
     const agentNavigation = page.getByRole('navigation', { name: 'Agent 页面导航' });
@@ -239,6 +244,7 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page.getByRole('region', { name: 'Agent 累计用量' })).toContainText('2,000');
     await expect(page.getByRole('region', { name: 'Agent 累计用量' })).toContainText('pixel · USD 0.30');
     await agentNavigation.getByRole('link', { name: '对话工作台', exact: true }).click();
+    expect(trainingTaskRequests).toHaveLength(0);
 
     await page.getByText('第二轮训练', { exact: true }).click();
     await expect(page).toHaveURL(/agentSessionId=thread-b/);
@@ -255,6 +261,10 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
   });
 
   test('Agent 管理页按职责拆分且切换时保留当前报告和线程', async ({ page }) => {
+    const trainingTaskRequests: string[] = [];
+    page.on('request', request => {
+      if (request.url().includes('/api/agent/training-tasks')) trainingTaskRequests.push(request.url());
+    });
     await page.goto('/agent?sessionId=interview-1&agentSessionId=thread-a');
     const agentNavigation = page.getByRole('navigation', { name: 'Agent 页面导航' });
 
@@ -268,6 +278,7 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page).toHaveURL(/\/agent\/actions\?sessionId=interview-1&agentSessionId=thread-a/);
     await expect(page.getByRole('heading', { name: '动作与训练', exact: true })).toBeVisible();
     await expect(page.getByLabel('Agent 动作草稿')).toBeVisible();
+    await expect.poll(() => trainingTaskRequests.length).toBeGreaterThan(0);
     await expect(agentNavigation.getByRole('link', { name: '对话工作台', exact: true })).toHaveAttribute('href', /\/agent\?sessionId=interview-1&agentSessionId=thread-a/);
 
     await agentNavigation.getByRole('link', { name: '用量与活动', exact: true }).click();

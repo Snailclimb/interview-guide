@@ -1001,12 +1001,16 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
   }, [agentSessionId, interview, isWorkspaceView, sessionId]);
 
   const loadTrainingTasks = useCallback(() => {
+    if (view !== 'actions') {
+      setTrainingTasks([]);
+      return Promise.resolve();
+    }
     setTrainingTasksLoading(true);
     return agentApi.listTrainingTasks()
       .then((value) => setTrainingTasks(value))
       .catch(() => setActionNotice('训练任务读取失败，请稍后重试'))
       .finally(() => setTrainingTasksLoading(false));
-  }, []);
+  }, [view]);
 
   useEffect(() => {
     if (view !== 'memory') return;
@@ -1029,9 +1033,9 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
   }, [isWorkspaceView, loadAgentActions, view]);
 
   useEffect(() => {
-    if (!isWorkspaceView && view !== 'actions') return;
+    if (view !== 'actions') return;
     void loadTrainingTasks();
-  }, [isWorkspaceView, loadTrainingTasks, view]);
+  }, [loadTrainingTasks, view]);
 
   const saveDraftAction = (message: AgentMessage, kind: 'plan' | 'practice') => {
     if (!sessionId || !agentSessionId || message.role !== 'assistant' || !message.content.trim()) {
