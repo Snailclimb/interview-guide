@@ -86,4 +86,3 @@ pwsh -NoProfile -File .\scripts\agent-action-acceptance.ps1 `
 - 失败重试、刷新恢复和账号隔离通过；
 - 前端 Agent E2E、后端相关测试和生产构建均通过；
 - 候选环境验证通过后，由用户确认验收。
-
