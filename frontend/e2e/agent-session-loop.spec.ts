@@ -870,4 +870,52 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await page.getByLabel('删除记忆：Redis 缓存穿透与击穿').click();
     await expect(page.getByText('可管理的记忆项')).not.toBeVisible();
   });
+
+  test('记忆读取遇到临时故障会自动重试，不会误显示为空', async ({ page }) => {
+    let memoryRequests = 0;
+    await page.route('**/api/agent/memory', async route => {
+      memoryRequests += 1;
+      if (memoryRequests < 4) {
+        await route.fulfill({ status: 503, contentType: 'text/plain', body: 'temporary unavailable' });
+        return;
+      }
+      await route.fulfill({ contentType: 'application/json', body: envelope({
+        lastSkillId: 'java-backend',
+        weaknesses: ['Redis 缓存'],
+        recentGoals: ['practice'],
+        updatedAt: '2026-10-24T09:05:00',
+        items: [{
+          id: 'memory-retry', category: 'weakness', content: 'Redis 缓存', source: 'interview-report',
+          jobScope: 'java-backend', confidence: 0.9, updatedAt: '2026-10-24T09:05:00', expiresAt: null,
+        }],
+      }) });
+    });
+
+    await page.goto('/agent/memory?sessionId=interview-1&agentSessionId=thread-a');
+    await expect(page.getByRole('region', { name: 'Agent 长期记忆' })).toContainText('Redis 缓存');
+    await expect(page.getByText('暂无长期记忆，完成一次 Agent 复盘后会自动积累。')).not.toBeVisible();
+    expect(memoryRequests).toBeGreaterThanOrEqual(4);
+  });
+
+  test('没有 Agent 线程时不提前请求完整动作列表', async ({ page }) => {
+    let actionRequests = 0;
+    await page.route('**/api/agent/interview-sessions/interview-1/conversations', async route => {
+      await route.fulfill({ contentType: 'application/json', body: envelope([]) });
+    });
+    const fulfillEmptyConversation = async (route: import('@playwright/test').Route) => {
+      await route.fulfill({ contentType: 'application/json', body: envelope({
+        interviewSessionId: 'interview-1', agentSessionId: null, messages: [], runStatus: 'IDLE',
+      }) });
+    };
+    await page.route('**/api/agent/interview-sessions/interview-1/conversation', fulfillEmptyConversation);
+    await page.route('**/api/agent/interview-sessions/interview-1/conversation?*', fulfillEmptyConversation);
+    await page.route('**/api/agent/interview-sessions/interview-1/actions*', async route => {
+      actionRequests += 1;
+      await route.fulfill({ contentType: 'application/json', body: envelope([]) });
+    });
+
+    await page.goto('/agent?sessionId=interview-1');
+    await expect(page.getByText('还没有 Agent 对话，点击上方按钮新建。')).toBeVisible();
+    expect(actionRequests).toBe(0);
+  });
 });

@@ -269,9 +269,18 @@ public class AgentConversationService {
     public List<AgentConversationSummary> listConversations(String interviewSessionId, String ownerKey) {
         String normalizedOwnerKey = normalizeOwnerKey(ownerKey, false);
         assertInterviewAccess(interviewSessionId, normalizedOwnerKey);
+        if (normalizedOwnerKey != null) {
+            return sessionRepository
+                .findTop50ByOwnerKeyAndInterviewSessionIdAndArchivedFalseOrderByUpdatedAtDesc(
+                    normalizedOwnerKey, interviewSessionId)
+                .stream()
+                .map(session -> new AgentConversationSummary(
+                    session.getAgentSessionId(), session.getInterviewSessionId(), session.getTitle(),
+                    session.getRunStatus(), session.getCreatedAt(), session.getUpdatedAt()))
+                .toList();
+        }
         return sessionRepository.findByInterviewSessionIdOrderByUpdatedAtDesc(interviewSessionId).stream()
             .filter(session -> !session.isArchived())
-            .filter(session -> normalizedOwnerKey == null || isOwnedBy(session, normalizedOwnerKey))
             .map(this::toSummary)
             .toList();
     }

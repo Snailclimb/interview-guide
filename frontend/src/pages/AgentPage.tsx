@@ -81,6 +81,30 @@ type StepStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | '
 
 const AUDIT_RETRY_DELAYS_MS = [500, 1000, 2000];
 
+function errorMessage(error: unknown) {
+  return getErrorMessage(error);
+}
+
+function isAuthenticationError(error: unknown) {
+  return errorMessage(error) === '请先登录';
+}
+
+function isRetryableReadError(error: unknown) {
+  const message = errorMessage(error);
+  return message.startsWith('网络连接失败') || /HTTP (429|5\d\d)/.test(message);
+}
+
+function retryRead<T>(read: () => Promise<T>, delays = AUDIT_RETRY_DELAYS_MS): Promise<T> {
+  let attempt = 0;
+  const run = (): Promise<T> => read().catch((error: unknown) => {
+    if (!isRetryableReadError(error) || attempt >= delays.length) throw error;
+    const delay = delays[attempt];
+    attempt += 1;
+    return new Promise<void>((resolve) => window.setTimeout(resolve, delay)).then(run);
+  });
+  return run();
+}
+
 interface AgentStep {
   id: string;
   title: string;
@@ -350,6 +374,7 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
   const [usageRunsLoading, setUsageRunsLoading] = useState(true);
   const [usageRunsNotice, setUsageRunsNotice] = useState('');
   const [memoryNotice, setMemoryNotice] = useState('');
+  const [memoryLoadError, setMemoryLoadError] = useState('');
   const [memory, setMemory] = useState<AgentMemoryResponse | null>(null);
   const [memoryLoading, setMemoryLoading] = useState(true);
   const [auditEvents, setAuditEvents] = useState<AgentAuditEvent[]>([]);
@@ -984,42 +1009,35 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
 
   const loadLongTermMemory = useCallback(() => {
     setMemoryLoading(true);
-    return agentApi.getMemory()
+    setMemoryLoadError('');
+    return retryRead(() => agentApi.getMemory())
       .then((value) => setMemory(value))
-      .catch(() => setMemoryNotice('长期记忆读取失败，请稍后重试'))
+      .catch((error: unknown) => setMemoryLoadError(isAuthenticationError(error)
+        ? '登录状态已失效，请重新登录后再查看长期记忆'
+        : '长期记忆读取失败，请稍后重试'))
       .finally(() => setMemoryLoading(false));
   }, []);
 
   const loadAuditEvents = useCallback(() => {
     setAuditLoading(true);
     setAuditNotice('');
-    let attempt = 0;
-    const load = (): Promise<void> => agentApi.getAuditEvents(20)
+    return retryRead(() => agentApi.getAuditEvents(20))
       .then((value) => setAuditEvents(value))
       .catch((error: unknown) => {
-        if (attempt < AUDIT_RETRY_DELAYS_MS.length) {
-          const delay = AUDIT_RETRY_DELAYS_MS[attempt];
-          attempt += 1;
-          return new Promise<void>((resolve) => {
-            window.setTimeout(resolve, delay);
-          }).then(load);
-        }
-        const message = getErrorMessage(error);
-        setAuditNotice(message === '请先登录'
+        setAuditNotice(isAuthenticationError(error)
           ? '登录状态已失效，请重新登录后再查看活动记录'
           : '活动记录读取失败，请稍后重试');
-      });
-    return load()
+      })
       .finally(() => setAuditLoading(false));
   }, []);
 
   const loadUsageSummary = useCallback(() => {
     setUsageSummaryLoading(true);
     setUsageSummaryNotice('');
-    return agentApi.getUsageSummary()
+    return retryRead(() => agentApi.getUsageSummary())
       .then((value) => setUsageSummary(value))
       .catch((error: unknown) => {
-        setUsageSummaryNotice(getErrorMessage(error) === '请先登录'
+        setUsageSummaryNotice(isAuthenticationError(error)
           ? '登录状态已失效，请重新登录后查看累计用量'
           : '累计用量读取失败，请稍后重试');
       })
@@ -1029,10 +1047,10 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
   const loadUsageRuns = useCallback(() => {
     setUsageRunsLoading(true);
     setUsageRunsNotice('');
-    return agentApi.getUsageRuns(20)
+    return retryRead(() => agentApi.getUsageRuns(20))
       .then((value) => setUsageRuns(value))
       .catch((error: unknown) => {
-        setUsageRunsNotice(getErrorMessage(error) === '请先登录'
+        setUsageRunsNotice(isAuthenticationError(error)
           ? '登录状态已失效，请重新登录后再查看运行明细'
           : '运行明细读取失败，请稍后重试');
       })
@@ -1040,7 +1058,7 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
   }, []);
 
   const loadAgentActions = useCallback(() => {
-    if (!sessionId || (isWorkspaceView && !interview)) {
+    if (!sessionId || (isWorkspaceView && (!interview || !agentSessionId))) {
       setActions([]);
       return Promise.resolve();
     }
@@ -1805,6 +1823,20 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
         </div>
         {memoryLoading ? (
           <p className="text-xs dark-text-muted mt-3">正在读取记忆...</p>
+        ) : memoryLoadError ? (
+          <div className="mt-4 flex items-start justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-600 dark:border-rose-900/60 dark:bg-rose-900/20 dark:text-rose-300" role="alert">
+            <div>
+              <p className="font-medium">长期记忆暂时无法读取</p>
+              <p className="mt-1 opacity-80">{memoryLoadError}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void loadLongTermMemory()}
+              className="shrink-0 font-medium text-primary-600 hover:underline dark:text-primary-300"
+            >
+              重试
+            </button>
+          </div>
         ) : memory ? (
           <div className="space-y-4 mt-4 text-xs">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

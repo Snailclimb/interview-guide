@@ -626,8 +626,8 @@ class AgentConversationServiceTest {
         ).isInstanceOf(interview.guide.common.exception.BusinessException.class)
             .hasMessage("无权访问该 Agent 会话");
 
-        when(sessionRepository.findByInterviewSessionIdOrderByUpdatedAtDesc("interview-1"))
-            .thenReturn(List.of(session));
+        when(sessionRepository.findTop50ByOwnerKeyAndInterviewSessionIdAndArchivedFalseOrderByUpdatedAtDesc("browser-b", "interview-1"))
+            .thenReturn(List.of());
         assertThat(service.listConversations("interview-1", "browser-b")).isEmpty();
     }
 

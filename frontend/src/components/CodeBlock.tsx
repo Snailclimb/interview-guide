@@ -1,5 +1,4 @@
-import { useState, lazy, Suspense } from 'react';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { Check, Copy } from 'lucide-react';
 
 // Lazy load SyntaxHighlighter
@@ -14,6 +13,17 @@ interface CodeBlockProps {
 
 export default function CodeBlock({ language, children }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
+  const [syntaxTheme, setSyntaxTheme] = useState<Record<string, unknown> | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void import('react-syntax-highlighter/dist/esm/styles/prism').then(({ oneDark }) => {
+      if (active) setSyntaxTheme(oneDark as Record<string, unknown>);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleCopy = async () => {
     try {
@@ -61,7 +71,7 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
         }>
           <SyntaxHighlighter
             language={language || 'text'}
-            style={oneDark}
+            style={syntaxTheme || {}}
             customStyle={{
               margin: 0,
               borderTopLeftRadius: 0,

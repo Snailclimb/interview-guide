@@ -102,14 +102,24 @@
     @apply w-2 h-2;
   }
 
-    .scrollbar-thin::-webkit-scrollbar-track {
+  .scrollbar-thin::-webkit-scrollbar-track {
     @apply bg-slate-100 rounded;
-        @apply dark:bg-slate-800;
   }
 
-    .scrollbar-thin::-webkit-scrollbar-thumb {
+  .scrollbar-thin::-webkit-scrollbar-thumb {
     @apply bg-slate-300 rounded hover:bg-slate-400;
-        @apply dark:bg-slate-600 dark:hover:bg-slate-500;
+  }
+
+  .dark .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-slate-800;
+  }
+
+  .dark .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-slate-600;
+  }
+
+  .dark .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-500;
   }
 }
 
