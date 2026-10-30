@@ -918,4 +918,52 @@ test.describe('AI 面试教练 Agent 会话与 Loop', () => {
     await expect(page.getByText('还没有 Agent 对话，点击上方按钮新建。')).toBeVisible();
     expect(actionRequests).toBe(0);
   });
+
+  test('用量与活动可以按面试和 Agent 会话筛选', async ({ page }) => {
+    await page.unroute('**/api/agent/usage/runs*');
+    await page.route('**/api/agent/usage/runs*', async route => {
+      await route.fulfill({ contentType: 'application/json', body: envelope([
+        {
+          runId: 'run-a', interviewSessionId: 'interview-1', interviewTitle: 'Java 后端高并发面试',
+          skillId: 'java-backend', agentSessionId: 'thread-a', agentSessionTitle: '第一轮复盘',
+          runStatus: 'COMPLETED', promptTokens: 100, completionTokens: 50, totalTokens: 150,
+          modelCalls: 1, durationMillis: 1000, cost: null, currency: null, provider: 'pixel',
+          model: 'gpt-5.6-luna', runStartedAt: '2026-10-24T09:05:00', runFinishedAt: '2026-10-24T09:06:00',
+          createdAt: '2026-10-24T09:05:00',
+        },
+        {
+          runId: 'run-b', interviewSessionId: 'interview-1', interviewTitle: 'Java 后端高并发面试',
+          skillId: 'java-backend', agentSessionId: 'thread-b', agentSessionTitle: '第二轮训练',
+          runStatus: 'FAILED', promptTokens: 80, completionTokens: 0, totalTokens: 80,
+          modelCalls: 1, durationMillis: 800, cost: null, currency: null, provider: 'pixel',
+          model: 'gpt-5.6-luna', runStartedAt: '2026-10-24T09:07:00', runFinishedAt: '2026-10-24T09:08:00',
+          createdAt: '2026-10-24T09:07:00',
+        },
+      ]) });
+    });
+    await page.unroute('**/api/agent/audit/events*');
+    await page.route('**/api/agent/audit/events*', async route => {
+      await route.fulfill({ contentType: 'application/json', body: envelope([
+        {
+          interviewSessionId: 'interview-1', agentSessionId: 'thread-a', action: 'RUN_COMPLETED',
+          resourceType: 'agent-run', resourceId: 'run-a', result: 'success', createdAt: '2026-10-24T09:06:00',
+          interviewTitle: 'Java 后端高并发面试', agentSessionTitle: '第一轮复盘',
+        },
+        {
+          interviewSessionId: 'interview-1', agentSessionId: 'thread-b', action: 'RUN_FAILED',
+          resourceType: 'agent-run', resourceId: 'run-b', result: 'failed', createdAt: '2026-10-24T09:08:00',
+          interviewTitle: 'Java 后端高并发面试', agentSessionTitle: '第二轮训练',
+        },
+      ]) });
+    });
+
+    await page.goto('/agent/usage');
+    const filter = page.getByLabel('筛选 Agent 来源会话');
+    await expect(filter.locator('option')).toHaveCount(3);
+    await filter.selectOption('interview-1::thread-b');
+    await expect(filter).toHaveValue('interview-1::thread-b');
+    await expect(page.getByRole('region', { name: 'Agent 运行明细' }).getByText('Agent 会话：第二轮训练')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Agent 运行明细' }).getByText('Agent 会话：第一轮复盘')).not.toBeVisible();
+    await expect(page.getByText('显示 1 / 2 条运行记录')).toBeVisible();
+  });
 });

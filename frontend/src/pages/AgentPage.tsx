@@ -80,6 +80,8 @@ type RunStatus = 'idle' | 'running' | 'completed' | 'error' | 'cancelled';
 type StepStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
 
 const AUDIT_RETRY_DELAYS_MS = [500, 1000, 2000];
+const ALL_USAGE_SOURCES = '__all__';
+const UNLINKED_USAGE_SOURCE = '__unlinked__';
 
 function errorMessage(error: unknown) {
   return getErrorMessage(error);
@@ -103,6 +105,23 @@ function retryRead<T>(read: () => Promise<T>, delays = AUDIT_RETRY_DELAYS_MS): P
     return new Promise<void>((resolve) => window.setTimeout(resolve, delay)).then(run);
   });
   return run();
+}
+
+function usageSourceKey(interviewSessionId?: string | null, agentSessionId?: string | null) {
+  return interviewSessionId && agentSessionId
+    ? `${interviewSessionId}::${agentSessionId}`
+    : UNLINKED_USAGE_SOURCE;
+}
+
+function usageSourceLabel(
+  interviewSessionId?: string | null,
+  interviewTitle?: string | null,
+  agentSessionId?: string | null,
+  agentSessionTitle?: string | null,
+) {
+  const interview = interviewTitle || interviewSessionId || '未关联面试';
+  const agent = agentSessionTitle || agentSessionId || '未关联会话';
+  return `${interview} · ${agent}`;
 }
 
 interface AgentStep {
@@ -373,6 +392,7 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
   const [usageRuns, setUsageRuns] = useState<AgentUsageRun[]>([]);
   const [usageRunsLoading, setUsageRunsLoading] = useState(true);
   const [usageRunsNotice, setUsageRunsNotice] = useState('');
+  const [usageSourceFilter, setUsageSourceFilter] = useState(ALL_USAGE_SOURCES);
   const [memoryNotice, setMemoryNotice] = useState('');
   const [memoryLoadError, setMemoryLoadError] = useState('');
   const [memory, setMemory] = useState<AgentMemoryResponse | null>(null);
@@ -380,6 +400,30 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
   const [auditEvents, setAuditEvents] = useState<AgentAuditEvent[]>([]);
   const [auditLoading, setAuditLoading] = useState(true);
   const [auditNotice, setAuditNotice] = useState('');
+  const usageSourceOptions = useMemo(() => {
+    const options = new Map<string, string>();
+    usageRuns.forEach((run) => options.set(
+      usageSourceKey(run.interviewSessionId, run.agentSessionId),
+      usageSourceLabel(run.interviewSessionId, run.interviewTitle, run.agentSessionId, run.agentSessionTitle),
+    ));
+    auditEvents.forEach((event) => options.set(
+      usageSourceKey(event.interviewSessionId, event.agentSessionId),
+      usageSourceLabel(event.interviewSessionId, event.interviewTitle, event.agentSessionId, event.agentSessionTitle),
+    ));
+    return [...options.entries()].sort((left, right) => left[1].localeCompare(right[1], 'zh-CN'));
+  }, [auditEvents, usageRuns]);
+  const filteredUsageRuns = useMemo(
+    () => usageSourceFilter === ALL_USAGE_SOURCES
+      ? usageRuns
+      : usageRuns.filter((run) => usageSourceKey(run.interviewSessionId, run.agentSessionId) === usageSourceFilter),
+    [usageRuns, usageSourceFilter],
+  );
+  const filteredAuditEvents = useMemo(
+    () => usageSourceFilter === ALL_USAGE_SOURCES
+      ? auditEvents
+      : auditEvents.filter((event) => usageSourceKey(event.interviewSessionId, event.agentSessionId) === usageSourceFilter),
+    [auditEvents, usageSourceFilter],
+  );
   const [actions, setActions] = useState<AgentAction[]>([]);
   const [actionsLoading, setActionsLoading] = useState(false);
   const [actionNotice, setActionNotice] = useState('');
@@ -1021,7 +1065,7 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
   const loadAuditEvents = useCallback(() => {
     setAuditLoading(true);
     setAuditNotice('');
-    return retryRead(() => agentApi.getAuditEvents(20))
+    return retryRead(() => agentApi.getAuditEvents(100))
       .then((value) => setAuditEvents(value))
       .catch((error: unknown) => {
         setAuditNotice(isAuthenticationError(error)
@@ -1047,7 +1091,7 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
   const loadUsageRuns = useCallback(() => {
     setUsageRunsLoading(true);
     setUsageRunsNotice('');
-    return retryRead(() => agentApi.getUsageRuns(20))
+    return retryRead(() => agentApi.getUsageRuns(100))
       .then((value) => setUsageRuns(value))
       .catch((error: unknown) => {
         setUsageRunsNotice(isAuthenticationError(error)
@@ -1987,6 +2031,26 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
             刷新
           </button>
         </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+          <label htmlFor="agent-usage-source-filter" className="dark-text-muted">查看来源</label>
+          <select
+            id="agent-usage-source-filter"
+            value={usageSourceFilter}
+            onChange={(event) => setUsageSourceFilter(event.target.value)}
+            className="max-w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs dark:border-slate-600 dark:bg-slate-900 dark-text"
+            aria-label="筛选 Agent 来源会话"
+          >
+            <option value={ALL_USAGE_SOURCES}>全部面试与 Agent 会话</option>
+            {usageSourceOptions.map(([key, label]) => (
+              <option key={key} value={key}>{label}</option>
+            ))}
+          </select>
+          {usageSourceFilter !== ALL_USAGE_SOURCES ? (
+            <button type="button" onClick={() => setUsageSourceFilter(ALL_USAGE_SOURCES)} className="text-primary-600 hover:underline dark:text-primary-300">
+              清除筛选
+            </button>
+          ) : null}
+        </div>
         {usageSummaryNotice ? (
           <p className="text-xs text-rose-500 dark:text-rose-300 mt-3">{usageSummaryNotice}</p>
         ) : usageSummaryLoading && !usageSummary ? (
@@ -2056,9 +2120,12 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
           <p className="text-xs dark-text-muted mt-3">正在读取运行明细...</p>
         ) : usageRuns.length === 0 ? (
           <p className="text-xs dark-text-muted mt-3">还没有可展示的 Agent 运行。完成一次复盘后，这里会显示它具体属于哪场面试。</p>
+        ) : filteredUsageRuns.length === 0 ? (
+          <p className="text-xs dark-text-muted mt-3">当前来源下暂无运行明细，请切换其他面试或 Agent 会话。</p>
         ) : (
           <div className="mt-3 space-y-2">
-            {usageRuns.map((run) => {
+            <p className="text-[11px] dark-text-muted">显示 {filteredUsageRuns.length} / {usageRuns.length} 条运行记录</p>
+            {filteredUsageRuns.map((run) => {
               const href = agentSessionHref(run.interviewSessionId, run.agentSessionId);
               return (
                 <div key={run.runId} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/60">
@@ -2119,9 +2186,12 @@ export default function AgentPage({ view = 'workspace' }: AgentPageProps) {
           <p className="text-xs dark-text-muted mt-3">正在读取活动记录...</p>
         ) : auditEvents.length === 0 ? (
           <p className="text-xs dark-text-muted mt-3">暂无活动记录。</p>
+        ) : filteredAuditEvents.length === 0 ? (
+          <p className="text-xs dark-text-muted mt-3">当前来源下暂无活动记录。</p>
         ) : (
           <div className="mt-3 divide-y divide-slate-200 dark:divide-slate-700">
-            {auditEvents.slice(0, 8).map((event, index) => {
+            <p className="px-0 py-2 text-[11px] dark-text-muted">显示最近 {Math.min(filteredAuditEvents.length, 12)} / {auditEvents.length} 条活动</p>
+            {filteredAuditEvents.slice(0, 12).map((event, index) => {
               const href = agentSessionHref(event.interviewSessionId, event.agentSessionId);
               return (
                 <div key={`${event.createdAt}-${event.action}-${index}`} className="flex flex-wrap items-center justify-between gap-3 py-3 text-xs">
