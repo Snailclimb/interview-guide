@@ -21,7 +21,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $BaseUrl = $BaseUrl.TrimEnd('/')
-$jar = Join-Path $env:TEMP "formal-agent-$([guid]::NewGuid()).cookie"
+$script:baseUri = [Uri]$BaseUrl
+$script:cookieContainer = New-Object System.Net.CookieContainer
+$script:httpHandler = New-Object System.Net.Http.HttpClientHandler
+$script:httpHandler.CookieContainer = $script:cookieContainer
+$script:httpHandler.UseCookies = $true
+$script:httpClient = New-Object System.Net.Http.HttpClient($script:httpHandler)
+$script:httpClient.BaseAddress = $script:baseUri
+$script:xsrf = ''
 $createdInterview = $false
 
 function Assert-Pass([bool]$Condition, [string]$Message) {
@@ -35,37 +42,86 @@ function Parse-Json([string]$Raw, [string]$Description) {
     catch { throw "$Description 返回非 JSON：$Raw" }
 }
 
+function Reset-HttpSession {
+    if ($null -ne $script:httpClient) { $script:httpClient.Dispose() }
+    if ($null -ne $script:httpHandler) { $script:httpHandler.Dispose() }
+    $script:cookieContainer = New-Object System.Net.CookieContainer
+    $script:httpHandler = New-Object System.Net.Http.HttpClientHandler
+    $script:httpHandler.CookieContainer = $script:cookieContainer
+    $script:httpHandler.UseCookies = $true
+    $script:httpClient = New-Object System.Net.Http.HttpClient($script:httpHandler)
+    $script:httpClient.BaseAddress = $script:baseUri
+    $script:xsrf = ''
+}
+
+function Refresh-XsrfToken {
+    $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, '/api/auth/me')
+    try {
+        $response = $script:httpClient.SendAsync($request).GetAwaiter().GetResult()
+        $raw = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        Parse-Json $raw 'GET /api/auth/me' | Out-Null
+        $cookie = $script:cookieContainer.GetCookies($script:baseUri) |
+            Where-Object { $_.Name -eq 'XSRF-TOKEN' } | Select-Object -Last 1
+        if ($null -eq $cookie -or [string]::IsNullOrWhiteSpace($cookie.Value)) {
+            throw '无法从 /api/auth/me 获取 XSRF-TOKEN'
+        }
+        $script:xsrf = $cookie.Value
+    } finally {
+        if ($null -ne $request) { $request.Dispose() }
+        if ($null -ne $response) { $response.Dispose() }
+    }
+}
+
+function Sync-XsrfTokenFromCookie {
+    $cookie = $script:cookieContainer.GetCookies($script:baseUri) |
+        Where-Object { $_.Name -eq 'XSRF-TOKEN' } | Select-Object -Last 1
+    if ($null -ne $cookie -and -not [string]::IsNullOrWhiteSpace($cookie.Value)) {
+        $script:xsrf = $cookie.Value
+    }
+}
+
 function Invoke-JsonApi(
     [string]$Path,
     [string]$Method = 'GET',
     [object]$Body = $null
 ) {
-    $args = @('-sS', '-b', $jar, '-X', $Method, "$BaseUrl$Path")
-    if ($Method -ne 'GET') {
-        $args += @('-H', "X-XSRF-TOKEN: $script:xsrf")
-        $args += @('-H', 'Content-Type: application/json')
+    if ($Method -ne 'GET') { Sync-XsrfTokenFromCookie }
+    $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::$Method, $Path)
+    try {
+        if ($Method -ne 'GET' -and -not [string]::IsNullOrWhiteSpace($script:xsrf)) {
+            $request.Headers.Add('X-XSRF-TOKEN', $script:xsrf)
+        }
+        if ($null -ne $Body) {
+            $jsonBody = $Body | ConvertTo-Json -Depth 50 -Compress
+            $request.Content = New-Object System.Net.Http.StringContent($jsonBody, [Text.Encoding]::UTF8, 'application/json')
+        }
+        $response = $script:httpClient.SendAsync($request).GetAwaiter().GetResult()
+        $raw = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        Sync-XsrfTokenFromCookie
+        return Parse-Json $raw "$Method $Path"
+    } finally {
+        if ($null -ne $request) { $request.Dispose() }
+        if ($null -ne $response) { $response.Dispose() }
     }
-    if ($null -ne $Body) {
-        $args += @('--data-raw', ($Body | ConvertTo-Json -Depth 50 -Compress))
-    }
-    $raw = & curl.exe @args
-    Parse-Json ($raw -join [Environment]::NewLine) "$Method $Path"
 }
 
 function Invoke-Stream([string]$Path, [object]$Body) {
-    $output = Join-Path $env:TEMP "formal-agent-stream-$([guid]::NewGuid()).txt"
+    # SSE 完成后 Spring Security 可能清理旧的 CSRF Cookie；每轮发送前重新预热，
+    # 让同一登录会话可以连续运行多个 Agent 会话。
+    Refresh-XsrfToken
+    $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Post, $Path)
     try {
-        $args = @(
-            '-sS', '--max-time', '300', '-b', $jar, '-X', 'POST', "$BaseUrl$Path",
-            '-H', "X-XSRF-TOKEN: $script:xsrf",
-            '-H', 'Content-Type: application/json',
-            '--data-raw', ($Body | ConvertTo-Json -Depth 50 -Compress),
-            '-o', $output
-        )
-        & curl.exe @args | Out-Null
-        return Get-Content -LiteralPath $output -Raw
+        $jsonBody = $Body | ConvertTo-Json -Depth 50 -Compress
+        $request.Headers.Add('X-XSRF-TOKEN', $script:xsrf)
+        $request.Content = New-Object System.Net.Http.StringContent($jsonBody, [Text.Encoding]::UTF8, 'application/json')
+        $response = $script:httpClient.SendAsync(
+            $request,
+            [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead
+        ).GetAwaiter().GetResult()
+        return $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
     } finally {
-        Remove-Item -LiteralPath $output -Force -ErrorAction SilentlyContinue
+        if ($null -ne $request) { $request.Dispose() }
+        if ($null -ne $response) { $response.Dispose() }
     }
 }
 
@@ -74,35 +130,23 @@ try {
         $suffix = [guid]::NewGuid().ToString('N').Substring(0, 12)
         $Email = "formal-agent-$suffix@example.com"
         $registerBody = @{ email = $Email; password = $Password; nickname = 'Formal Agent Acceptance' }
-        $register = & curl.exe -sS -X POST "$BaseUrl/api/auth/register" `
-            -H 'Content-Type: application/json' --data-raw ($registerBody | ConvertTo-Json -Compress)
-        $registerJson = Parse-Json ($register -join [Environment]::NewLine) '注册验收账号'
+        $registerJson = Invoke-JsonApi '/api/auth/register' 'POST' $registerBody
         Assert-Pass ($registerJson.code -eq 200) '注册验收账号成功'
+        Reset-HttpSession
     }
 
-    $loginBody = @{ email = $Email; password = $Password } | ConvertTo-Json -Compress
-    $login = & curl.exe -sS -c $jar -H 'Content-Type: application/json' `
-        -d $loginBody "$BaseUrl/api/auth/login"
-    $loginJson = Parse-Json ($login -join [Environment]::NewLine) '登录验收账号'
-    Assert-Pass ($loginJson.code -eq 200) '正式登录成功'
+    $loginJson = Invoke-JsonApi '/api/auth/login' 'POST' @{ email = $Email; password = $Password }
+    $loginCode = 0
+    $loginCodeParsed = [int]::TryParse([string]$loginJson.code, [ref]$loginCode)
+    Assert-Pass ($loginCodeParsed -and $loginCode -eq 200 -and $loginJson.success -eq $true) '正式登录成功'
 
-    # 登录响应已经下发 CSRF Cookie；不要让后续 GET 的空 Set-Cookie 覆盖它。
-    $xsrfLine = Get-Content -LiteralPath $jar |
-        Where-Object { $_ -match '\sXSRF-TOKEN\s' } | Select-Object -Last 1
-    if ($null -eq $xsrfLine) { throw '正式登录后没有获取到 XSRF-TOKEN' }
-    $xsrfParts = $xsrfLine -split '\s+'
-    $xsrf = $xsrfParts[$xsrfParts.Length - 1]
+    Refresh-XsrfToken
 
     $list = Invoke-JsonApi '/api/interview/sessions'
     Assert-Pass ($list.code -eq 200) '读取当前账号面试列表成功'
     $sessions = @($list.data)
     if ([string]::IsNullOrWhiteSpace($InterviewSessionId)) {
-        if ($sessions.Count -eq 0 -and -not $CreateInterview) {
-            throw '当前账号没有面试会话；请传入 -CreateInterview 或 -InterviewSessionId'
-        }
-        if ($sessions.Count -gt 0) {
-            $InterviewSessionId = [string]$sessions[0].sessionId
-        } else {
+        if ($CreateInterview) {
             $requestId = "formal-agent-$([guid]::NewGuid().ToString('N'))"
             $created = Invoke-JsonApi '/api/interview/sessions' 'POST' @{
                 resumeText = ''
@@ -115,6 +159,10 @@ try {
             Assert-Pass ($created.code -eq 200 -and $null -ne $created.data.sessionId) '创建真实面试会话成功'
             $InterviewSessionId = [string]$created.data.sessionId
             $createdInterview = $true
+        } elseif ($sessions.Count -eq 0) {
+            throw '当前账号没有面试会话；请传入 -CreateInterview 或 -InterviewSessionId'
+        } else {
+            $InterviewSessionId = [string]$sessions[0].sessionId
         }
     }
 
@@ -142,10 +190,14 @@ try {
         )
         for ($i = 0; $i -lt $payloads.Count; $i++) {
             $stream = Invoke-Stream "/api/agent/interview-sessions/$InterviewSessionId/messages/stream" $payloads[$i]
-            Assert-Pass ($stream -match 'event:\s*agent-plan') "Agent 第 $($i + 1) 轮包含执行计划"
-            Assert-Pass ($stream -match 'event:\s*agent-loop') "Agent 第 $($i + 1) 轮包含 Loop 事件"
-            Assert-Pass ($stream -match 'event:\s*agent-delta') "Agent 第 $($i + 1) 轮包含流式输出"
-            Assert-Pass ($stream -match 'event:\s*agent-done' -and $stream -notmatch 'event:\s*agent-error') "Agent 第 $($i + 1) 轮正常完成"
+            $eventSummary = (($stream -split "`n" |
+                Where-Object { $_ -match '^event:' } |
+                ForEach-Object { $_ -replace '^event:\s*', '' } |
+                Select-Object -Unique) -join ',').Trim()
+            Assert-Pass ($stream -match 'event:\s*agent-plan') "Agent 第 $($i + 1) 轮包含执行计划（事件=$eventSummary）"
+            Assert-Pass ($stream -match 'event:\s*agent-loop') "Agent 第 $($i + 1) 轮包含 Loop 事件（事件=$eventSummary）"
+            Assert-Pass ($stream -match 'event:\s*agent-delta') "Agent 第 $($i + 1) 轮包含流式输出（事件=$eventSummary）"
+            Assert-Pass ($stream -match 'event:\s*agent-done' -and $stream -notmatch 'event:\s*agent-error') "Agent 第 $($i + 1) 轮正常完成（事件=$eventSummary）"
             $conversation = Invoke-JsonApi "/api/agent/interview-sessions/$InterviewSessionId/conversation?agentSessionId=$([Uri]::EscapeDataString([string]$payloads[$i].agentSessionId))"
             Assert-Pass ($conversation.code -eq 200 -and $conversation.data.runStatus -eq 'COMPLETED') "Agent 第 $($i + 1) 轮状态持久化为 COMPLETED"
             $usage = $conversation.data.runUsage
@@ -153,29 +205,30 @@ try {
             Assert-Pass ($null -ne $usage -and [int]$usage.modelCalls -ge 1 -and [int64]$usage.durationMillis -ge 0) "Agent 第 $($i + 1) 轮用量摘要已持久化（实际=$usageText）"
         }
 
-        $memory = Invoke-JsonApi '/api/agent/memory'
-        Assert-Pass ($memory.code -eq 200 -and $null -ne $memory.data) '正式登录可读取 Agent 长期记忆摘要'
-        Assert-Pass ($memory.data.PSObject.Properties.Name -notcontains 'memoryKey') '长期记忆接口不暴露内部 memoryKey'
-        if ($RunMemoryManagementTests) {
-            $memoryItems = @($memory.data.items)
-            Assert-Pass ($memoryItems.Count -gt 0) '长期记忆存在可管理的结构化记忆项'
-            $item = $memoryItems[0]
-            Assert-Pass ($null -ne $item.expiresAt -and [string]$item.expiresAt -ne '') '长期记忆包含过期时间'
-            $editedContent = "$($item.content)（验收编辑）"
-            $updated = Invoke-JsonApi "/api/agent/memory/items/$([Uri]::EscapeDataString([string]$item.id))" 'PATCH' @{
-                content = $editedContent
-                jobScope = 'java-backend'
-            }
-            $updatedItem = @($updated.data.items) | Where-Object { $_.id -eq $item.id } | Select-Object -First 1
-            Assert-Pass ($updated.code -eq 200 -and $null -ne $updatedItem -and $updatedItem.content -eq $editedContent -and $updatedItem.jobScope -eq 'java-backend') `
-                '长期记忆单项编辑和岗位范围保存成功'
-
-            $deleted = Invoke-JsonApi "/api/agent/memory/items/$([Uri]::EscapeDataString([string]$item.id))" 'DELETE'
-            $deletedItem = @($deleted.data.items) | Where-Object { $_.id -eq $item.id }
-            Assert-Pass ($deleted.code -eq 200 -and $null -eq $deletedItem) '长期记忆单项删除成功'
-        }
     } else {
         Write-Host '跳过真实模型调用：使用 -RunModelTests 启用两轮 Agent SSE 验收。' -ForegroundColor Yellow
+    }
+
+    $memory = Invoke-JsonApi '/api/agent/memory'
+    Assert-Pass ($memory.code -eq 200 -and $null -ne $memory.data) '正式登录可读取 Agent 长期记忆摘要'
+    Assert-Pass ($memory.data.PSObject.Properties.Name -notcontains 'memoryKey') '长期记忆接口不暴露内部 memoryKey'
+    if ($RunMemoryManagementTests) {
+        $memoryItems = @($memory.data.items)
+        Assert-Pass ($memoryItems.Count -gt 0) '长期记忆存在可管理的结构化记忆项'
+        $item = $memoryItems[0]
+        Assert-Pass ($null -ne $item.expiresAt -and [string]$item.expiresAt -ne '') '长期记忆包含过期时间'
+        $editedContent = "$($item.content)（验收编辑）"
+        $updated = Invoke-JsonApi "/api/agent/memory/items/$([Uri]::EscapeDataString([string]$item.id))" 'PATCH' @{
+            content = $editedContent
+            jobScope = 'java-backend'
+        }
+        $updatedItem = @($updated.data.items) | Where-Object { $_.id -eq $item.id } | Select-Object -First 1
+        Assert-Pass ($updated.code -eq 200 -and $null -ne $updatedItem -and $updatedItem.content -eq $editedContent -and $updatedItem.jobScope -eq 'java-backend') `
+            '长期记忆单项编辑和岗位范围保存成功'
+
+        $deleted = Invoke-JsonApi "/api/agent/memory/items/$([Uri]::EscapeDataString([string]$item.id))" 'DELETE'
+        $deletedItem = @($deleted.data.items) | Where-Object { $_.id -eq $item.id }
+        Assert-Pass ($deleted.code -eq 200 -and $null -eq $deletedItem) '长期记忆单项删除成功'
     }
 
     Write-Host "Formal Agent acceptance: PASS (interview=$InterviewSessionId)" -ForegroundColor Cyan
@@ -183,5 +236,6 @@ try {
     if ($createdInterview -and -not [string]::IsNullOrWhiteSpace($InterviewSessionId)) {
         try { Invoke-JsonApi "/api/interview/sessions/$([Uri]::EscapeDataString($InterviewSessionId))" 'DELETE' | Out-Null } catch { }
     }
-    Remove-Item -LiteralPath $jar -Force -ErrorAction SilentlyContinue
+    if ($null -ne $script:httpClient) { $script:httpClient.Dispose() }
+    if ($null -ne $script:httpHandler) { $script:httpHandler.Dispose() }
 }

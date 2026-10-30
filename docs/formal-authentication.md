@@ -79,3 +79,16 @@ pwsh -NoProfile -File .\scripts\admin-governance-acceptance.ps1 -BaseUrl http://
 验收覆盖：未登录 401、注册、重复注册、登录 Cookie、会话恢复、CSRF、旧 Header 防伪、退出和退出后的会话失效；以及不同账号之间的简历、语音面试、面试日程和 Agent 会话隔离。
 
 `-RunModelTests` 会发起真实模型流式请求；如果只想验证登录、会话归属和 Agent 数据生命周期，可以去掉该参数。脚本会清理本轮创建的临时面试记录。
+
+## 多套容器共享网络时的正式代理配置
+
+正式环境与候选/测试环境如果加入同一个 Docker 网络，不能让多个 API 容器同时使用
+`app` 这个 DNS 别名。Nginx 可能轮询到错误的 API 实例，表现为间歇性 404、401 或页面一直加载。
+正式前端必须把 Agent SSE、普通 API 和 WebSocket 的 `proxy_pass` 都指向正式 API 容器的唯一
+DNS 名称；发布后用 `nginx -T` 检查四处 upstream 均指向同一个正式 API，再执行连续两轮 Agent
+SSE 验收。正式环境当前发布镜像已固化这一修订，镜像标签为
+`interview-guide-agent-frontend:agent-usage-ec7fdf0-routefix`。
+
+正式环境当前 Provider 配置为：聊天使用 `pixel / gpt-5.6-luna`，向量使用
+`qwen-embedding / qwen3.7-text-embedding-flash`。没有真实凭证的内置 Provider 已停用，
+避免 Agent 失败后回退到容器内不存在的 `localhost:1234` 模型服务。
