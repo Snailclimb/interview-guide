@@ -58,66 +58,41 @@ services:
       retries: 5
 
   # =========================================
-  # 3. MinIO 对象存储服务
+  # 3. RustFS 对象存储服务
   # -----------------------------------------
   # 作用：
   #   - 存储非结构化数据：用户上传的简历(PDF/Word)、头像、知识库文档等
   #
   # 教程知识点：
-  #   - MinIO 兼容 AWS S3 协议，这意味着代码中使用 S3 SDK 即可无缝切换到云厂商的对象存储。
+  #   - RustFS 兼容 AWS S3 协议，这意味着代码中使用 S3 SDK 即可无缝切换到云厂商的对象存储。
   #   - 端口说明：
   #     - 9000: API 端口，代码通过此端口上传/下载文件
   #     - 9001: 控制台端口，浏览器访问此端口管理文件
   # =========================================
-  minio:
-    image: minio/minio
-    container_name: interview-minio
-    # 启动命令：指定数据目录和控制台地址
-    command: server /data --console-address ":9001"
+  rustfs:
+    image: rustfs/rustfs:1.0.0-rc.6
+    container_name: interview-rustfs
+    command: ["/data"]
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+      RUSTFS_RPC_SECRET: ${RUSTFS_RPC_SECRET:?Set RUSTFS_RPC_SECRET in .env}
+      RUSTFS_CONSOLE_ENABLE: "true"
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - minio_data:/data
+      - rustfs_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # 存储和 IAM 就绪后再启动后端，避免存储桶初始化时连接失败。
+      test: ["CMD", "/usr/bin/curl", "--fail", "--silent", "http://localhost:9000/health/ready"]
       interval: 5s
       timeout: 3s
       retries: 5
+      start_period: 30s
 
   # =========================================
-  # 4. MinIO 初始化任务 (Init Container Pattern)
-  # -----------------------------------------
-  # 作用：
-  #   - 自动创建项目所需的存储桶 (Bucket)
-  #   - 设置存储桶的访问权限
-  #
-  # 教程知识点：
-  #   - "初始化容器"模式：这是一个短生命周期的容器，任务完成后自动退出。
-  #   - 解决了"谁来创建 Bucket"的问题，实现了基础设施的自动化配置，无需手动操作。
-  # =========================================
-  createbuckets:
-    image: minio/mc
-    depends_on:
-      minio:
-        condition: service_healthy # 必须等待 MinIO 服务健康（不仅仅是启动）
-    entrypoint: >
-      /bin/sh -c "
-      set -eu;
-      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin &&
-      (
-        /usr/bin/mc ls myminio/interview-guide > /dev/null 2>&1 ||
-        /usr/bin/mc mb myminio/interview-guide
-      ) &&
-      /usr/bin/mc anonymous set public myminio/interview-guide &&
-      /usr/bin/mc ls myminio/interview-guide
-      "
-
-  # =========================================
-  # 5. 后端应用服务 (Spring Boot)
+  # 4. 后端应用服务 (Spring Boot)
   # -----------------------------------------
   # 作用：
   #   - 提供 RESTful API
@@ -134,10 +109,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      rustfs:
         condition: service_healthy
-      createbuckets:
-        condition: service_completed_successfully # 等待初始化任务完成
     environment:
       # === 数据库连接 ===
       # 使用服务名 'postgres' 作为主机名，Docker 内部 DNS 会自动解析
@@ -152,12 +125,14 @@ services:
       REDIS_PORT: 6379
       
       # === 对象存储配置 ===
-      # 注意：后端在容器内访问 MinIO，使用 http://minio:9000
-      APP_STORAGE_ENDPOINT: http://minio:9000
-      APP_STORAGE_ACCESS_KEY: minioadmin
-      APP_STORAGE_SECRET_KEY: minioadmin
-      APP_STORAGE_BUCKET: interview-guide
-      APP_STORAGE_REGION: us-east-1
+      # 容器间通过服务名访问 RustFS，凭证与 rustfs 服务保持一致。
+      APP_STORAGE_ENDPOINT: http://rustfs:9000
+      APP_STORAGE_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
+      APP_STORAGE_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+      APP_STORAGE_BUCKET: ${APP_STORAGE_BUCKET:-interview-guide}
+      APP_STORAGE_REGION: ${APP_STORAGE_REGION:-us-east-1}
+      # 后端启动时检查并创建存储桶，不再依赖额外的初始化镜像。
+      APP_STORAGE_AUTO_CREATE_BUCKET: "true"
       
       # === AI 模型配置 (必须配置) ===
       # 这里的变量值来自宿主机的环境变量或 .env 文件
@@ -172,7 +147,7 @@ services:
       - "8080:8080"
 
   # =========================================
-  # 6. 前端应用服务 (Vue/React + Nginx)
+  # 5. 前端应用服务 (React + Nginx)
   # -----------------------------------------
   # 作用：
   #   - 提供用户界面
@@ -195,4 +170,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  minio_data:
+  rustfs_data:
