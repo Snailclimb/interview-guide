@@ -47,7 +47,7 @@ InterviewGuide 是一个集成了简历分析、模拟面试（文字 + 语音�
 | MapStruct             | 1.6.3 | 对象映射                      |
 | SpringDoc OpenAPI     | 3.0.2 | API 接口文档                  |
 | DashScope SDK         | 2.22.7 | 语音识别/合成（Qwen3 ASR/TTS）|
-| AWS S3 SDK            | 2.29.51 | S3 兼容对象存储（MinIO/RustFS）|
+| AWS S3 SDK            | 2.29.51 | RustFS / S3 兼容对象存储 |
 | WebSocket             | -     | 语音面试实时双向通信          |
 | Gradle                | 9.6.1 | 构建工具                      |
 
@@ -263,7 +263,7 @@ interview-guide/
 │   ├── package.json
 │   └── vite.config.ts
 │
-├── docker-compose.yml                # 完整部署：前端 + 后端 + PostgreSQL + Redis + MinIO
+├── docker-compose.yml                # 完整部署：前端 + 后端 + PostgreSQL + Redis + RustFS
 ├── docker-compose.dev.yml            # 本地开发依赖：PostgreSQL + Redis + RustFS
 ├── docs/                             # 架构设计与改造记录
 ├── .env.example                      # 环境变量示例
@@ -292,13 +292,15 @@ cd interview-guide
 
 ### 2. 配置环境变量
 
-推荐复制 `.env.example` 为 `.env`，后端 `bootRun` 会自动读取根目录 `.env`。最少需要填写 `AI_BAILIAN_API_KEY`，用于 DashScope 文本模型、ASR 和 TTS：
+推荐复制 `.env.example` 为 `.env`，后端 `bootRun` 会自动读取根目录 `.env`。需要填写 `AI_BAILIAN_API_KEY`（DashScope 文本模型、ASR 和 TTS）、`APP_AI_CONFIG_ENCRYPTION_KEY`（Provider 密钥加密）和 `RUSTFS_RPC_SECRET`（RustFS 内部 RPC 认证）：
 
 ```bash
 cp .env.example .env
 
 # 编辑 .env
 # AI_BAILIAN_API_KEY=your_dashscope_api_key
+# APP_AI_CONFIG_ENCRYPTION_KEY=your_random_long_secret
+# RUSTFS_RPC_SECRET=your_random_rpc_secret
 # AI_MODEL=qwen3.5-flash
 ```
 
@@ -386,7 +388,7 @@ pnpm dev
 
 本项目提供了完整的 Docker 支持，可以一键启动所有服务（前后端、数据库、中间件）。
 
-Docker Compose 编排了 6 个服务：PostgreSQL（pgvector）、Redis、MinIO（S3 兼容存储）、MinIO Bucket 初始化、Spring Boot 后端、React 前端（Nginx）。数据通过 Docker 命名卷持久化，`docker-compose down` 不会丢失数据。
+Docker Compose 编排了 5 个服务：PostgreSQL（pgvector）、Redis、RustFS（S3 兼容存储）、Spring Boot 后端、React 前端（Nginx）。数据通过 Docker 命名卷持久化，`docker compose down` 不会丢失数据。
 
 ### 1. 前置准备
 
@@ -397,7 +399,7 @@ Docker Compose 编排了 6 个服务：PostgreSQL（pgvector）、Redis、MinIO�
 
 在项目根目录下执行：
 
-`.env.example` 中的 PostgreSQL、Redis、MinIO 已与 `docker-compose.yml` 对齐（数据库用户 `postgres` / 密码 `password`，MinIO `minioadmin` / `minioadmin`）。复制为 `.env` 后主要填写 `AI_BAILIAN_API_KEY`；若你曾在旧版本中使用过不同的库密码或对象存储密钥，请同步修改 `.env`，必要时重建 Postgres 卷以免旧数据与密码不一致。
+`.env.example` 中的 PostgreSQL、Redis、RustFS 已与 `docker-compose.yml` 对齐（数据库用户 `postgres` / 密码 `password`，RustFS 默认账号和密钥均为 `rustfsadmin`）。复制为 `.env` 后填写 AI Key、Provider 加密密钥和 RustFS RPC 密钥；已有 `.env` 的用户需要补充 `RUSTFS_RPC_SECRET`。修改 `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` 时，完整部署中的 RustFS 和后端会使用同一组值；本地 `bootRun` 则需同步修改 `APP_STORAGE_ACCESS_KEY` / `APP_STORAGE_SECRET_KEY`。已有数据库的密码应与 `.env` 保持一致。
 
 ```bash
 # 1. 复制环境变量配置文件
@@ -407,6 +409,7 @@ cp .env.example .env
 # vim .env
 # 必填：AI_BAILIAN_API_KEY=your_key_here
 # 必填：APP_AI_CONFIG_ENCRYPTION_KEY=your_random_long_secret
+# 必填：RUSTFS_RPC_SECRET=your_random_rpc_secret
 # 可选：AI_MODEL=qwen3.5-flash   # 默认值为 qwen3.5-flash
 # 也可以在设置页维护 DashScope、Kimi、DeepSeek、GLM、LM Studio 等 Provider
 #
@@ -415,10 +418,10 @@ cp .env.example .env
 # APP_INTERVIEW_EVALUATION_BATCH_SIZE=8   # 回答评估分批大小（默认 8）
 
 # 3. 构建并启动所有服务
-docker-compose up -d --build
+docker compose -f docker-compose.yml up -d --build
 ```
 
-> **仅启动依赖服务**：如果只想本地开发调试（用 `./gradlew :app:bootRun` 启动后端），可以只启动基础设施：`docker compose up -d postgres redis minio createbuckets`。将 `.env.example` 复制为 `.env` 并填写 `AI_BAILIAN_API_KEY` 即可，默认账号与 `docker-compose.yml` 一致；Bucket 会由初始化任务或应用启动检查自动创建。
+> **仅启动依赖服务**：如果只想本地开发调试（用 `./gradlew :app:bootRun` 启动后端），可以只启动基础设施：`docker compose -f docker-compose.yml up -d postgres redis rustfs`。先按上面的要求配置 `.env`，存储桶会在后端启动时自动检查并创建。
 
 ### 3. 服务访问
 
@@ -429,8 +432,8 @@ docker-compose up -d --build
 | **前端应用**     | [http://localhost](http://localhost)           | -            | -            | 用户访问入口           |
 | **后端 API**     | [http://localhost:8080](http://localhost:8080) | -            | -            | RESTful API            |
 | **接口文档**     | [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html) | - | - | SpringDoc/Swagger UI |
-| **MinIO 控制台** | [http://localhost:9001](http://localhost:9001) | `minioadmin` | `minioadmin` | 对象存储管理           |
-| **MinIO API**    | `localhost:9000`                               | -            | -            | S3 兼容接口            |
+| **RustFS 控制台** | [http://localhost:9001](http://localhost:9001) | `rustfsadmin` | `rustfsadmin` | 对象存储管理，可通过 `.env` 修改凭证 |
+| **RustFS API**    | `localhost:9000`                               | -            | -            | S3 兼容接口            |
 | **PostgreSQL**   | `localhost:5432`                               | `postgres`   | `password`   | 数据库 (包含 pgvector) |
 | **Redis**        | `localhost:6379`                               | -            | -            | 缓存与消息队列         |
 
