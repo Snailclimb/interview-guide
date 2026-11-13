@@ -5,6 +5,7 @@ import {useTheme} from '../hooks/useTheme';
 import {useState} from 'react';
 import UnifiedInterviewModal, {UnifiedInterviewConfig} from './UnifiedInterviewModal';
 import {ROUTES} from '../constants/routes';
+import { createUuid } from '../utils/uuid';
 
 interface NavItem {
   id: string;
@@ -46,7 +47,7 @@ export default function Layout() {
   const handleInterviewStart = (config: UnifiedInterviewConfig) => {
     setInterviewModalPreset(null);
     if (config.mode === 'text') {
-      navigate(ROUTES.interviewCreate(crypto.randomUUID()), {
+      navigate(ROUTES.interviewCreate(createUuid()), {
         state: {
           resumeId: config.resumeId,
           interviewConfig: {
